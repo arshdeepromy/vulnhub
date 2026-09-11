@@ -55,11 +55,23 @@ final class VulnHub_Tenable_Client {
 	/** Job states that mean "stop polling". */
 	private const TERMINAL_STATES = array( 'FINISHED', 'ERROR', 'CANCELLED' );
 
-	/** Hard wall-clock ceiling for a single export job, in seconds. */
-	private const POLL_TIMEOUT_SECONDS = 480;
+	/**
+	 * Hard wall-clock ceiling for a single export job, in seconds.
+	 *
+	 * 480s (8 min) was too short for a live vulnerability export on any
+	 * account with meaningful data — confirmed in production: a 644-asset
+	 * account's vuln export was still PROCESSING at 8 minutes and got
+	 * abandoned as TIMEOUT, silently importing zero findings. Assets
+	 * exports are cheap (the same account finished in ~4s); vuln exports
+	 * are the expensive one and need real headroom. A WP-Cron-driven
+	 * scheduled sync has no PHP execution ceiling to worry about; an
+	 * interactive "Sync now" gets its own set_time_limit() call in
+	 * VulnHub_Tenable_Connector::do_sync() to match.
+	 */
+	private const POLL_TIMEOUT_SECONDS = 1500;
 
 	/** Hard ceiling on status requests for a single export job. */
-	private const POLL_MAX_ATTEMPTS = 200;
+	private const POLL_MAX_ATTEMPTS = 300;
 
 	/** First and largest sleep between status polls, in seconds. */
 	private const POLL_FIRST_WAIT = 2.0;
@@ -374,8 +386,35 @@ final class VulnHub_Tenable_Client {
 
 		$records = $response->data();
 
-		// Defensive: a chunk is a JSON list; anything else is not usable.
-		return array_values( array_filter( $records, 'is_array' ) );
+		/*
+		 * Release the response before touching the records. Http_Response holds
+		 * the raw JSON body *and* the decoded array at the same time, and a
+		 * single vuln chunk here runs to 20k-40k nested records -- the raw body
+		 * alone is worth hundreds of MB. Nothing below needs the response.
+		 */
+		unset( $response );
+
+		/*
+		 * Defensive: a chunk is a JSON list; anything else is not usable.
+		 *
+		 * This filters in place rather than via array_values( array_filter() ),
+		 * which built two further complete copies of the chunk. Holding three
+		 * copies of a 40k-record chunk at once is what actually exhausted the
+		 * container: measured peaks climbed 859MB -> 2.1GB -> 2.6GB -> 3.3GB,
+		 * one step per chunk, until the cgroup OOM-killed the process. The
+		 * import path itself is flat (40k upsert_finding() calls measured at
+		 * zero net growth), so the copies were the whole problem.
+		 *
+		 * Callers only foreach/count the result, so the non-sequential keys
+		 * left behind by unset() are fine and not worth a reindex copy.
+		 */
+		foreach ( $records as $index => $record ) {
+			if ( ! is_array( $record ) ) {
+				unset( $records[ $index ] );
+			}
+		}
+
+		return $records;
 	}
 
 	/**
