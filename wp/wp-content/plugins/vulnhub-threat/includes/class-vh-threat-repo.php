@@ -1,0 +1,306 @@
+<?php
+/**
+ * Counting findings by the route an attacker would take.
+ *
+ * Everything here works from id lists rather than joins. The findings table
+ * holds 228,000 rows and the two tables this plugin adds hold 13,000 and 848;
+ * asking the optimiser to filter findings on a column that lives in a small
+ * table makes it walk findings doing a primary-key lookup per row. Resolving
+ * the small tables first and handing over a list of ids turns every count into
+ * an index range scan on `vuln_state_exc`, which already carries asset_id as
+ * its last column -- so the edge lane's asset filter is answered from the
+ * index too.
+ *
+ * @package VulnHub\Threat
+ */
+
+declare( strict_types = 1 );
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+/**
+ * Lane counts and the drill-down filter behind them.
+ */
+final class VulnHub_Threat_Repo {
+
+	public static function init(): void {
+		add_filter( 'vulnhub_findings_query', array( __CLASS__, 'findings_query' ), 10, 2 );
+	}
+
+	/** Is there anything to draw yet? */
+	public static function has_data(): bool {
+		global $wpdb;
+
+		$paths = VulnHub_Threat_Install::table( 'vuln_paths' );
+
+		return (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$paths} WHERE has_poc = 1" ) > 0; // phpcs:ignore
+	}
+
+	/**
+	 * Vulnerability definition ids on a route.
+	 *
+	 * @param string $route 'edge', 'user', 'inside' or '' for any.
+	 * @param bool   $poc   Only definitions with a working exploit.
+	 * @return int[]
+	 */
+	public static function vuln_ids( string $route, bool $poc = true ): array {
+		global $wpdb;
+
+		$paths  = VulnHub_Threat_Install::table( 'vuln_paths' );
+		$column = $poc ? 'poc_route' : 'route';
+		$where  = $poc ? array( 'has_poc = 1' ) : array();
+
+		if ( '' !== $route ) {
+			$where[] = $wpdb->prepare( "{$column} = %s", $route ); // phpcs:ignore
+		}
+
+		$sql = "SELECT vuln_id FROM {$paths}" . ( $where ? ' WHERE ' . implode( ' AND ', $where ) : '' );
+
+		return array_map( 'intval', (array) $wpdb->get_col( $sql ) ); // phpcs:ignore
+	}
+
+	/** Assets the exposure rule says the internet can reach. @return int[] */
+	public static function internet_asset_ids(): array {
+		global $wpdb;
+
+		$expo = VulnHub_Threat_Install::table( 'asset_exposure' );
+
+		return array_map( 'intval', (array) $wpdb->get_col( "SELECT asset_id FROM {$expo} WHERE internet_facing = 1" ) ); // phpcs:ignore
+	}
+
+	/**
+	 * The numbers the widget draws.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public static function lanes(): array {
+		global $wpdb;
+
+		$f      = vh_table( 'findings' );
+		$paths  = VulnHub_Threat_Install::table( 'vuln_paths' );
+		$intel  = VulnHub_Threat_Install::table( 'cve_intel' );
+		$facing = self::internet_asset_ids();
+
+		$edge_ids   = self::vuln_ids( 'edge' );
+		$user_ids   = self::vuln_ids( 'user' );
+		$inside_ids = self::vuln_ids( 'inside' );
+
+		$open = "f.state IN ('open','reopened') AND f.exception_id = 0";
+
+		// The edge lane, split by whether the machine is actually reachable.
+		// The unreachable half is not discarded -- it moves to the inside
+		// lane, because that is where it can be used.
+		$edge_open   = self::count_findings( $edge_ids, $facing, false );
+		$edge_hidden = self::count_findings( $edge_ids, $facing, true );
+		$user        = self::count_findings( $user_ids, null, false );
+		$inside      = self::count_findings( $inside_ids, null, false );
+
+		$totals = array(
+			'open'    => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$f} f WHERE {$open}" ), // phpcs:ignore
+			'assets'  => (int) $wpdb->get_var( "SELECT COUNT(DISTINCT f.asset_id) FROM {$f} f WHERE {$open}" ), // phpcs:ignore
+			'facing'  => count( $facing ),
+			'unknown' => self::count_findings( self::vuln_ids( 'unknown', false ), null, false )['findings'],
+		);
+
+		return array(
+			'edge'      => $edge_open + array( 'vulns' => count( $edge_ids ) ),
+			'user'      => $user + array(
+				'vulns'    => count( $user_ids ),
+				'delivery' => self::delivery_split( $user_ids ),
+			),
+			'inside'    => array(
+				'findings' => $inside['findings'] + $edge_hidden['findings'],
+				'assets'   => max( $inside['assets'], $edge_hidden['assets'] ),
+				'vulns'    => count( $inside_ids ) + count( $edge_ids ),
+				'borrowed' => $edge_hidden['findings'],
+			),
+			'totals'    => $totals,
+			'evidence'  => array(
+				'kev'         => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$intel} WHERE kev = 1" ), // phpcs:ignore
+				'exploit_ref' => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$intel} WHERE exploit_refs > 0" ), // phpcs:ignore
+				'epss'        => (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$intel} WHERE epss >= %f", VulnHub_Threat_Classify::epss_threshold() ) ), // phpcs:ignore
+				'kev_vulns'   => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$paths} WHERE kev = 1" ), // phpcs:ignore
+			),
+			'as_of'     => (string) ( VulnHub_Threat_Feeds::status()['last_run'] ?? '' ),
+			'threshold' => VulnHub_Threat_Classify::epss_threshold(),
+		);
+	}
+
+	/**
+	 * Count open findings for a set of definitions, optionally gated on assets.
+	 *
+	 * @param int[]      $vuln_ids  Definition ids.
+	 * @param int[]|null $asset_ids Assets to gate on, or null for no gate.
+	 * @param bool       $invert    Count the assets NOT in the list instead.
+	 * @return array{findings:int,assets:int}
+	 */
+	private static function count_findings( array $vuln_ids, ?array $asset_ids, bool $invert ): array {
+		global $wpdb;
+
+		if ( ! $vuln_ids ) {
+			return array( 'findings' => 0, 'assets' => 0 );
+		}
+
+		$f     = vh_table( 'findings' );
+		$where = array( "f.state IN ('open','reopened')", 'f.exception_id = 0', 'f.vuln_id IN (' . implode( ',', $vuln_ids ) . ')' );
+
+		/*
+		 * null and an empty array are deliberately different. null is "do not
+		 * gate on the asset at all"; an empty array is "gate on a set that
+		 * happens to be empty", which matches nothing going forwards and
+		 * everything inverted. Collapsing the two would silently report every
+		 * finding as internet-reachable on an estate where nothing is.
+		 */
+		if ( null !== $asset_ids ) {
+			if ( ! $asset_ids ) {
+				if ( ! $invert ) {
+					return array( 'findings' => 0, 'assets' => 0 );
+				}
+			} else {
+				$where[] = 'f.asset_id ' . ( $invert ? 'NOT IN' : 'IN' ) . ' (' . implode( ',', $asset_ids ) . ')';
+			}
+		}
+
+		$row = (array) $wpdb->get_row( // phpcs:ignore
+			"SELECT COUNT(*) AS findings, COUNT(DISTINCT f.asset_id) AS assets FROM {$f} f WHERE " . implode( ' AND ', $where ), // phpcs:ignore
+			ARRAY_A
+		);
+
+		return array(
+			'findings' => (int) ( $row['findings'] ?? 0 ),
+			'assets'   => (int) ( $row['assets'] ?? 0 ),
+		);
+	}
+
+	/**
+	 * How the user-delivered findings arrive: email, website or download.
+	 *
+	 * @param int[] $vuln_ids Definition ids already known to be user-delivered.
+	 * @return array<string,int>
+	 */
+	private static function delivery_split( array $vuln_ids ): array {
+		global $wpdb;
+
+		$out = array( 'mail' => 0, 'web' => 0, 'file' => 0 );
+
+		if ( ! $vuln_ids ) {
+			return $out;
+		}
+
+		$f     = vh_table( 'findings' );
+		$paths = VulnHub_Threat_Install::table( 'vuln_paths' );
+
+		$rows = (array) $wpdb->get_results( // phpcs:ignore
+			"SELECT p.delivery, COUNT(*) n
+			 FROM {$f} f INNER JOIN {$paths} p ON p.vuln_id = f.vuln_id
+			 WHERE f.state IN ('open','reopened') AND f.exception_id = 0
+			   AND f.vuln_id IN (" . implode( ',', $vuln_ids ) . ')
+			 GROUP BY p.delivery', // phpcs:ignore
+			ARRAY_A
+		);
+
+		foreach ( $rows as $row ) {
+			$key = (string) $row['delivery'];
+
+			if ( isset( $out[ $key ] ) ) {
+				$out[ $key ] += (int) $row['n'];
+			} else {
+				$out['web'] += (int) $row['n'];
+			}
+		}
+
+		return $out;
+	}
+
+	/* =================================================================
+	 * Drill-down
+	 * ============================================================== */
+
+	/**
+	 * Teach core's findings query about `route` and `poc`.
+	 *
+	 * Without this the widget's numbers would not be clickable, and a number
+	 * you cannot click is a number nobody can act on.
+	 *
+	 * @param array<string,mixed> $ext  Extension clauses.
+	 * @param array<string,mixed> $args Query arguments.
+	 * @return array<string,mixed>
+	 */
+	public static function findings_query( array $ext, array $args ): array {
+		$route = sanitize_key( (string) ( $args['route'] ?? '' ) );
+		$poc   = '' !== (string) ( $args['poc'] ?? '' ) && (bool) $args['poc'];
+
+		if ( '' === $route && ! $poc ) {
+			return $ext;
+		}
+
+		$only_poc = $poc || '' !== $route;
+
+		if ( '' === $route ) {
+			$ids                = self::vuln_ids( '', true );
+			$ext['where'][] = $ids ? 'f.vuln_id IN (' . implode( ',', $ids ) . ')' : '1=0';
+
+			return $ext;
+		}
+
+		if ( 'inside' === $route ) {
+			/*
+			 * The inside lane is two populations: things that only work from
+			 * inside, plus things that would work from the internet if the
+			 * machine were reachable and is not. Both are the same job for
+			 * whoever picks this list up, so the filter returns both.
+			 */
+			$inside = self::vuln_ids( 'inside', $only_poc );
+			$edge   = self::vuln_ids( 'edge', $only_poc );
+			$facing = self::internet_asset_ids();
+			$parts  = array();
+
+			if ( $inside ) {
+				$parts[] = 'f.vuln_id IN (' . implode( ',', $inside ) . ')';
+			}
+			if ( $edge ) {
+				$parts[] = '( f.vuln_id IN (' . implode( ',', $edge ) . ')'
+					. ( $facing ? ' AND f.asset_id NOT IN (' . implode( ',', $facing ) . ')' : '' ) . ' )';
+			}
+
+			$ext['where'][] = $parts ? '( ' . implode( ' OR ', $parts ) . ' )' : '1=0';
+
+			return $ext;
+		}
+
+		$ids = self::vuln_ids( $route, $only_poc );
+
+		if ( ! $ids ) {
+			$ext['where'][] = '1=0';
+
+			return $ext;
+		}
+
+		$ext['where'][] = 'f.vuln_id IN (' . implode( ',', $ids ) . ')';
+
+		if ( 'edge' === $route ) {
+			$facing = self::internet_asset_ids();
+			$ext['where'][] = $facing ? 'f.asset_id IN (' . implode( ',', $facing ) . ')' : '1=0';
+		}
+
+		return $ext;
+	}
+
+	/** Portal link to the findings behind one lane. */
+	public static function lane_url( string $route ): string {
+		if ( ! class_exists( 'VulnHub_Dash_Portal' ) ) {
+			return '';
+		}
+
+		return VulnHub_Dash_Portal::portal_url(
+			'vulnerabilities',
+			array(
+				'state' => 'open_any',
+				'route' => $route,
+				'poc'   => '1',
+			)
+		);
+	}
+}

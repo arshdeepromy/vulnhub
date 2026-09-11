@@ -1,0 +1,2786 @@
+<?php
+/**
+ * Front-end application: routing, the app shell, and the five views.
+ *
+ * The shell is rendered independently of the active theme so the product looks
+ * the same whatever theme is installed, while still calling wp_head()/wp_footer()
+ * so the admin bar and enqueued assets behave normally.
+ *
+ * @package VulnHub\Dashboard
+ */
+
+declare( strict_types = 1 );
+
+use VulnHub\Core\Repo;
+use VulnHub\Core\Tickets;
+use VulnHub\Core\Exceptions;
+use VulnHub\Core\Mapping;
+use VulnHub\Core\Caps;
+use VulnHub\Core\Coverage;
+use VulnHub\Core\Defender_Coverage;
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+final class VulnHub_Dash_App {
+
+	private static string $current_view = 'dashboard';
+
+	public static function init(): void {
+		add_shortcode( 'vulnhub_app', array( __CLASS__, 'shortcode' ) );
+		add_filter( 'template_include', array( __CLASS__, 'template_include' ), 99 );
+		add_action( 'wp_enqueue_scripts', array( __CLASS__, 'assets' ) );
+		add_action( 'wp_enqueue_scripts', array( __CLASS__, 'strip_builder_assets' ), 999 );
+		add_filter( 'body_class', array( __CLASS__, 'body_class' ) );
+		add_action( 'template_redirect', array( __CLASS__, 'redirect_signed_in' ) );
+	}
+
+	/* -----------------------------------------------------------------
+	 * Routing
+	 * --------------------------------------------------------------- */
+
+	/**
+	 * Which view, if any, this request is for.
+	 */
+	public static function view_for_post( ?WP_Post $post ): string {
+		if ( ! $post instanceof WP_Post ) {
+			return '';
+		}
+		if ( ! has_shortcode( (string) $post->post_content, 'vulnhub_app' ) ) {
+			return '';
+		}
+		foreach ( vulnhub_dash_views() as $view => $def ) {
+			if ( str_contains( (string) $post->post_content, 'view="' . $view . '"' ) ) {
+				return $view;
+			}
+		}
+		return 'dashboard';
+	}
+
+	/**
+	 * Send an already-signed-in visitor from sign-in to the portal.
+	 *
+	 * On `template_redirect` because that is the last hook before anything is
+	 * printed. The same test has always existed at the top of render_login(),
+	 * but a view runs long after the document head has gone out, so its
+	 * wp_safe_redirect() had no header left to set: it failed, exited, and
+	 * left whoever still had a session looking at an empty page.
+	 */
+	public static function redirect_signed_in(): void {
+		if ( ! is_singular() || is_admin() ) {
+			return;
+		}
+		if ( VulnHub_Dash_Portal::LOGIN_VIEW !== self::view_for_post( get_post() ) ) {
+			return;
+		}
+		if ( ! is_user_logged_in() || ! current_user_can( Caps::VIEW ) ) {
+			return;
+		}
+
+		wp_safe_redirect( VulnHub_Dash_Portal::portal_url() );
+		exit;
+	}
+
+	public static function template_include( string $template ): string {
+		if ( ! is_singular() ) {
+			return $template;
+		}
+		$view = self::view_for_post( get_post() );
+		if ( '' === $view ) {
+			return $template;
+		}
+
+		self::$current_view = $view;
+		return VULNHUB_DASH_DIR . 'templates/app.php';
+	}
+
+	/**
+	 * @param string[] $classes Body classes.
+	 * @return string[]
+	 */
+	public static function body_class( array $classes ): array {
+		$view = self::view_for_post( get_post() );
+
+		if ( '' !== $view ) {
+			$classes[] = 'vh-app-body';
+		}
+
+		/*
+		 * Sign-in is full-bleed, and the shell's centred, padded main is the
+		 * one thing standing in the way of that. The class is what login.css
+		 * hangs the override on.
+		 */
+		if ( VulnHub_Dash_Portal::LOGIN_VIEW === $view ) {
+			$classes[] = 'vh-login-body';
+		}
+
+		return $classes;
+	}
+
+	/**
+	 * Registration is unconditional, enqueueing is not.
+	 *
+	 * A VulnHub Elementor widget can appear on any page in the site, and
+	 * `get_style_depends()` can only name a handle WordPress already knows
+	 * about -- an unregistered handle is dropped in silence, which shows up as
+	 * a correct widget with no styling at all. So register everywhere, and
+	 * only enqueue where the portal itself is being served.
+	 */
+	/**
+	 * Cache-busting version for one bundled asset.
+	 *
+	 * The plugin version alone is not enough. Cloudflare sits in front of the
+	 * portal and sends `cache-control: max-age=14400` for CSS, so with a
+	 * version string that only moves on release, every stylesheet edit was
+	 * invisible to anyone who had loaded the portal in the previous four
+	 * hours -- the page served fresh markup styled by four-hour-old CSS,
+	 * which is how a finished popover arrived looking like raw fieldsets.
+	 *
+	 * The file's own mtime moves whenever the file does, so the URL changes
+	 * exactly when the bytes change and never otherwise. Falls back to the
+	 * plugin version if the file cannot be stat'd.
+	 *
+	 * @param string $rel Path relative to the plugin directory.
+	 */
+	private static function asset_ver( string $rel ): string {
+		static $cache = array();
+
+		if ( isset( $cache[ $rel ] ) ) {
+			return $cache[ $rel ];
+		}
+
+		$mtime = @filemtime( VULNHUB_DASH_DIR . $rel ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+
+		$cache[ $rel ] = $mtime ? VULNHUB_DASH_VERSION . '.' . $mtime : VULNHUB_DASH_VERSION;
+
+		return $cache[ $rel ];
+	}
+
+	public static function assets(): void {
+		wp_register_style( 'vulnhub-app', VULNHUB_DASH_URL . 'assets/app.css', array(), self::asset_ver( 'assets/app.css' ) );
+		// Redesign supplement: re-themes components the drop-in app.css does not
+		// cover (topbar layout, tables' matrix/segbars/meter, notices, toasts,
+		// OS badges, the product widget) and fits the real icon+text shell. Kept
+		// as its own file so the design app.css stays a clean drop-in to update.
+		wp_register_style( 'vulnhub-app-redesign', VULNHUB_DASH_URL . 'assets/app-redesign.css', array( 'vulnhub-app' ), self::asset_ver( 'assets/app-redesign.css' ) );
+		wp_register_script( 'vulnhub-app', VULNHUB_DASH_URL . 'assets/app.js', array( 'wp-api-fetch' ), self::asset_ver( 'assets/app.js' ), true );
+		// Motion layer for the dark redesign. Dependency-free and progressive:
+		// enqueued after app.css, in the footer; removing it leaves the portal
+		// fully usable but static.
+		wp_register_script( 'vulnhub-motion', VULNHUB_DASH_URL . 'assets/vh-motion.js', array(), self::asset_ver( 'assets/vh-motion.js' ), true );
+		wp_localize_script(
+			'vulnhub-app',
+			'VulnHubApp',
+			array(
+				'nonce'    => wp_create_nonce( 'wp_rest' ),
+				// Built with rest_url() rather than assembled in JavaScript,
+				// so this keeps working on an install in a subdirectory or
+				// with plain permalinks.
+				'restRoot' => esc_url_raw( rest_url( 'vulnhub-dashboard/v1/' ) ),
+				'i18n'     => array(
+					'raising'      => __( 'Raising…', 'vulnhub' ),
+					'error'        => __( 'Something went wrong.', 'vulnhub' ),
+					'noSelect'     => __( 'Select at least one finding first.', 'vulnhub' ),
+					'layoutSaved'  => __( 'Dashboard saved', 'vulnhub' ),
+					'layoutFailed' => __( 'That arrangement could not be saved.', 'vulnhub' ),
+				),
+			)
+		);
+
+		$view = self::view_for_post( get_post() );
+
+		if ( '' === $view ) {
+			return;
+		}
+		wp_enqueue_style( 'vulnhub-app' );
+		wp_enqueue_style( 'vulnhub-app-redesign' );
+		wp_enqueue_script( 'vulnhub-app' );
+		wp_enqueue_script( 'vulnhub-motion' );
+
+		if ( VulnHub_Dash_Portal::LOGIN_VIEW !== $view ) {
+			return;
+		}
+
+		/*
+		 * Sign-in is the one screen with its own typefaces and its own animated
+		 * scene, and it is also the only screen a signed-out visitor can reach.
+		 * Both are loaded here rather than with the app so the product itself
+		 * never pays for them.
+		 */
+		wp_enqueue_style(
+			'vulnhub-login-fonts',
+			'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap',
+			array(),
+			null
+		);
+		wp_enqueue_style( 'vulnhub-login', VULNHUB_DASH_URL . 'assets/login.css', array( 'vulnhub-app' ), self::asset_ver( 'assets/login.css' ) );
+		wp_enqueue_script( 'vulnhub-asm-bg', VULNHUB_DASH_URL . 'assets/attack-surface-bg.js', array(), self::asset_ver( 'assets/attack-surface-bg.js' ), true );
+		wp_enqueue_script( 'vulnhub-login', VULNHUB_DASH_URL . 'assets/login.js', array( 'vulnhub-asm-bg' ), self::asset_ver( 'assets/login.js' ), true );
+	}
+
+	/**
+	 * Keep the page builder off the sign-in screen.
+	 *
+	 * Elementor enqueues its frontend runtime site-wide, but only prints the
+	 * `elementorFrontendConfig` object on documents it actually built. Sign-in
+	 * is our own template, so the runtime arrived without its configuration and
+	 * threw a ReferenceError on load -- an uncaught exception in the console of
+	 * the one page every visitor sees before they are even signed in, plus two
+	 * bundles of dead weight on the slowest, coldest request in the product.
+	 *
+	 * Scoped to the login view on purpose: portal pages can legitimately embed
+	 * Elementor-built content, and the admin mirror renders whatever wp-admin
+	 * hands it.
+	 */
+	public static function strip_builder_assets(): void {
+		if ( VulnHub_Dash_Portal::LOGIN_VIEW !== self::view_for_post( get_post() ) ) {
+			return;
+		}
+
+		foreach ( array( 'elementor-frontend', 'elementor-webpack-runtime', 'elementor-frontend-modules', 'elementor-pro-frontend' ) as $handle ) {
+			wp_dequeue_script( $handle );
+		}
+
+		foreach ( array( 'elementor-frontend', 'elementor-post-13', 'elementor-icons', 'swiper', 'e-swiper' ) as $handle ) {
+			wp_dequeue_style( $handle );
+		}
+	}
+
+	/**
+	 * The shortcode is a fallback for when a theme or block context renders the
+	 * page without our template — the same view, without the shell chrome.
+	 *
+	 * @param array<string,string>|string $atts Shortcode attributes.
+	 */
+	public static function shortcode( $atts = array() ): string {
+		$atts = shortcode_atts( array( 'view' => 'dashboard' ), (array) $atts, 'vulnhub_app' );
+		$view = array_key_exists( (string) $atts['view'], vulnhub_dash_views() ) ? (string) $atts['view'] : 'dashboard';
+
+		ob_start();
+		self::render_view( $view );
+		return (string) ob_get_clean();
+	}
+
+	public static function current_view(): string {
+		return self::$current_view;
+	}
+
+	/* -----------------------------------------------------------------
+	 * Access control
+	 * --------------------------------------------------------------- */
+
+	private static function gate(): bool {
+		if ( is_user_logged_in() && current_user_can( Caps::VIEW ) ) {
+			return true;
+		}
+
+		echo '<div class="vh-gate">';
+		echo '<svg viewBox="0 0 24 24" class="vh-gate__icon" aria-hidden="true"><path d="M12 2l9 4v6c0 5-3.8 9.3-9 10-5.2-.7-9-5-9-10V6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+
+		if ( is_user_logged_in() ) {
+			echo '<h1>' . esc_html__( 'You do not have access to VulnHub', 'vulnhub' ) . '</h1>';
+			echo '<p>' . esc_html__( 'Your account is signed in but has not been granted a VulnHub role. Ask an administrator to assign you one.', 'vulnhub' ) . '</p>';
+		} else {
+			echo '<h1>' . esc_html__( 'Sign in to VulnHub', 'vulnhub' ) . '</h1>';
+			echo '<p>' . esc_html__( 'Live vulnerability, asset and ownership intelligence. Sign in to continue.', 'vulnhub' ) . '</p>';
+			printf(
+				'<a class="vh-btn vh-btn--primary" href="%s">%s</a>',
+				esc_url( VulnHub_Dash_Portal::login_url( (string) get_permalink() ) ),
+				esc_html__( 'Sign in', 'vulnhub' )
+			);
+		}
+		echo '</div>';
+
+		return false;
+	}
+
+	/* -----------------------------------------------------------------
+	 * Shell
+	 * --------------------------------------------------------------- */
+
+	/**
+	 * Extra destinations in the primary navigation.
+	 *
+	 * The five core views are pages the portal itself owns and renders. This
+	 * is for everything else somebody wants alongside them -- an Elementor
+	 * page built on VulnHub widgets, a runbook, a link out to Tenable. Each
+	 * entry is label, url and an SVG path for the icon; anything else is
+	 * ignored, and a link with no url is dropped.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	public static function extra_nav_links(): array {
+		$links = (array) apply_filters( 'vulnhub_portal_nav_extra', array() );
+		$out   = array();
+
+		foreach ( $links as $link ) {
+			if ( ! is_array( $link ) || empty( $link['url'] ) || empty( $link['label'] ) ) {
+				continue;
+			}
+
+			$out[] = array(
+				'label'  => (string) $link['label'],
+				'url'    => (string) $link['url'],
+				'icon'   => (string) ( $link['icon'] ?? 'M4 4h16v16H4z' ),
+				'active' => ! empty( $link['active'] ),
+			);
+		}
+
+		return $out;
+	}
+
+	public static function render_nav(): void {
+		$pages   = (array) get_option( 'vulnhub_dash_pages', array() );
+		$current = self::$current_view;
+		?>
+		<header class="vh-topbar">
+			<a class="vh-brand" href="<?php echo esc_url( home_url( '/' ) ); ?>">
+				<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l9 4v6c0 5-3.8 9.3-9 10-5.2-.7-9-5-9-10V6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+				<span><?php echo esc_html( (string) vulnhub()->settings->platform( 'org_name', get_bloginfo( 'name' ) ) ); ?></span>
+			</a>
+
+			<nav class="vh-nav" aria-label="<?php esc_attr_e( 'VulnHub sections', 'vulnhub' ); ?>">
+				<?php foreach ( vulnhub_dash_views() as $view => $def ) : ?>
+					<?php
+					if ( ! empty( $def['hidden'] ) ) {
+						continue;
+					}
+					$url = ! empty( $pages[ $view ] ) ? get_permalink( (int) $pages[ $view ] ) : '#';
+					if ( ! $url ) {
+						continue;
+					}
+					?>
+					<a class="vh-nav__link<?php echo $current === $view ? ' is-active' : ''; ?>"
+						href="<?php echo esc_url( $url ); ?>"
+						<?php echo $current === $view ? ' aria-current="page"' : ''; ?>>
+						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="<?php echo esc_attr( $def['icon'] ); ?>" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+						<span class="vh-nav__txt"><?php echo esc_html( $def['menu'] ); ?></span>
+					</a>
+				<?php endforeach; ?>
+				<?php foreach ( self::extra_nav_links() as $link ) : ?>
+					<a class="vh-nav__link<?php echo ! empty( $link['active'] ) ? ' is-active' : ''; ?>"
+						href="<?php echo esc_url( (string) $link['url'] ); ?>">
+						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="<?php echo esc_attr( (string) $link['icon'] ); ?>" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+						<span class="vh-nav__txt"><?php echo esc_html( (string) $link['label'] ); ?></span>
+					</a>
+				<?php endforeach; ?>
+			</nav>
+
+			<div class="vh-topbar__end">
+				<?php if ( vulnhub()->settings->mock_mode() ) : ?>
+					<span class="vh-chip vh-chip--warn" title="<?php esc_attr_e( 'Running on generated sample data. Add credentials in the admin portal to go live.', 'vulnhub' ); ?>">
+						<?php esc_html_e( 'Sample data', 'vulnhub' ); ?>
+					</span>
+				<?php endif; ?>
+				<button type="button" class="vh-iconbtn" data-vh-theme aria-label="<?php esc_attr_e( 'Switch between light and dark', 'vulnhub' ); ?>">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 13a9 9 0 11-10-10 7 7 0 0010 10z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+				</button>
+				<?php if ( current_user_can( Caps::MANAGE ) ) : ?>
+					<a class="vh-nav__link vh-nav__link--admin<?php echo VulnHub_Dash_Portal::ADMIN_VIEW === $current ? ' is-active' : ''; ?>"
+						href="<?php echo esc_url( VulnHub_Dash_Portal::portal_url( VulnHub_Dash_Portal::ADMIN_VIEW ) ); ?>"
+						title="<?php esc_attr_e( 'Administration', 'vulnhub' ); ?>">
+						<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M19.4 13a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-2.9 1.2V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-2.9-1.2l-.1.1a2 2 0 11-2.8-2.8l.1-.1A1.7 1.7 0 004.6 15H4.5a2 2 0 110-4h.1a1.7 1.7 0 001.2-2.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 002.9-1.2V4a2 2 0 114 0v.1a1.7 1.7 0 002.9 1.2l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 001.2 2.9h.1a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+						<span class="vh-nav__txt"><?php esc_html_e( 'Administration', 'vulnhub' ); ?></span>
+					</a>
+				<?php endif; ?>
+				<?php if ( is_user_logged_in() ) : ?>
+					<details class="vh-account">
+						<summary aria-label="<?php esc_attr_e( 'Account', 'vulnhub' ); ?>">
+							<span class="vh-account__initials"><?php echo esc_html( strtoupper( substr( wp_get_current_user()->display_name, 0, 2 ) ) ); ?></span>
+						</summary>
+						<div class="vh-account__menu">
+							<p class="vh-account__name"><?php echo esc_html( wp_get_current_user()->display_name ); ?></p>
+							<p class="vh-account__mail"><?php echo esc_html( wp_get_current_user()->user_email ); ?></p>
+							<a href="<?php echo esc_url( admin_url( 'profile.php' ) ); ?>"><?php esc_html_e( 'Security &amp; MFA', 'vulnhub' ); ?></a>
+							<a href="<?php echo esc_url( wp_logout_url( VulnHub_Dash_Portal::login_url() ) ); ?>"><?php esc_html_e( 'Sign out', 'vulnhub' ); ?></a>
+						</div>
+					</details>
+				<?php endif; ?>
+			</div>
+		</header>
+		<?php
+	}
+
+	/* -----------------------------------------------------------------
+	 * Views
+	 * --------------------------------------------------------------- */
+
+	public static function render_view( string $view ): void {
+		if ( VulnHub_Dash_Portal::LOGIN_VIEW === $view ) {
+			VulnHub_Dash_Portal::render_login();
+			return;
+		}
+		if ( ! self::gate() ) {
+			return;
+		}
+
+		/*
+		 * A view contributed by another plugin renders itself. Checked before
+		 * the switch so a contributed view cannot be silently swallowed by
+		 * the default case and shown as the dashboard, which is a confusing
+		 * failure to debug.
+		 */
+		if ( has_action( 'vulnhub_dash_render_view_' . $view ) ) {
+			do_action( 'vulnhub_dash_render_view_' . $view );
+			return;
+		}
+
+		switch ( $view ) {
+			case VulnHub_Dash_Portal::ADMIN_VIEW:
+				VulnHub_Dash_Portal::render_admin();
+				break;
+			case 'vulnerabilities':
+				self::view_vulnerabilities();
+				break;
+			case 'assets':
+				self::view_assets();
+				break;
+			case 'tickets':
+				self::view_tickets();
+				break;
+			case 'exceptions':
+				self::view_exceptions();
+				break;
+			case 'products':
+				self::view_products();
+				break;
+			case 'vendors':
+				self::view_vendors();
+				break;
+			default:
+				self::view_dashboard();
+		}
+	}
+
+	/**
+	 * Read a whitelisted filter from the query string.
+	 */
+	private static function q( string $key, string $default = '' ): string {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		return isset( $_GET[ $key ] ) ? sanitize_text_field( wp_unslash( (string) $_GET[ $key ] ) ) : $default;
+	}
+
+	private static function qi( string $key, int $default = 0 ): int {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		return isset( $_GET[ $key ] ) ? (int) $_GET[ $key ] : $default;
+	}
+
+	private static function page_url( string $view, array $args = array() ): string {
+		$pages = (array) get_option( 'vulnhub_dash_pages', array() );
+		$base  = ! empty( $pages[ $view ] ) ? (string) get_permalink( (int) $pages[ $view ] ) : home_url( '/' );
+		return $args ? add_query_arg( $args, $base ) : $base;
+	}
+
+	/* ------------------------------------------------------ dashboard. */
+
+	/**
+	 * The dashboard is whatever the person looking at it decided it is.
+	 *
+	 * Widgets come from the registry, the arrangement comes from the
+	 * operator's own saved layout, and the editor below is progressive: with
+	 * no JavaScript you still get the dashboard, you just cannot rearrange it.
+	 */
+	private static function view_dashboard(): void {
+		$layout  = VulnHub_Dash_Widgets::layout();
+		$all     = VulnHub_Dash_Widgets::all();
+		$notice  = self::q( 'vh_layout' );
+		$active  = array_column( $layout, 'id' );
+		?>
+		<div class="vh-page-head">
+			<div>
+				<h1><?php esc_html_e( 'Security dashboard', 'vulnhub' ); ?></h1>
+				<p class="vh-sub"><?php esc_html_e( 'Live exposure across the estate, who owns it, what is being done about it, and what has never been scanned at all.', 'vulnhub' ); ?></p>
+			</div>
+			<div class="vh-page-head__actions">
+				<button type="button" class="vh-btn vh-btn--ghost" data-vh-customise aria-expanded="false" aria-controls="vh-customise" hidden>
+					<svg viewBox="0 0 24 24" aria-hidden="true" width="15" height="15"><path d="M4 7h10M18 7h2M4 17h4M12 17h8M14 4v6M8 14v6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+					<?php esc_html_e( 'Customise', 'vulnhub' ); ?>
+				</button>
+			</div>
+		</div>
+
+		<?php if ( 'saved' === $notice ) : ?>
+			<p class="vh-flash vh-flash--good"><?php esc_html_e( 'Your dashboard has been saved.', 'vulnhub' ); ?></p>
+		<?php elseif ( 'reset' === $notice ) : ?>
+			<p class="vh-flash"><?php esc_html_e( 'Your dashboard is back to the default arrangement.', 'vulnhub' ); ?></p>
+		<?php endif; ?>
+
+		<form class="vh-customise" id="vh-customise" method="post"
+			action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" hidden>
+			<input type="hidden" name="action" value="vulnhub_save_layout">
+			<input type="hidden" name="vh_from_portal" value="1">
+			<?php wp_nonce_field( 'vulnhub_save_layout' ); ?>
+			<input type="hidden" name="layout" value="" data-vh-layout-field>
+
+			<div class="vh-customise__head">
+				<div>
+					<h2><?php esc_html_e( 'Build your dashboard', 'vulnhub' ); ?></h2>
+					<p class="vh-sub"><?php esc_html_e( 'Add the widgets you care about, set how wide each one sits, and drag to reorder. Saved to your account, so everyone can keep their own view.', 'vulnhub' ); ?></p>
+				</div>
+				<div class="vh-customise__actions">
+					<button type="submit" class="vh-btn"><?php esc_html_e( 'Save dashboard', 'vulnhub' ); ?></button>
+					<button type="submit" name="reset" value="1" class="vh-btn vh-btn--ghost"><?php esc_html_e( 'Reset to default', 'vulnhub' ); ?></button>
+				</div>
+			</div>
+
+			<div class="vh-customise__cols">
+				<div class="vh-customise__col">
+					<h3><?php esc_html_e( 'On your dashboard', 'vulnhub' ); ?></h3>
+					<ol class="vh-picked" data-vh-picked>
+						<?php foreach ( $layout as $item ) : ?>
+							<?php $def = $all[ $item['id'] ] ?? null; ?>
+							<?php if ( ! $def ) : continue; endif; ?>
+							<li class="vh-picked__row" draggable="true" data-vh-id="<?php echo esc_attr( $item['id'] ); ?>" data-vh-width="<?php echo esc_attr( (string) $item['width'] ); ?>">
+								<span class="vh-picked__grip" aria-hidden="true">⋮⋮</span>
+								<span class="vh-picked__label"><?php echo esc_html( (string) $def['label'] ); ?></span>
+								<label class="vh-picked__width">
+									<span class="screen-reader-text"><?php esc_html_e( 'Width', 'vulnhub' ); ?></span>
+									<select data-vh-width-select>
+										<?php foreach ( VulnHub_Dash_Widgets::WIDTHS as $w ) : ?>
+											<option value="<?php echo esc_attr( (string) $w ); ?>" <?php selected( (int) $item['width'], $w ); ?>>
+												<?php
+												printf(
+													/* translators: %d: number of twelfths of the grid. */
+													esc_html__( '%d/12', 'vulnhub' ),
+													(int) $w
+												);
+												?>
+											</option>
+										<?php endforeach; ?>
+									</select>
+								</label>
+								<button type="button" class="vh-picked__remove" data-vh-remove aria-label="<?php esc_attr_e( 'Remove widget', 'vulnhub' ); ?>">&times;</button>
+							</li>
+						<?php endforeach; ?>
+					</ol>
+					<p class="vh-picked__empty" data-vh-picked-empty <?php echo $layout ? 'hidden' : ''; ?>>
+						<?php esc_html_e( 'Nothing on the dashboard yet. Add a widget from the right.', 'vulnhub' ); ?>
+					</p>
+				</div>
+
+				<div class="vh-customise__col">
+					<h3><?php esc_html_e( 'Available widgets', 'vulnhub' ); ?></h3>
+					<?php foreach ( VulnHub_Dash_Widgets::groups() as $group => $group_label ) : ?>
+						<?php
+						$in_group = array_filter( $all, static fn( array $w ): bool => ( $w['group'] ?? '' ) === $group );
+						if ( ! $in_group ) {
+							continue;
+						}
+						?>
+						<p class="vh-customise__group"><?php echo esc_html( $group_label ); ?></p>
+						<ul class="vh-available">
+							<?php foreach ( $in_group as $id => $def ) : ?>
+								<li>
+									<button type="button" class="vh-available__add"
+										data-vh-add="<?php echo esc_attr( (string) $id ); ?>"
+										data-vh-label="<?php echo esc_attr( (string) $def['label'] ); ?>"
+										data-vh-default-width="<?php echo esc_attr( (string) $def['width'] ); ?>"
+										<?php echo in_array( $id, $active, true ) ? 'disabled' : ''; ?>>
+										<span class="vh-available__plus" aria-hidden="true">+</span>
+										<span>
+											<strong><?php echo esc_html( (string) $def['label'] ); ?></strong>
+											<em><?php echo esc_html( (string) ( $def['summary'] ?? '' ) ); ?></em>
+										</span>
+									</button>
+								</li>
+							<?php endforeach; ?>
+						</ul>
+					<?php endforeach; ?>
+				</div>
+			</div>
+		</form>
+
+		<div class="vh-board" data-vh-board>
+			<?php
+			if ( ! $layout ) {
+				echo VulnHub_Dash_Charts::empty_state( esc_html__( 'Your dashboard is empty. Use Customise to add widgets.', 'vulnhub' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			}
+
+			foreach ( $layout as $item ) {
+				VulnHub_Dash_Widgets::render( (string) $item['id'], (int) $item['width'] );
+			}
+			?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Columns the findings table may be sorted by, and the direction each
+	 * one should open in. Mirrors the keys Repo::findings() accepts; anything
+	 * outside this list falls back to risk_score.
+	 *
+	 * @var array<string,string>
+	 */
+	private const SORTABLE = array(
+		'risk_score'      => 'DESC',
+		'severity'        => 'DESC',
+		'title'           => 'ASC',
+		'hostname'        => 'ASC',
+		'due_at'          => 'ASC',
+		'last_found'      => 'DESC',
+		'asset_type'      => 'ASC',
+		'owner_person_id' => 'DESC',
+		'open_critical'   => 'DESC',
+		'last_seen'       => 'DESC',
+	);
+
+	/**
+	 * The systems that know an asset, as chips that filter the list.
+	 *
+	 * The date is in the tooltip rather than on the chip because a row of
+	 * three dated chips is unreadable at a glance, but the date is the whole
+	 * point once a reader stops to look: a source that last claimed a machine
+	 * eight months ago is the one worth doubting.
+	 *
+	 * @param string $stored The asset's `sources_json` column.
+	 * @param bool   $link   Whether chips should filter the assets list.
+	 * @return string Escaped HTML.
+	 */
+	private static function source_chips( string $stored, bool $link = true ): string {
+		$seen = Repo::source_map( $stored );
+
+		if ( ! $seen ) {
+			return '<span class="vh-muted" title="' . esc_attr__( 'No feed has claimed this asset.', 'vulnhub' ) . '">&mdash;</span>';
+		}
+
+		$labels = vh_asset_sources();
+		$out    = array();
+
+		foreach ( $seen as $slug => $date ) {
+			$name = (string) ( $labels[ $slug ] ?? ucfirst( $slug ) );
+			$tip  = '' === $date
+				/* translators: %s: name of a source system. */
+				? sprintf( __( '%s knows this asset. No date recorded.', 'vulnhub' ), $name )
+				/* translators: 1: name of a source system, 2: a date. */
+				: sprintf( __( '%1$s last claimed this asset on %2$s.', 'vulnhub' ), $name, vh_date( $date ) );
+
+			$chip = sprintf(
+				'<span class="vh-chip vh-chip--src vh-chip--src-%s" title="%s">%s</span>',
+				esc_attr( $slug ),
+				esc_attr( $tip ),
+				esc_html( $name )
+			);
+
+			$out[] = $link
+				? '<a class="vh-srcs__link" href="' . esc_url( self::page_url( 'assets', array( 'known' => $slug, 'life' => 'reportable' ) ) ) . '">' . $chip . '</a>'
+				: $chip;
+		}
+
+		return '<span class="vh-srcs">' . implode( ' ', $out ) . '</span>';
+	}
+
+	/**
+	 * A sortable column header: a link that toggles direction, and tells a
+	 * screen reader which way the table is currently ordered.
+	 */
+	private static function sort_th( string $key, string $label, string $orderby, string $order, string $page = 'vulnerabilities' ): void {
+		$active = $orderby === $key;
+		$next   = $active
+			? ( 'ASC' === $order ? 'DESC' : 'ASC' )
+			: ( self::SORTABLE[ $key ] ?? 'DESC' );
+
+		$params          = $_GET; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$params          = is_array( $params ) ? array_map( 'sanitize_text_field', wp_unslash( $params ) ) : array();
+		$params['orderby'] = $key;
+		$params['order']   = $next;
+		// A new sort starts at page one; keeping the old offset lands the
+		// reader in the middle of a list they have not seen the top of.
+		unset( $params['vp'], $params['ap'], $params['page_id'] );
+
+		$aria = $active ? ( 'ASC' === $order ? 'ascending' : 'descending' ) : 'none';
+
+		printf(
+			'<th aria-sort="%s"><a class="vh-sort%s" href="%s">%s<span class="vh-sort__mark" aria-hidden="true">%s</span></a></th>',
+			esc_attr( $aria ),
+			$active ? ' is-active' : '',
+			esc_url( self::page_url( $page, $params ) ),
+			esc_html( $label ),
+			$active ? ( 'ASC' === $order ? '&#9650;' : '&#9660;' ) : ''
+		);
+	}
+
+	/* ------------------------------------------------ vulnerabilities. */
+
+	/**
+	 * One vulnerability: what it is, how to fix it, and who has it.
+	 *
+	 * The list answers "what is wrong across the estate"; this answers "what
+	 * *is* this thing". Tenable's own words for that -- the description, the
+	 * solution, the plugin family that names the affected product -- were
+	 * being imported and stored all along with nowhere to read them.
+	 *
+	 * @param int $vuln_id Vulnerability id.
+	 */
+	private static function view_vulnerability( int $vuln_id ): void {
+		$v = Repo::vuln( $vuln_id );
+
+		if ( ! $v ) {
+			echo '<p class="vh-chart-empty">' . esc_html__( 'That vulnerability is not in the catalogue.', 'vulnhub' ) . '</p>';
+			return;
+		}
+
+		$per   = 25;
+		$paged = max( 1, self::qi( 'vp', 1 ) );
+
+		$affected = Repo::findings(
+			array(
+				'vuln_id' => $vuln_id,
+				'state'   => self::q( 'state', 'open_any' ),
+				'orderby' => 'risk_score',
+				'limit'   => $per,
+				'offset'  => ( $paged - 1 ) * $per,
+			)
+		);
+
+		$all   = Repo::findings( array( 'vuln_id' => $vuln_id, 'limit' => 1 ) );
+		$total = (int) $affected['total'];
+		$pages = max( 1, (int) ceil( $total / $per ) );
+		$cves  = vh_json( (string) $v['cve_json'] );
+		$links = array_values( array_filter( array_map( 'trim', preg_split( '/[\r\n]+/', (string) $v['see_also'] ) ?: array() ) ) );
+		?>
+		<p class="vh-sub">
+			<a href="<?php echo esc_url( self::page_url( 'vulnerabilities' ) ); ?>">&larr; <?php esc_html_e( 'All vulnerabilities', 'vulnhub' ); ?></a>
+		</p>
+
+		<div class="vh-page-head">
+			<div>
+				<h1><?php echo esc_html( (string) $v['title'] ); ?></h1>
+				<p class="vh-sub">
+					<span class="vh-pill vh-pill--<?php echo esc_attr( (string) $v['severity'] ); ?>"><?php echo esc_html( vh_severity_label( (string) $v['severity'] ) ); ?></span>
+					<?php if ( $v['family'] ) : ?>
+						· <?php echo esc_html( (string) $v['family'] ); ?>
+					<?php endif; ?>
+					· <span class="vh-mono"><?php echo esc_html( 'plugin ' . $v['plugin_id'] ); ?></span>
+				</p>
+			</div>
+		</div>
+
+		<div class="vh-grid vh-grid--3">
+			<section class="vh-panel">
+				<header class="vh-panel__head"><h2><?php esc_html_e( 'Scoring', 'vulnhub' ); ?></h2></header>
+				<dl class="vh-dl">
+					<dt><?php esc_html_e( 'CVSS v3', 'vulnhub' ); ?></dt>
+					<dd class="vh-mono"><?php echo esc_html( (float) $v['cvss3_base'] > 0 ? (string) $v['cvss3_base'] : '—' ); ?></dd>
+					<dt><?php esc_html_e( 'CVSS v2', 'vulnhub' ); ?></dt>
+					<dd class="vh-mono"><?php echo esc_html( (float) $v['cvss2_base'] > 0 ? (string) $v['cvss2_base'] : '—' ); ?></dd>
+					<dt><?php esc_html_e( 'VPR', 'vulnhub' ); ?></dt>
+					<dd class="vh-mono"><?php echo esc_html( (float) $v['vpr_score'] > 0 ? (string) $v['vpr_score'] : '—' ); ?></dd>
+					<dt><?php esc_html_e( 'Exploit', 'vulnhub' ); ?></dt>
+					<dd>
+						<?php if ( ! empty( $v['exploit_available'] ) ) : ?>
+							<span class="vh-chip vh-chip--bad"><?php esc_html_e( 'Available in the wild', 'vulnhub' ); ?></span>
+						<?php else : ?>
+							<span class="vh-sub"><?php esc_html_e( 'None reported', 'vulnhub' ); ?></span>
+						<?php endif; ?>
+					</dd>
+					<dt><?php esc_html_e( 'Patch published', 'vulnhub' ); ?></dt>
+					<dd><?php echo esc_html( $v['patch_publication_date'] ? vh_date( (string) $v['patch_publication_date'] ) : '—' ); ?></dd>
+					<dt><?php esc_html_e( 'CVE', 'vulnhub' ); ?></dt>
+					<dd class="vh-mono"><?php echo esc_html( $cves ? implode( ', ', array_slice( $cves, 0, 6 ) ) : '—' ); ?></dd>
+				</dl>
+			</section>
+
+			<section class="vh-panel">
+				<header class="vh-panel__head"><h2><?php esc_html_e( 'Exposure', 'vulnhub' ); ?></h2></header>
+				<dl class="vh-dl">
+					<dt><?php esc_html_e( 'Assets affected', 'vulnhub' ); ?></dt>
+					<dd><strong><?php echo esc_html( number_format_i18n( (int) $all['total'] ) ); ?></strong></dd>
+					<dt><?php esc_html_e( 'Still open', 'vulnhub' ); ?></dt>
+					<dd><?php echo esc_html( number_format_i18n( (int) Repo::findings( array( 'vuln_id' => $vuln_id, 'state' => 'open_any', 'limit' => 1 ) )['total'] ) ); ?></dd>
+					<dt><?php esc_html_e( 'Fixed', 'vulnhub' ); ?></dt>
+					<dd><?php echo esc_html( number_format_i18n( (int) Repo::findings( array( 'vuln_id' => $vuln_id, 'state' => 'fixed', 'limit' => 1 ) )['total'] ) ); ?></dd>
+					<dt><?php esc_html_e( 'Past SLA', 'vulnhub' ); ?></dt>
+					<dd><?php echo esc_html( number_format_i18n( (int) Repo::findings( array( 'vuln_id' => $vuln_id, 'state' => 'open_any', 'overdue' => '1', 'limit' => 1 ) )['total'] ) ); ?></dd>
+					<dt><?php esc_html_e( 'Source', 'vulnhub' ); ?></dt>
+					<dd><?php echo esc_html( (string) $v['source'] ); ?></dd>
+				</dl>
+			</section>
+
+			<section class="vh-panel">
+				<header class="vh-panel__head"><h2><?php esc_html_e( 'How to fix it', 'vulnhub' ); ?></h2></header>
+				<?php if ( trim( (string) $v['solution'] ) !== '' ) : ?>
+					<div class="vh-prose"><?php echo esc_html( (string) $v['solution'] ); ?></div>
+				<?php else : ?>
+					<p class="vh-sub"><?php esc_html_e( 'The scanner did not supply a remediation for this plugin.', 'vulnhub' ); ?></p>
+				<?php endif; ?>
+				<?php if ( $links ) : ?>
+					<h3 class="vh-h3"><?php esc_html_e( 'References', 'vulnhub' ); ?></h3>
+					<ul class="vh-links">
+						<?php foreach ( array_slice( $links, 0, 8 ) as $link ) : ?>
+							<li>
+								<?php if ( str_starts_with( $link, 'http' ) ) : ?>
+									<a href="<?php echo esc_url( $link ); ?>" target="_blank" rel="noopener noreferrer nofollow"><?php echo esc_html( vh_trim( $link, 70 ) ); ?></a>
+								<?php else : ?>
+									<?php echo esc_html( vh_trim( $link, 70 ) ); ?>
+								<?php endif; ?>
+							</li>
+						<?php endforeach; ?>
+					</ul>
+				<?php endif; ?>
+			</section>
+		</div>
+
+		<section class="vh-panel">
+			<header class="vh-panel__head"><h2><?php esc_html_e( 'What this is', 'vulnhub' ); ?></h2></header>
+			<?php if ( trim( (string) $v['description'] ) !== '' ) : ?>
+				<?php \VulnHub\Core\Prose::render( (string) $v['description'] ); ?>
+			<?php else : ?>
+				<p class="vh-sub"><?php esc_html_e( 'No description was supplied for this plugin.', 'vulnhub' ); ?></p>
+			<?php endif; ?>
+		</section>
+
+		<section class="vh-panel">
+			<header class="vh-panel__head">
+				<h2><?php esc_html_e( 'Affected assets', 'vulnhub' ); ?></h2>
+				<?php
+				/*
+				 * The same export as the vulnerability list, narrowed to this
+				 * one plugin. Somebody who has opened a KB with 433 affected
+				 * machines is very often here to hand that list to whoever
+				 * patches them, and until now the only way to get it was to
+				 * go back out and rebuild the filter on the list screen.
+				 */
+				VulnHub_Dash_Export::button(
+					'findings',
+					array(
+						'vuln'  => $vuln_id,
+						'state' => self::q( 'state', 'open_any' ),
+					)
+				);
+				?>
+			</header>
+
+			<form class="vh-filters" method="get">
+				<input type="hidden" name="vuln" value="<?php echo esc_attr( (string) $vuln_id ); ?>">
+				<label><?php esc_html_e( 'State', 'vulnhub' ); ?>
+					<select name="state">
+						<option value="open_any" <?php selected( self::q( 'state', 'open_any' ), 'open_any' ); ?>><?php esc_html_e( 'Open', 'vulnhub' ); ?></option>
+						<option value="fixed" <?php selected( self::q( 'state' ), 'fixed' ); ?>><?php esc_html_e( 'Fixed', 'vulnhub' ); ?></option>
+						<option value="" <?php selected( self::q( 'state' ), '' ); ?>><?php esc_html_e( 'Any state', 'vulnhub' ); ?></option>
+					</select>
+				</label>
+				<button class="vh-btn"><?php esc_html_e( 'Apply', 'vulnhub' ); ?></button>
+			</form>
+
+			<?php if ( ! $affected['rows'] ) : ?>
+				<p class="vh-ok-note"><?php esc_html_e( 'No assets match that state.', 'vulnhub' ); ?></p>
+			<?php else : ?>
+				<div class="vh-tablewrap">
+					<table class="vh-table">
+						<thead><tr>
+							<th><?php esc_html_e( 'Asset', 'vulnhub' ); ?></th>
+							<th><?php esc_html_e( 'Type', 'vulnhub' ); ?></th>
+							<th><?php esc_html_e( 'App', 'vulnhub' ); ?></th>
+							<th><?php esc_html_e( 'Install path', 'vulnhub' ); ?></th>
+							<th><?php esc_html_e( 'Owner', 'vulnhub' ); ?></th>
+							<th><?php esc_html_e( 'State', 'vulnhub' ); ?></th>
+							<th><?php esc_html_e( 'First found', 'vulnhub' ); ?></th>
+							<th><?php esc_html_e( 'Due', 'vulnhub' ); ?></th>
+							<th><?php esc_html_e( 'Ticket', 'vulnhub' ); ?></th>
+						</tr></thead>
+						<tbody>
+						<?php foreach ( $affected['rows'] as $f ) : ?>
+							<?php $overdue = ! empty( $f['due_at'] ) && strtotime( (string) $f['due_at'] . ' UTC' ) < time(); ?>
+							<tr>
+								<td>
+									<a class="vh-mono" href="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $f['asset_id'] ) ) ); ?>"><strong><?php echo esc_html( (string) $f['hostname'] ); ?></strong></a>
+									<span class="vh-meta"><?php echo esc_html( (string) $f['ipv4'] ); ?></span>
+								</td>
+								<td><?php echo esc_html( vh_asset_types()[ (string) $f['asset_type'] ] ?? '' ); ?></td>
+								<td>
+									<?php if ( ! empty( $f['bundle_app'] ) ) : ?>
+										<span class="vh-appcell">
+											<?php echo VulnHub_Dash_Widgets::product_icon( (string) ( $f['bundle_app_slug'] ?? '' ), 'application', (string) $f['bundle_app'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+											<span><?php echo esc_html( (string) $f['bundle_app'] ); ?></span>
+										</span>
+									<?php else : ?>
+										<span class="vh-meta">&mdash;</span>
+									<?php endif; ?>
+								</td>
+								<td>
+									<?php $vh_path = VH_Product::install_path( (string) ( $f['output'] ?? '' ) ); ?>
+									<?php if ( '' !== $vh_path ) : ?>
+										<code class="vh-path" title="<?php echo esc_attr( $vh_path ); ?>"><?php echo esc_html( $vh_path ); ?></code>
+									<?php else : ?>
+										<span class="vh-meta">&mdash;</span>
+									<?php endif; ?>
+								</td>
+								<td>
+									<?php if ( ! empty( $f['owner_name'] ) ) : ?>
+										<?php echo esc_html( (string) $f['owner_name'] ); ?>
+										<span class="vh-meta"><?php echo esc_html( (string) ( $f['team_name'] ?: '' ) ); ?></span>
+									<?php elseif ( ! empty( $f['team_name'] ) ) : ?>
+										<?php echo esc_html( (string) $f['team_name'] ); ?>
+									<?php else : ?>
+										<span class="vh-chip vh-chip--warn"><?php esc_html_e( 'Unassigned', 'vulnhub' ); ?></span>
+									<?php endif; ?>
+								</td>
+								<td><?php echo esc_html( ucfirst( (string) $f['state'] ) ); ?></td>
+								<td><?php echo esc_html( $f['first_found'] ? vh_ago( (string) $f['first_found'] ) : '—' ); ?></td>
+								<td class="<?php echo $overdue ? 'vh-overdue' : ''; ?>"><?php echo esc_html( $f['due_at'] ? vh_ago( (string) $f['due_at'] ) : '—' ); ?></td>
+								<td>
+									<?php if ( ! empty( $f['ticket_key'] ) ) : ?>
+										<a class="vh-mono" href="<?php echo esc_url( (string) $f['ticket_url'] ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( (string) $f['ticket_key'] ); ?></a>
+									<?php else : ?>—<?php endif; ?>
+								</td>
+							</tr>
+						<?php endforeach; ?>
+						</tbody>
+					</table>
+				</div>
+				<?php self::pager( $paged, $pages, 'vp' ); ?>
+			<?php endif; ?>
+		</section>
+		<?php
+	}
+
+	private static function view_vulnerabilities(): void {
+		$vh_one = self::qi( 'vuln' );
+
+		if ( $vh_one > 0 ) {
+			self::view_vulnerability( $vh_one );
+			return;
+		}
+
+		$per   = 25;
+		$paged = max( 1, self::qi( 'vp', 1 ) );
+
+		// Repo::findings() has always understood these; the portal never sent
+		// them, so its table could not be sorted at all. wp-admin's findings
+		// screen did, which is how it went unnoticed.
+		$orderby = self::q( 'orderby', 'risk_score' );
+		$order   = 'ASC' === strtoupper( self::q( 'order', 'DESC' ) ) ? 'ASC' : 'DESC';
+
+		if ( ! isset( self::SORTABLE[ $orderby ] ) ) {
+			$orderby = 'risk_score';
+		}
+
+		/*
+		 * Lifecycle scope, the same vocabulary the assets list uses.
+		 *
+		 * This screen had no lifecycle filter at all. It looked right because
+		 * the archive sweep takes findings off an asset when it leaves the
+		 * estate, so they stop matching `open_any` -- but that is a side
+		 * effect, not a filter, and nothing here would notice a sweep that
+		 * missed. Asking explicitly means the list is right on its own terms.
+		 */
+		$vh_vlife     = self::q( 'life' );
+		$vh_vlife_bad = '';
+		$vh_vlife_ok  = array_merge( array( 'reportable', 'in_service_all', 'all' ), array_keys( vh_lifecycle_statuses() ) );
+
+		if ( '' !== $vh_vlife && ! in_array( $vh_vlife, $vh_vlife_ok, true ) ) {
+			$vh_vlife_bad = $vh_vlife;
+			$vh_vlife     = '';
+		}
+
+		$args = array(
+			'state'      => self::q( 'state', 'open_any' ),
+			'lifecycle'  => '' === $vh_vlife ? 'reportable' : $vh_vlife,
+			'product_slug' => self::q( 'product' ),
+			'severity'   => self::q( 'severity' ),
+			'age'        => self::q( 'age' ),
+			// Attack path, from the threat-context plugin. Harmless when that
+			// plugin is inactive: with no filter listening, nothing reads them.
+			'route'      => self::q( 'route' ),
+			'poc'        => self::q( 'poc' ),
+			'asset_type' => self::q( 'asset_type' ),
+			'team_id'    => self::qi( 'team_id' ),
+			'search'     => self::q( 'search' ),
+			'overdue'    => self::q( 'overdue' ),
+			// '0' is a real filter here -- "no patch exists" -- so it is
+			// read as a string and the array_filter below keeps it.
+			'patch_available' => self::q( 'patch_available' ),
+			'orderby'    => $orderby,
+			'order'      => $order,
+			'limit'      => $per,
+			'offset'     => ( $paged - 1 ) * $per,
+		);
+		$q     = Repo::findings( array_filter( $args, static fn( $v ): bool => '' !== $v && 0 !== $v ) );
+		$total = (int) $q['total'];
+		$pages = max( 1, (int) ceil( $total / $per ) );
+		?>
+		<div class="vh-page-head">
+			<div>
+				<h1><?php esc_html_e( 'Vulnerabilities', 'vulnhub' ); ?></h1>
+				<p class="vh-sub">
+					<?php
+					printf(
+						/* translators: %s: number of findings. */
+						esc_html( _n( '%s finding matches these filters.', '%s findings match these filters.', $total, 'vulnhub' ) ),
+						'<strong>' . esc_html( number_format_i18n( $total ) ) . '</strong>'
+					);
+					?>
+				</p>
+			</div>
+			<div class="vh-page-head__actions">
+				<?php VulnHub_Dash_Export::button( 'findings', $args ); ?>
+				<?php if ( current_user_can( Caps::RAISE_TICKET ) ) : ?>
+					<button type="button" class="vh-btn vh-btn--primary" data-vh-raise><?php esc_html_e( 'Raise ticket for selected', 'vulnhub' ); ?></button>
+				<?php endif; ?>
+			</div>
+		</div>
+
+		<?php
+		/*
+		 * When the reader arrived from the patch chart, say so. A list that
+		 * silently holds a filter nobody can see is how people end up
+		 * reporting "the numbers are wrong".
+		 */
+		$vh_patch = self::q( 'patch_available' );
+		?>
+		<?php if ( '' !== $vh_vlife_bad ) : ?>
+			<div class="vh-notice vh-notice--warn">
+				<?php
+				printf(
+					/* translators: %s: the unrecognised value supplied in the URL. */
+					esc_html__( '%s is not a lifecycle filter this page knows, so it has been ignored and the default reporting scope applied.', 'vulnhub' ),
+					'<code>life=' . esc_html( $vh_vlife_bad ) . '</code>'
+				);
+				?>
+			</div>
+		<?php endif; ?>
+		<?php
+		/*
+		 * Say which estate these findings belong to. A count with no scope
+		 * beside it is the thing people re-derive by hand and disagree about.
+		 */
+		$vh_vscope_label = array(
+			'reportable'     => __( 'assets the dashboard reports on', 'vulnhub' ),
+			'in_service_all' => __( 'assets with an owner expectation', 'vulnhub' ),
+			'all'            => __( 'every asset, retired ones included', 'vulnhub' ),
+		);
+		$vh_vscope_now   = '' === $vh_vlife ? 'reportable' : $vh_vlife;
+		$vh_vscope_text  = $vh_vscope_label[ $vh_vscope_now ]
+			?? sprintf(
+				/* translators: %s: a lifecycle status label. */
+				__( 'assets whose lifecycle status is "%s"', 'vulnhub' ),
+				strtolower( (string) ( vh_lifecycle_statuses()[ $vh_vscope_now ]['label'] ?? $vh_vscope_now ) )
+			);
+		?>
+		<p class="vh-sub vh-muted">
+			<?php
+			printf(
+				/* translators: %s: description of the lifecycle scope in force. */
+				esc_html__( 'Counting findings on %s.', 'vulnhub' ),
+				esc_html( $vh_vscope_text )
+			);
+			?>
+			<?php if ( 'all' !== $vh_vscope_now ) : ?>
+				<a href="<?php echo esc_url( self::page_url( 'vulnerabilities', array_merge( self::current_filters( array( 'search', 'patch_available', 'severity', 'asset_type', 'team_id', 'age', 'overdue' ) ), array( 'life' => 'all' ) ) ) ); ?>">
+					<?php esc_html_e( 'Include every asset', 'vulnhub' ); ?>
+				</a>
+			<?php endif; ?>
+		</p>
+		<?php $vh_prod = self::q( 'product' ); ?>
+		<?php if ( '' !== $vh_prod ) : ?>
+			<div class="vh-notice vh-notice--info">
+				<?php
+				printf(
+					/* translators: %s: a product name/slug. */
+					esc_html__( 'Showing findings attributed to %s.', 'vulnhub' ),
+					'<strong>' . esc_html( $vh_prod ) . '</strong>'
+				);
+				?>
+				<a href="<?php echo esc_url( remove_query_arg( 'product' ) ); ?>"><?php esc_html_e( 'Clear this filter', 'vulnhub' ); ?></a>
+			</div>
+		<?php endif; ?>
+		<?php if ( '' !== $vh_patch ) : ?>
+			<div class="vh-notice vh-notice--info">
+				<?php
+				echo esc_html(
+					in_array( $vh_patch, array( '1', 'yes', 'true' ), true )
+						? __( 'Showing only findings a vendor has published a fix for.', 'vulnhub' )
+						: __( 'Showing only findings with no known fix. These cannot be patched; they need a compensating control, an exception or a decommission.', 'vulnhub' )
+				);
+				?>
+				<a href="<?php echo esc_url( remove_query_arg( 'patch_available' ) ); ?>"><?php esc_html_e( 'Clear this filter', 'vulnhub' ); ?></a>
+			</div>
+		<?php endif; ?>
+
+		<form class="vh-filters" method="get">
+			<?php
+			/*
+			 * `product` is NOT listed here, and that is the point.
+			 *
+			 * This list means "the form has its own control for this, so do
+			 * not also emit it as a hidden input". The product filter arrives
+			 * from the exposure-by-product widget and has no select of its
+			 * own -- only the banner above, with its Clear link. Listing it
+			 * meant Apply silently dropped it, so narrowing libcurl down to
+			 * servers threw the libcurl part away.
+			 */
+			self::hidden_filters(
+				array( 'search', 'patch_available', 'severity', 'asset_type', 'team_id', 'age', 'overdue', 'life' )
+			);
+			?>
+			<label><?php esc_html_e( 'Search', 'vulnhub' ); ?>
+				<input type="search" name="search" value="<?php echo esc_attr( self::q( 'search' ) ); ?>" placeholder="<?php esc_attr_e( 'CVE, host, owner, plugin…', 'vulnhub' ); ?>">
+			</label>
+			<label><?php esc_html_e( 'Patch', 'vulnhub' ); ?>
+				<select name="patch_available">
+					<option value=""><?php esc_html_e( 'Any', 'vulnhub' ); ?></option>
+					<option value="1" <?php selected( self::q( 'patch_available' ), '1' ); ?>><?php esc_html_e( 'Patch available', 'vulnhub' ); ?></option>
+					<option value="0" <?php selected( self::q( 'patch_available' ), '0' ); ?>><?php esc_html_e( 'No patch available', 'vulnhub' ); ?></option>
+				</select>
+			</label>
+			<label><?php esc_html_e( 'Severity', 'vulnhub' ); ?>
+				<select name="severity">
+					<option value=""><?php esc_html_e( 'All severities', 'vulnhub' ); ?></option>
+					<?php foreach ( VulnHub_Dash_Charts::severity_order() as $sev ) : ?>
+						<option value="<?php echo esc_attr( $sev ); ?>" <?php selected( self::q( 'severity' ), $sev ); ?>><?php echo esc_html( vh_severity_label( $sev ) ); ?></option>
+					<?php endforeach; ?>
+				</select>
+			</label>
+			<label><?php esc_html_e( 'Asset type', 'vulnhub' ); ?>
+				<select name="asset_type">
+					<option value=""><?php esc_html_e( 'All types', 'vulnhub' ); ?></option>
+					<?php foreach ( vh_asset_types() as $k => $l ) : ?>
+						<option value="<?php echo esc_attr( $k ); ?>" <?php selected( self::q( 'asset_type' ), $k ); ?>><?php echo esc_html( $l ); ?></option>
+					<?php endforeach; ?>
+				</select>
+			</label>
+			<label><?php esc_html_e( 'Team', 'vulnhub' ); ?>
+				<select name="team_id">
+					<option value="0"><?php esc_html_e( 'All teams', 'vulnhub' ); ?></option>
+					<?php foreach ( Repo::teams() as $t ) : ?>
+						<option value="<?php echo esc_attr( (string) $t['id'] ); ?>" <?php selected( self::qi( 'team_id' ), (int) $t['id'] ); ?>><?php echo esc_html( (string) $t['name'] ); ?></option>
+					<?php endforeach; ?>
+				</select>
+			</label>
+			<label><?php esc_html_e( 'Age', 'vulnhub' ); ?>
+				<select name="age">
+					<option value=""><?php esc_html_e( 'Any age', 'vulnhub' ); ?></option>
+					<?php foreach ( Repo::age_bands() as $vh_band_key => $vh_band ) : ?>
+						<option value="<?php echo esc_attr( (string) $vh_band_key ); ?>" <?php selected( self::q( 'age' ), (string) $vh_band_key ); ?>>
+							<?php echo esc_html( (string) $vh_band['label'] ); ?>
+						</option>
+					<?php endforeach; ?>
+				</select>
+			</label>
+			<label><?php esc_html_e( 'Lifecycle', 'vulnhub' ); ?>
+				<select name="life">
+					<option value=""><?php esc_html_e( 'Reporting scope (what the dashboard counts)', 'vulnhub' ); ?></option>
+					<option value="in_service_all" <?php selected( self::q( 'life' ), 'in_service_all' ); ?>><?php esc_html_e( 'Everything with an owner expectation', 'vulnhub' ); ?></option>
+					<option value="all" <?php selected( self::q( 'life' ), 'all' ); ?>><?php esc_html_e( 'Every asset, including retired', 'vulnhub' ); ?></option>
+					<?php foreach ( vh_lifecycle_statuses() as $vh_ls => $vh_lm ) : ?>
+						<option value="<?php echo esc_attr( $vh_ls ); ?>" <?php selected( self::q( 'life' ), $vh_ls ); ?>><?php echo esc_html( (string) $vh_lm['label'] ); ?></option>
+					<?php endforeach; ?>
+				</select>
+			</label>
+			<label class="vh-check">
+				<input type="checkbox" name="overdue" value="1" <?php checked( self::q( 'overdue' ), '1' ); ?>>
+				<?php esc_html_e( 'Past SLA only', 'vulnhub' ); ?>
+			</label>
+			<button class="vh-btn"><?php esc_html_e( 'Apply', 'vulnhub' ); ?></button>
+			<a class="vh-btn vh-btn--ghost" href="<?php echo esc_url( self::page_url( 'vulnerabilities' ) ); ?>"><?php esc_html_e( 'Reset', 'vulnhub' ); ?></a>
+		</form>
+
+		<?php echo VulnHub_Dash_Charts::severity_legend(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+
+		<?php if ( ! $q['rows'] ) : ?>
+			<p class="vh-chart-empty"><?php esc_html_e( 'Nothing matches. Try widening the filters.', 'vulnhub' ); ?></p>
+		<?php else : ?>
+			<div class="vh-tablewrap vh-tablewrap--cards">
+				<table class="vh-table">
+					<thead>
+						<tr>
+							<th class="vh-col-check"><input type="checkbox" data-vh-all aria-label="<?php esc_attr_e( 'Select all', 'vulnhub' ); ?>"></th>
+							<?php
+							self::sort_th( 'severity', __( 'Severity', 'vulnhub' ), $orderby, $order );
+							self::sort_th( 'title', __( 'Vulnerability', 'vulnhub' ), $orderby, $order );
+							self::sort_th( 'hostname', __( 'Asset', 'vulnhub' ), $orderby, $order );
+							?>
+							<th><?php esc_html_e( 'Owner', 'vulnhub' ); ?></th>
+							<?php self::sort_th( 'due_at', __( 'Due', 'vulnhub' ), $orderby, $order ); ?>
+							<th><?php esc_html_e( 'Ticket', 'vulnhub' ); ?></th>
+							<th></th>
+						</tr>
+					</thead>
+					<tbody>
+					<?php foreach ( $q['rows'] as $f ) : ?>
+						<?php
+						$cves    = vh_json( (string) $f['cve_json'] );
+						$overdue = ! empty( $f['due_at'] ) && strtotime( (string) $f['due_at'] . ' UTC' ) < time();
+						?>
+						<tr<?php echo (int) $f['exception_id'] > 0 ? ' class="is-excepted"' : ''; ?>>
+							<td><input type="checkbox" class="vh-pick" value="<?php echo esc_attr( (string) $f['id'] ); ?>" aria-label="<?php esc_attr_e( 'Select finding', 'vulnhub' ); ?>"></td>
+							<td data-th="<?php esc_attr_e( 'Severity', 'vulnhub' ); ?>"><span class="vh-pill vh-pill--<?php echo esc_attr( (string) $f['severity'] ); ?>"><?php echo esc_html( vh_severity_label( (string) $f['severity'] ) ); ?></span></td>
+							<td data-th="<?php esc_attr_e( 'Vulnerability', 'vulnhub' ); ?>">
+								<a href="<?php echo esc_url( self::page_url( 'vulnerabilities', array( 'vuln' => (int) $f['vuln_id'] ) ) ); ?>">
+									<strong><?php echo esc_html( vh_trim( (string) $f['vuln_title'], 72 ) ); ?></strong>
+								</a>
+								<span class="vh-meta">
+									<?php echo esc_html( ( $f['family'] ? $f['family'] . ' · ' : '' ) . 'plugin ' . $f['plugin_id'] ); ?>
+									<?php if ( $cves ) : ?>· <?php echo esc_html( implode( ', ', array_slice( $cves, 0, 2 ) ) ); ?><?php endif; ?>
+									<?php if ( ! empty( $f['exploit_available'] ) ) : ?>· <span class="vh-flag"><?php esc_html_e( 'exploit available', 'vulnhub' ); ?></span><?php endif; ?>
+								</span>
+							</td>
+							<td data-th="<?php esc_attr_e( 'Asset', 'vulnhub' ); ?>">
+								<a class="vh-mono" href="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $f['asset_id'] ) ) ); ?>"><?php echo esc_html( (string) $f['hostname'] ); ?></a>
+								<span class="vh-meta"><?php echo esc_html( (string) $f['ipv4'] ); ?></span>
+							</td>
+							<td data-th="<?php esc_attr_e( 'Owner', 'vulnhub' ); ?>">
+								<?php if ( ! empty( $f['owner_name'] ) ) : ?>
+									<?php echo esc_html( (string) $f['owner_name'] ); ?>
+									<span class="vh-meta"><?php echo esc_html( (string) ( $f['team_name'] ?: '' ) ); ?></span>
+								<?php elseif ( ! empty( $f['team_name'] ) ) : ?>
+									<?php echo esc_html( (string) $f['team_name'] ); ?>
+								<?php else : ?>
+									<span class="vh-chip vh-chip--warn"><?php esc_html_e( 'Unassigned', 'vulnhub' ); ?></span>
+								<?php endif; ?>
+							</td>
+							<td class="<?php echo $overdue ? 'vh-overdue' : ''; ?>" data-th="<?php esc_attr_e( 'Due', 'vulnhub' ); ?>"><?php echo esc_html( $f['due_at'] ? vh_ago( (string) $f['due_at'] ) : '—' ); ?></td>
+							<td data-th="<?php esc_attr_e( 'Ticket', 'vulnhub' ); ?>">
+								<?php if ( ! empty( $f['ticket_key'] ) ) : ?>
+									<a class="vh-mono" href="<?php echo esc_url( (string) $f['ticket_url'] ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( (string) $f['ticket_key'] ); ?></a>
+									<span class="vh-meta"><?php echo esc_html( (string) $f['ticket_status'] ); ?></span>
+								<?php else : ?>—<?php endif; ?>
+							</td>
+							<td class="vh-col-act">
+								<?php if ( current_user_can( Caps::RAISE_TICKET ) && empty( $f['ticket_key'] ) ) : ?>
+									<button type="button" class="vh-btn vh-btn--sm" data-vh-raise data-vh-finding="<?php echo esc_attr( (string) $f['id'] ); ?>"><?php esc_html_e( 'Ticket', 'vulnhub' ); ?></button>
+								<?php endif; ?>
+								<?php if ( current_user_can( Caps::REQUEST_EXCEPTION ) && (int) $f['exception_id'] === 0 ) : ?>
+									<a class="vh-btn vh-btn--sm vh-btn--ghost" href="<?php echo esc_url( vh_admin_url( 'vulnhub-exceptions', array( 'new' => 1, 'finding' => (int) $f['id'] ) ) ); ?>"><?php esc_html_e( 'Except', 'vulnhub' ); ?></a>
+								<?php endif; ?>
+							</td>
+						</tr>
+					<?php endforeach; ?>
+					</tbody>
+				</table>
+			</div>
+			<?php self::pager( $paged, $pages, 'vp' ); ?>
+		<?php endif; ?>
+		<?php
+	}
+
+	/* ----------------------------------------------------------- assets. */
+
+	/* ------------------------------------------------------ products. */
+
+	/**
+	 * Every detected product and bundling application, ranked by in-scope
+	 * assets affected, with a scope filter (all / workstations / servers /
+	 * Windows / Linux) and a CSV export. Reached from the "View all" control
+	 * on the dashboard's Exposure-by-product widget; the same query and row
+	 * markup as that widget, without the top-N cap.
+	 */
+	private static function view_products(): void {
+		$scopes = VulnHub_Dash_Widgets::product_scopes();
+		$scope  = self::q( 'scope' );
+		if ( ! array_key_exists( $scope, $scopes ) ) {
+			$scope = '';
+		}
+
+		$rows = VulnHub_Dash_Widgets::product_rows( 0, $scope );
+		$max  = $rows ? max( 1, (int) $rows[0]['assets'] ) : 1;
+		$args = '' === $scope ? array() : array( 'scope' => $scope );
+		?>
+		<div class="vh-page-head">
+			<div>
+				<h1><?php esc_html_e( 'Exposure by product', 'vulnhub' ); ?></h1>
+				<p class="vh-sub">
+					<?php
+					printf(
+						/* translators: %s: number of products. */
+						esc_html( _n( '%s product or application detected in this scope.', '%s products and applications detected in this scope.', count( $rows ), 'vulnhub' ) ),
+						'<strong>' . esc_html( number_format_i18n( count( $rows ) ) ) . '</strong>'
+					);
+					?>
+				</p>
+			</div>
+			<div class="vh-page-head__actions">
+				<a class="vh-btn vh-btn--ghost vh-btn--sm" href="<?php echo esc_url( self::page_url( 'vendors' ) ); ?>"><?php esc_html_e( 'By vendor', 'vulnhub' ); ?></a>
+				<?php VulnHub_Dash_Export::button( 'products', $args ); ?>
+			</div>
+		</div>
+
+		<nav class="vh-segbar" aria-label="<?php esc_attr_e( 'Filter products by platform', 'vulnhub' ); ?>">
+			<?php foreach ( $scopes as $vh_k => $vh_label ) : ?>
+				<a class="vh-seg<?php echo $scope === (string) $vh_k ? ' is-active' : ''; ?>"
+					href="<?php echo esc_url( self::page_url( 'products', '' === (string) $vh_k ? array() : array( 'scope' => (string) $vh_k ) ) ); ?>"
+					<?php echo $scope === (string) $vh_k ? 'aria-current="true"' : ''; ?>>
+					<?php echo esc_html( (string) $vh_label ); ?>
+				</a>
+			<?php endforeach; ?>
+		</nav>
+
+		<?php if ( ! $rows ) : ?>
+			<div class="vh-card">
+				<?php echo VulnHub_Dash_Charts::empty_state( __( 'No products match this filter.', 'vulnhub' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+			</div>
+		<?php else : ?>
+			<div class="vh-card vh-card--flush">
+				<ul class="vh-prodlist vh-prodlist--full">
+					<?php
+					foreach ( $rows as $vh_r ) :
+						$vh_assets = (int) $vh_r['assets'];
+						$vh_pct    = (int) round( 100 * $vh_assets / $max );
+						$vh_url    = VulnHub_Dash_Portal::portal_url(
+							'vulnerabilities',
+							array( 'product' => (string) $vh_r['product_slug'], 'life' => 'reportable', 'state' => 'open_any' )
+						);
+						?>
+						<li class="vh-prodrow">
+							<?php echo VulnHub_Dash_Widgets::product_icon( (string) $vh_r['product_slug'], (string) $vh_r['component_class'], (string) $vh_r['product'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+							<div class="vh-prodrow__main">
+								<div class="vh-prodrow__head">
+									<a class="vh-prodrow__name" href="<?php echo esc_url( $vh_url ); ?>"><?php echo esc_html( (string) $vh_r['product'] ); ?></a>
+									<?php echo VulnHub_Dash_Widgets::product_kind_badge( (string) $vh_r['product_kind'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+									<span class="vh-prodrow__nums">
+										<?php
+										printf(
+											/* translators: 1: asset count, 2: finding count. */
+											esc_html__( '%1$s assets · %2$s findings', 'vulnhub' ),
+											'<strong>' . esc_html( number_format_i18n( $vh_assets ) ) . '</strong>',
+											esc_html( number_format_i18n( (int) $vh_r['findings'] ) )
+										);
+										?>
+									</span>
+								</div>
+								<div class="vh-prodrow__bar"><span style="width:<?php echo (int) $vh_pct; ?>%"></span></div>
+								<?php
+								$vh_bundles = trim( (string) ( $vh_r['bundles'] ?? '' ) );
+								if ( '' !== $vh_bundles ) :
+									?>
+									<p class="vh-prodrow__note">
+										<?php
+										printf(
+											/* translators: %s: comma-separated library names. */
+											esc_html__( 'Ships a vulnerable %s inside the app. Update the app, or check the vendor for a fixed release.', 'vulnhub' ),
+											'<strong>' . esc_html( $vh_bundles ) . '</strong>'
+										);
+										?>
+									</p>
+								<?php endif; ?>
+							</div>
+						</li>
+					<?php endforeach; ?>
+				</ul>
+			</div>
+		<?php endif; ?>
+		<?php
+	}
+
+	/* ------------------------------------------------------- vendors. */
+
+	/**
+	 * Every vendor behind the estate -- hardware makers (from an asset's
+	 * manufacturer, including archived-but-scanned kit) and software owners
+	 * (from a finding's product). Each carries our own exposure, a verified
+	 * security-advisory link, a public risk-rating link and a bundled logo.
+	 * Filterable by hardware / software / assets missing Tenable+Defender+CMDB.
+	 */
+	private static function view_vendors(): void {
+		$scopes = array(
+			''          => __( 'All', 'vulnhub' ),
+			'hardware'  => __( 'Hardware', 'vulnhub' ),
+			'software'  => __( 'Software', 'vulnhub' ),
+			'uncovered' => __( 'Uncovered', 'vulnhub' ),
+		);
+		$scope = self::q( 'scope' );
+		if ( ! array_key_exists( $scope, $scopes ) ) {
+			$scope = '';
+		}
+
+		$rows = VH_Vendor::vendors( $scope );
+		$args = '' === $scope ? array() : array( 'scope' => $scope );
+		?>
+		<div class="vh-page-head">
+			<div>
+				<h1><?php esc_html_e( 'Vendors', 'vulnhub' ); ?></h1>
+				<p class="vh-sub">
+					<?php
+					printf(
+						/* translators: %s: number of vendors. */
+						esc_html( _n( '%s vendor identified across hardware and software in the estate.', '%s vendors identified across hardware and software in the estate.', count( $rows ), 'vulnhub' ) ),
+						'<strong>' . esc_html( number_format_i18n( count( $rows ) ) ) . '</strong>'
+					);
+					?>
+				</p>
+			</div>
+			<div class="vh-page-head__actions">
+				<a class="vh-btn vh-btn--ghost vh-btn--sm" href="<?php echo esc_url( self::page_url( 'products' ) ); ?>"><?php esc_html_e( 'By product', 'vulnhub' ); ?></a>
+				<?php VulnHub_Dash_Export::button( 'vendors', $args ); ?>
+			</div>
+		</div>
+
+		<nav class="vh-segbar" aria-label="<?php esc_attr_e( 'Filter vendors', 'vulnhub' ); ?>">
+			<?php foreach ( $scopes as $vh_k => $vh_label ) : ?>
+				<a class="vh-seg<?php echo $scope === (string) $vh_k ? ' is-active' : ''; ?>"
+					href="<?php echo esc_url( self::page_url( 'vendors', '' === (string) $vh_k ? array() : array( 'scope' => (string) $vh_k ) ) ); ?>"
+					<?php echo $scope === (string) $vh_k ? 'aria-current="true"' : ''; ?>>
+					<?php echo esc_html( (string) $vh_label ); ?>
+				</a>
+			<?php endforeach; ?>
+		</nav>
+
+		<?php if ( 'uncovered' === $scope ) : ?>
+			<p class="vh-sub" style="margin:-6px 0 14px">
+				<?php esc_html_e( 'Vendors with assets that Tenable has not scanned, Defender has not onboarded, and the CMDB does not record — blind spots that are still real hardware. Some may be archived kit that is still being scanned.', 'vulnhub' ); ?>
+			</p>
+		<?php endif; ?>
+
+		<?php if ( ! $rows ) : ?>
+			<div class="vh-card"><?php echo VulnHub_Dash_Charts::empty_state( __( 'No vendors match this filter.', 'vulnhub' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
+		<?php else : ?>
+			<ul class="vh-vendorgrid">
+				<?php foreach ( $rows as $vh_v ) : ?>
+					<li class="vh-vendor">
+						<?php echo VulnHub_Dash_Widgets::vendor_icon( (string) $vh_v['slug'], (string) $vh_v['name'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+						<div class="vh-vendor__main">
+							<div class="vh-vendor__head">
+								<span class="vh-vendor__name"><?php echo esc_html( (string) $vh_v['name'] ); ?></span>
+								<span class="vh-kind vh-kind--<?php echo esc_attr( (string) $vh_v['kind'] ); ?>"><?php echo esc_html( (string) $vh_v['kind'] ); ?></span>
+								<span class="vh-band vh-band--<?php echo esc_attr( (string) $vh_v['band'] ); ?>" title="<?php esc_attr_e( 'Our exposure to this vendor, from open critical/high findings and coverage gaps.', 'vulnhub' ); ?>">
+									<?php echo esc_html( sprintf( /* translators: %s: exposure level. */ __( '%s exposure', 'vulnhub' ), VH_Vendor::band_label( (string) $vh_v['band'] ) ) ); ?>
+								</span>
+							</div>
+
+							<?php
+							$vh_slug = (string) $vh_v['slug'];
+							$vh_name = (string) $vh_v['name'];
+							/**
+							 * One clickable stat. Opens the drill-down modal (app.js)
+							 * for this vendor + metric; degrades to a link to the CSV
+							 * export of the same list when scripting is off.
+							 */
+							$vh_stat = function ( string $metric, int $count, string $label, string $extra = '' ) use ( $vh_slug, $vh_name ) {
+								if ( $count <= 0 ) {
+									return;
+								}
+								$vh_export = VulnHub_Dash_Export::url(
+									in_array( $metric, array( 'products' ), true ) ? 'vendor_products'
+										: ( in_array( $metric, array( 'findings', 'critical' ), true ) ? 'vendor_findings' : 'vendor_assets' ),
+									in_array( $metric, array( 'products' ), true ) ? array( 'vendor' => $vh_slug )
+										: ( in_array( $metric, array( 'findings', 'critical' ), true ) ? array( 'vendor' => $vh_slug, 'severity' => 'critical' === $metric ? 'critical' : '' )
+										: array( 'vendor' => $vh_slug, 'metric' => $metric ) )
+								);
+								printf(
+									'<a class="vh-vstat%1$s" href="%2$s" data-vh-drill data-vendor="%3$s" data-metric="%4$s" data-vendor-name="%5$s">'
+									. '<strong>%6$s</strong> %7$s</a>',
+									$extra ? ' ' . esc_attr( $extra ) : '',
+									esc_url( $vh_export ),
+									esc_attr( $vh_slug ),
+									esc_attr( $metric ),
+									esc_attr( $vh_name ),
+									esc_html( number_format_i18n( $count ) ),
+									esc_html( $label )
+								);
+							};
+							?>
+							<div class="vh-vendor__stats">
+								<?php
+								$vh_stat( 'assets', (int) $vh_v['hw_assets'], _n( 'asset', 'assets', (int) $vh_v['hw_assets'], 'vulnhub' ) );
+								$vh_stat( 'products', (int) $vh_v['products'], _n( 'product', 'products', (int) $vh_v['products'], 'vulnhub' ) );
+								$vh_stat( 'findings', (int) $vh_v['findings'], __( 'findings', 'vulnhub' ) );
+								$vh_stat( 'critical', (int) $vh_v['crit'], __( 'critical', 'vulnhub' ), 'vh-vstat--crit' );
+								$vh_stat( 'uncovered', (int) $vh_v['uncovered'], __( 'uncovered', 'vulnhub' ), 'vh-vstat--warn' );
+								$vh_stat( 'archived', (int) $vh_v['archived'], __( 'archived', 'vulnhub' ), 'vh-vstat--muted' );
+								?>
+							</div>
+
+							<div class="vh-vendor__links">
+								<?php if ( '' !== (string) $vh_v['advisory'] ) : ?>
+									<a class="vh-vendor__link" href="<?php echo esc_url( (string) $vh_v['advisory'] ); ?>" target="_blank" rel="noopener noreferrer">
+										<?php esc_html_e( 'Security advisories', 'vulnhub' ); ?> &#8599;
+									</a>
+								<?php else : ?>
+									<span class="vh-vendor__link vh-vendor__link--none"><?php esc_html_e( 'No public advisory page', 'vulnhub' ); ?></span>
+								<?php endif; ?>
+								<?php if ( '' !== (string) $vh_v['ratings'] ) : ?>
+									<a class="vh-vendor__link" href="<?php echo esc_url( (string) $vh_v['ratings'] ); ?>" target="_blank" rel="noopener noreferrer">
+										<?php esc_html_e( 'Public risk rating', 'vulnhub' ); ?> &#8599;
+									</a>
+								<?php endif; ?>
+								<?php if ( '' !== (string) $vh_v['hq'] ) : ?>
+									<span class="vh-vendor__hq"><?php echo esc_html( (string) $vh_v['hq'] ); ?></span>
+								<?php endif; ?>
+							</div>
+						</div>
+					</li>
+				<?php endforeach; ?>
+			</ul>
+			<p class="vh-sub"><?php esc_html_e( 'Exposure is our own measure — open critical/high findings plus assets with no Tenable, Defender or CMDB coverage. Advisory links were checked live; the public risk rating opens the vendor’s SecurityScorecard profile.', 'vulnhub' ); ?></p>
+		<?php endif; ?>
+		<?php
+	}
+
+	private static function view_assets(): void {
+		$asset_id = self::qi( 'asset' );
+
+		if ( $asset_id ) {
+			$a = Repo::asset( $asset_id );
+			if ( ! $a ) {
+				echo '<p class="vh-chart-empty">' . esc_html__( 'Asset not found.', 'vulnhub' ) . '</p>';
+				return;
+			}
+			$owner = Repo::person( (int) $a['owner_person_id'] );
+			$team  = Repo::team( (int) $a['team_id'] );
+			$loc   = Repo::location( (int) $a['location_id'] );
+			$find  = Repo::findings( array( 'asset_id' => $asset_id, 'state' => 'open_any', 'limit' => 100 ) );
+			$needs = in_array( (string) $a['asset_type'], vh_user_bound_asset_types(), true );
+			?>
+			<p><a class="vh-back" href="<?php echo esc_url( self::page_url( 'assets' ) ); ?>">&larr; <?php esc_html_e( 'All assets', 'vulnhub' ); ?></a></p>
+
+			<div class="vh-page-head">
+				<div>
+					<h1 class="vh-mono"><?php echo esc_html( (string) $a['hostname'] ); ?></h1>
+					<p class="vh-sub">
+						<?php
+						echo $a['operating_system']
+							? \VulnHub\Core\Os::badge( (string) $a['operating_system'], true, (string) ( $a['os_version'] ?? '' ), (string) $a['asset_type'] ) // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+							: esc_html__( 'Unknown', 'vulnhub' );
+						?>
+						· <?php echo esc_html( vh_asset_types()[ (string) $a['asset_type'] ] ?? '' ); ?>
+						· <?php echo esc_html( (string) $a['ipv4'] ); ?>
+					</p>
+				</div>
+			</div>
+
+			<div class="vh-grid vh-grid--3">
+				<section class="vh-panel">
+					<header class="vh-panel__head"><h2><?php esc_html_e( 'Ownership', 'vulnhub' ); ?></h2></header>
+					<?php if ( $needs && ! $owner ) : ?>
+						<p class="vh-warn-note"><?php esc_html_e( 'This is a user-bound asset with no owner resolved. Intune did not report a primary user, or that user has not synced yet.', 'vulnhub' ); ?></p>
+					<?php endif; ?>
+					<dl class="vh-dl">
+						<dt><?php esc_html_e( 'Owner', 'vulnhub' ); ?></dt>
+						<dd><?php echo $owner ? esc_html( (string) $owner['display_name'] ) : '<span class="vh-chip vh-chip--warn">' . esc_html__( 'Unassigned', 'vulnhub' ) . '</span>'; // phpcs:ignore ?></dd>
+						<dt><?php esc_html_e( 'Email', 'vulnhub' ); ?></dt>
+						<dd><?php echo esc_html( (string) ( $owner['upn'] ?? '—' ) ); ?></dd>
+						<dt><?php esc_html_e( 'Department', 'vulnhub' ); ?></dt>
+						<dd><?php echo esc_html( (string) ( $owner['department'] ?? '—' ) ); ?></dd>
+						<dt><?php esc_html_e( 'Team', 'vulnhub' ); ?></dt>
+						<dd><?php echo esc_html( (string) ( $team['name'] ?? '—' ) ); ?></dd>
+						<dt><?php esc_html_e( 'Location', 'vulnhub' ); ?></dt>
+						<dd><?php echo esc_html( (string) ( $loc['name'] ?? ( $owner['office_location'] ?? '—' ) ) ); ?></dd>
+						<dt><?php esc_html_e( 'Resolved by', 'vulnhub' ); ?></dt>
+						<dd class="vh-sub"><?php echo esc_html( (string) ( $a['owner_rule'] ?: '—' ) ); ?></dd>
+					</dl>
+				</section>
+
+				<section class="vh-panel">
+					<header class="vh-panel__head"><h2><?php esc_html_e( 'Identity', 'vulnhub' ); ?></h2></header>
+					<dl class="vh-dl">
+						<dt><?php esc_html_e( 'FQDN', 'vulnhub' ); ?></dt><dd class="vh-mono"><?php echo esc_html( (string) ( $a['fqdn'] ?: '—' ) ); ?></dd>
+						<dt><?php esc_html_e( 'Serial', 'vulnhub' ); ?></dt><dd class="vh-mono"><?php echo esc_html( (string) ( $a['serial_number'] ?: '—' ) ); ?></dd>
+						<dt><?php esc_html_e( 'Hardware', 'vulnhub' ); ?></dt><dd><?php echo esc_html( trim( $a['manufacturer'] . ' ' . $a['model'] ) ?: '—' ); ?></dd>
+						<dt><?php esc_html_e( 'Support ends', 'vulnhub' ); ?></dt>
+						<dd>
+							<?php
+							/*
+							 * A machine past its warranty is a security fact, not
+							 * only a finance one: when the next critical lands the
+							 * vendor will not be shipping it a fix.
+							 */
+							$vh_support_end = (string) ( $a['support_end_date'] ?? '' );
+							$vh_expired     = '' !== $vh_support_end && strtotime( $vh_support_end ) < time();
+							?>
+							<?php if ( '' === $vh_support_end ) : ?>
+								—
+							<?php elseif ( $vh_expired ) : ?>
+								<span class="vh-chip vh-chip--bad"><?php echo esc_html( vh_date( $vh_support_end ) ); ?></span>
+								<span class="vh-meta"><?php esc_html_e( 'out of support', 'vulnhub' ); ?></span>
+							<?php else : ?>
+								<?php echo esc_html( vh_date( $vh_support_end ) ); ?>
+							<?php endif; ?>
+						</dd>
+						<dt><?php esc_html_e( 'Known by', 'vulnhub' ); ?></dt>
+						<dd>
+							<?php echo self::source_chips( (string) ( $a['sources_json'] ?? '' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+							<?php
+							$vh_seen = Repo::source_map( (string) ( $a['sources_json'] ?? '' ) );
+							$vh_srcl = vh_asset_sources();
+							$vh_when = array();
+
+							foreach ( $vh_seen as $vh_slug => $vh_date ) {
+								if ( '' !== $vh_date ) {
+									$vh_when[] = ( $vh_srcl[ $vh_slug ] ?? $vh_slug ) . ' ' . vh_ago( $vh_date );
+								}
+							}
+							?>
+							<?php if ( $vh_when ) : ?>
+								<span class="vh-meta"><?php echo esc_html( implode( ', ', $vh_when ) ); ?></span>
+							<?php endif; ?>
+						</dd>
+						<dt><?php esc_html_e( 'Scan coverage', 'vulnhub' ); ?></dt>
+						<dd>
+							<?php $vh_a_cov = (string) ( $a['coverage_state'] ?? '' ); ?>
+							<?php if ( '' !== $vh_a_cov && 'unknown' !== $vh_a_cov ) : ?>
+								<span class="vh-chip vh-chip--<?php echo esc_attr( Coverage::tone( $vh_a_cov ) ); ?>"><?php echo esc_html( Coverage::label( $vh_a_cov ) ); ?></span>
+								<?php if ( ! empty( $a['tenable_last_scan'] ) ) : ?>
+									<span class="vh-meta">
+										<?php
+										printf(
+											/* translators: %s: a human time difference such as "3 days ago". */
+											esc_html__( 'Tenable scanned %s', 'vulnhub' ),
+											esc_html( vh_ago( (string) $a['tenable_last_scan'] ) )
+										);
+										?>
+									</span>
+								<?php endif; ?>
+							<?php else : ?>—<?php endif; ?>
+						</dd>
+						<dt><?php esc_html_e( 'EDR coverage', 'vulnhub' ); ?></dt>
+						<dd>
+							<?php $vh_a_edr = (string) ( $a['defender_coverage_state'] ?? '' ); ?>
+							<?php if ( '' !== $vh_a_edr && 'unknown' !== $vh_a_edr ) : ?>
+								<span class="vh-chip vh-chip--<?php echo esc_attr( Defender_Coverage::tone( $vh_a_edr ) ); ?>"><?php echo esc_html( Defender_Coverage::label( $vh_a_edr ) ); ?></span>
+								<?php if ( ! empty( $a['defender_last_seen'] ) ) : ?>
+									<span class="vh-meta">
+										<?php
+										printf(
+											/* translators: %s: a human time difference such as "3 days ago". */
+											esc_html__( 'Defender heard from it %s', 'vulnhub' ),
+											esc_html( vh_ago( (string) $a['defender_last_seen'] ) )
+										);
+										?>
+									</span>
+								<?php endif; ?>
+								<?php if ( (string) ( $a['defender_managed_by'] ?? '' ) ) : ?>
+									<span class="vh-meta">
+										<?php
+										printf(
+											/* translators: %s: the tool managing the sensor, e.g. Intune. */
+											esc_html__( 'managed by %s', 'vulnhub' ),
+											esc_html( (string) $a['defender_managed_by'] )
+										);
+										?>
+									</span>
+								<?php endif; ?>
+							<?php else : ?>—<?php endif; ?>
+						</dd>
+						<dt><?php esc_html_e( 'Discovered by', 'vulnhub' ); ?></dt>
+						<dd class="vh-sub"><?php echo esc_html( (string) ( $a['primary_source'] ?: '—' ) ); ?></dd>
+						<dt><?php esc_html_e( 'CMDB ref', 'vulnhub' ); ?></dt>
+						<dd class="vh-mono"><?php echo esc_html( (string) ( $a['cmdb_key'] ?: '—' ) ); ?></dd>
+						<dt><?php esc_html_e( 'Lifecycle', 'vulnhub' ); ?></dt>
+						<dd>
+							<?php
+							$vh_a_life   = (string) $a['lifecycle_status'];
+							$vh_a_in_svc = in_array( $vh_a_life, vh_in_service_statuses(), true );
+							$vh_a_arch   = \VulnHub\Core\Lifecycle::archived_count( (int) $a['id'] );
+							?>
+							<span class="vh-chip <?php echo $vh_a_in_svc ? '' : 'vh-chip--warn'; ?>">
+								<?php echo esc_html( (string) ( vh_lifecycle_statuses()[ $vh_a_life ]['label'] ?? $vh_a_life ) ); ?>
+							</span>
+							<?php if ( $vh_a_arch > 0 ) : ?>
+								<span class="vh-meta">
+									<?php
+									printf(
+										/* translators: %s: number of findings. */
+										esc_html( _n( '%s finding archived with it', '%s findings archived with it', $vh_a_arch, 'vulnhub' ) ),
+										esc_html( number_format_i18n( $vh_a_arch ) )
+									);
+									?>
+								</span>
+							<?php endif; ?>
+
+							<?php if ( current_user_can( \VulnHub\Core\Caps::TRIAGE ) ) : ?>
+								<?php
+								/*
+								 * The same action the list offers, for the case where
+								 * somebody has opened one machine to check it before
+								 * deciding. It posts the same form to the same handler
+								 * so there is one code path, not two.
+								 */
+								$vh_a_live = \VulnHub\Core\Lifecycle::live_finding_count( array( (int) $a['id'] ) );
+								?>
+								<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="vh-life1">
+									<input type="hidden" name="action" value="vulnhub_set_lifecycle">
+									<input type="hidden" name="assets[]" value="<?php echo esc_attr( (string) (int) $a['id'] ); ?>">
+									<input type="hidden" name="back" value="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $a['id'] ) ) ); ?>">
+									<?php wp_nonce_field( 'vulnhub_set_lifecycle' ); ?>
+									<?php if ( $vh_a_in_svc ) : ?>
+										<button type="submit" name="lifecycle" value="retired" class="vh-btn vh-btn--danger vh-btn--sm"
+											data-vh-confirm="<?php echo esc_attr( sprintf( /* translators: %s: number of findings. */ _n( 'Mark this asset decommissioned? %s open finding will be archived and removed from the totals.', 'Mark this asset decommissioned? %s open findings will be archived and removed from the totals.', $vh_a_live, 'vulnhub' ), number_format_i18n( $vh_a_live ) ) ); ?>">
+											<?php esc_html_e( 'Mark decommissioned', 'vulnhub' ); ?>
+										</button>
+									<?php else : ?>
+										<button type="submit" name="lifecycle" value="in_service" class="vh-btn vh-btn--sm">
+											<?php esc_html_e( 'Return to service', 'vulnhub' ); ?>
+										</button>
+									<?php endif; ?>
+								</form>
+							<?php endif; ?>
+						</dd>
+						<dt><?php esc_html_e( 'Criticality', 'vulnhub' ); ?></dt><dd><?php echo esc_html( ucfirst( (string) $a['criticality'] ) ); ?></dd>
+						<dt><?php esc_html_e( 'Compliance', 'vulnhub' ); ?></dt><dd><?php echo esc_html( (string) ( $a['compliance_state'] ?: '—' ) ); ?></dd>
+						<dt><?php esc_html_e( 'Business service', 'vulnhub' ); ?></dt><dd><?php echo esc_html( (string) ( $a['business_service'] ?: '—' ) ); ?></dd>
+						<dt><?php esc_html_e( 'Environment', 'vulnhub' ); ?></dt><dd><?php echo esc_html( (string) ( $a['environment'] ?: '—' ) ); ?></dd>
+						<dt><?php esc_html_e( 'Patch group', 'vulnhub' ); ?></dt>
+						<dd><?php echo $a['patch_group'] ? '<span class="vh-chip">' . esc_html( (string) $a['patch_group'] ) . '</span>' : '—'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></dd>
+						<dt><?php esc_html_e( 'Last seen', 'vulnhub' ); ?></dt><dd><?php echo esc_html( vh_ago( (string) $a['last_seen'] ) ); ?></dd>
+					</dl>
+
+					<?php
+					/*
+					 * Only drawn for machines that actually live in a cloud
+					 * account. `cloud_account_id` is the AWS account the
+					 * instance runs in, not a person -- the column it comes
+					 * from is called `aws_owner_id`, which is exactly the
+					 * trap this panel exists to avoid.
+					 */
+					$vh_cloud_raw = vh_json( (string) $a['raw_json'] );
+					$vh_cloud     = is_array( $vh_cloud_raw['cloud'] ?? null ) ? $vh_cloud_raw['cloud'] : array();
+					?>
+					<?php if ( $a['cloud_account_id'] || $a['aws_instance_id'] || $vh_cloud ) : ?>
+						<h3 class="vh-h3"><?php esc_html_e( 'Cloud', 'vulnhub' ); ?></h3>
+						<dl class="vh-dl">
+							<dt><?php esc_html_e( 'Account', 'vulnhub' ); ?></dt>
+							<dd class="vh-mono"><?php echo esc_html( (string) ( $a['cloud_account_id'] ?: '—' ) ); ?>
+								<?php if ( $a['cloud_provider'] ) : ?>
+									<span class="vh-meta"><?php echo esc_html( strtoupper( (string) $a['cloud_provider'] ) ); ?></span>
+								<?php endif; ?>
+							</dd>
+							<dt><?php esc_html_e( 'Region', 'vulnhub' ); ?></dt>
+							<dd class="vh-mono"><?php echo esc_html( (string) ( $a['cloud_region'] ?: '—' ) ); ?>
+								<?php if ( ! empty( $vh_cloud['zone'] ) ) : ?>
+									<span class="vh-meta"><?php echo esc_html( (string) $vh_cloud['zone'] ); ?></span>
+								<?php endif; ?>
+							</dd>
+							<dt><?php esc_html_e( 'Instance', 'vulnhub' ); ?></dt>
+							<dd class="vh-mono"><?php echo esc_html( (string) ( $a['aws_instance_id'] ?: '—' ) ); ?>
+								<span class="vh-meta">
+									<?php echo esc_html( trim( (string) ( $vh_cloud['instance_type'] ?? '' ) . ' ' . (string) ( $vh_cloud['state'] ?? '' ) ) ); ?>
+								</span>
+							</dd>
+							<?php if ( ! empty( $vh_cloud['vpc_id'] ) ) : ?>
+								<dt><?php esc_html_e( 'Network', 'vulnhub' ); ?></dt>
+								<dd class="vh-mono"><?php echo esc_html( (string) $vh_cloud['vpc_id'] ); ?>
+									<span class="vh-meta"><?php echo esc_html( (string) ( $vh_cloud['subnet_id'] ?? '' ) ); ?></span>
+								</dd>
+							<?php endif; ?>
+						</dl>
+					<?php endif; ?>
+				</section>
+
+				<section class="vh-panel">
+					<header class="vh-panel__head"><h2><?php esc_html_e( 'Open exposure', 'vulnhub' ); ?></h2></header>
+					<div class="vh-sevgrid">
+						<?php
+						foreach ( array( 'critical' => 'open_critical', 'high' => 'open_high', 'medium' => 'open_medium', 'low' => 'open_low' ) as $sev => $col ) :
+							?>
+							<div class="vh-sevgrid__cell">
+								<span class="vh-sevgrid__n" style="color:<?php echo esc_attr( VulnHub_Dash_Charts::severity_var( $sev ) ); ?>"><?php echo esc_html( number_format_i18n( (int) $a[ $col ] ) ); ?></span>
+								<span class="vh-sevgrid__l"><?php echo esc_html( vh_severity_label( $sev ) ); ?></span>
+							</div>
+						<?php endforeach; ?>
+					</div>
+					<?php $tags = vh_json( (string) $a['tags_json'] ); ?>
+					<?php if ( $tags ) : ?>
+						<h3 class="vh-h3"><?php esc_html_e( 'Tags', 'vulnhub' ); ?></h3>
+						<p class="vh-tags">
+							<?php foreach ( array_slice( $tags, 0, 10 ) as $tag ) : ?>
+								<span class="vh-chip"><?php echo esc_html( is_array( $tag ) ? ( ( $tag['key'] ?? '' ) . ': ' . ( $tag['value'] ?? '' ) ) : (string) $tag ); ?></span>
+							<?php endforeach; ?>
+						</p>
+					<?php endif; ?>
+				</section>
+			</div>
+
+			<section class="vh-panel">
+				<header class="vh-panel__head"><h2><?php esc_html_e( 'Open findings', 'vulnhub' ); ?></h2></header>
+				<?php echo VulnHub_Dash_Charts::severity_legend(); // phpcs:ignore ?>
+				<?php if ( ! $find['rows'] ) : ?>
+					<p class="vh-ok-note"><?php esc_html_e( 'No open findings on this asset.', 'vulnhub' ); ?></p>
+				<?php else : ?>
+					<div class="vh-tablewrap">
+						<table class="vh-table">
+							<thead><tr>
+								<th><?php esc_html_e( 'Severity', 'vulnhub' ); ?></th>
+								<th><?php esc_html_e( 'Vulnerability', 'vulnhub' ); ?></th>
+								<th><?php esc_html_e( 'Remediation', 'vulnhub' ); ?></th>
+								<th><?php esc_html_e( 'Due', 'vulnhub' ); ?></th>
+								<th></th>
+							</tr></thead>
+							<tbody>
+							<?php foreach ( $find['rows'] as $f ) : ?>
+								<tr>
+									<td><span class="vh-pill vh-pill--<?php echo esc_attr( (string) $f['severity'] ); ?>"><?php echo esc_html( vh_severity_label( (string) $f['severity'] ) ); ?></span></td>
+									<td>
+										<a href="<?php echo esc_url( self::page_url( 'vulnerabilities', array( 'vuln' => (int) $f['vuln_id'] ) ) ); ?>">
+											<strong><?php echo esc_html( vh_trim( (string) $f['vuln_title'], 70 ) ); ?></strong>
+										</a>
+										<span class="vh-meta"><?php echo esc_html( (string) ( $f['family'] ?: '' ) ); ?></span>
+									</td>
+									<td class="vh-sub"><?php echo esc_html( vh_trim( (string) $f['solution'], 90 ) ); ?></td>
+									<td><?php echo esc_html( $f['due_at'] ? vh_ago( (string) $f['due_at'] ) : '—' ); ?></td>
+									<td class="vh-col-act">
+										<?php if ( current_user_can( Caps::RAISE_TICKET ) && empty( $f['ticket_key'] ) ) : ?>
+											<button type="button" class="vh-btn vh-btn--sm" data-vh-raise data-vh-finding="<?php echo esc_attr( (string) $f['id'] ); ?>"><?php esc_html_e( 'Ticket', 'vulnhub' ); ?></button>
+										<?php elseif ( ! empty( $f['ticket_key'] ) ) : ?>
+											<a class="vh-mono" href="<?php echo esc_url( (string) $f['ticket_url'] ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( (string) $f['ticket_key'] ); ?></a>
+										<?php endif; ?>
+									</td>
+								</tr>
+							<?php endforeach; ?>
+							</tbody>
+						</table>
+					</div>
+				<?php endif; ?>
+			</section>
+			<?php
+			return;
+		}
+
+		// ---- list.
+		$per   = 25;
+		$paged = max( 1, self::qi( 'ap', 1 ) );
+		$orderby = self::q( 'orderby' ) ?: 'risk_score';
+		$order   = 'ASC' === strtoupper( self::q( 'order' ) ) ? 'ASC' : 'DESC';
+		/*
+		 * The last four have no control in the form. They exist so that a
+		 * bar on a dashboard coverage chart can hand the reader the exact
+		 * slice it was counting -- "the 146 workstations with a gap", "the
+		 * 42 servers Tenable has never seen at this site". A chart that
+		 * cannot be clicked through to its own rows is a picture, not a
+		 * tool. What is applied is shown as removable chips below.
+		 */
+		/*
+		 * One control, three questions. "Known by Intune" is the ordinary
+		 * one; "only Intune" and "not in Intune" are the ones a reader asks
+		 * when they suspect a feed has gone stale, and they are the reason
+		 * this exists -- a record only the CMDB still believes in is either a
+		 * machine that left the network or a row nobody retired.
+		 */
+		$vh_known  = self::q( 'known' );
+		$vh_source = array( 'source' => '', 'without_source' => '', 'sole_source' => '' );
+
+		if ( str_starts_with( $vh_known, 'only:' ) ) {
+			$vh_source['source']      = substr( $vh_known, 5 );
+			$vh_source['sole_source'] = '1';
+		} elseif ( str_starts_with( $vh_known, 'not:' ) ) {
+			$vh_source['without_source'] = substr( $vh_known, 4 );
+		} elseif ( '' !== $vh_known ) {
+			$vh_source['source'] = $vh_known;
+		}
+
+		/*
+		 * Lifecycle scope, defaulting to the estate that is actually running.
+		 *
+		 * An inventory that lists every machine the organisation has ever
+		 * owned is an archive, not an inventory -- and the whole point of
+		 * decommissioning an asset is that it stops appearing in the work.
+		 * `life=all` and `life=<status>` bring it back, and the header says
+		 * how many rows the default is holding back so nothing is silently
+		 * missing.
+		 */
+		$vh_life = self::q( 'life' );
+
+		/*
+		 * Validate before use, and say so when it fails.
+		 *
+		 * An unrecognised value used to reach Repo::assets() as a
+		 * `lifecycle_status`, where vh_normalise_lifecycle() answered
+		 * `unknown` for anything it did not recognise -- so `?life=typo`
+		 * quietly returned the 194-asset Unknown list and presented it as
+		 * though it were what had been asked for. A filter nobody chose is
+		 * worse than an error, because the page looks like it worked.
+		 */
+		$vh_life_bad = '';
+		$vh_life_ok  = array_merge(
+			array( 'reportable', 'in_service_all', 'not_reported', 'retired_all', 'all' ),
+			array_keys( vh_lifecycle_statuses() )
+		);
+
+		if ( '' !== $vh_life && ! in_array( $vh_life, $vh_life_ok, true ) ) {
+			$vh_life_bad = $vh_life;
+			$vh_life     = '';
+		}
+
+		$vh_scope = array(
+			'lifecycle_status'    => '',
+			'in_service_only'     => '',
+			'out_of_service_only' => '',
+			'reportable_only'     => '',
+			'not_reportable_only' => '',
+		);
+
+		if ( '' === $vh_life || 'reportable' === $vh_life ) {
+			// The default is the reporting scope, so the header on this page
+			// and the number on the widget that linked here are one figure.
+			$vh_scope['reportable_only'] = '1';
+		} elseif ( 'in_service_all' === $vh_life ) {
+			// The ownership scope: everything that should resolve to an owner,
+			// quarantine and in-repair machines included.
+			$vh_scope['in_service_only'] = '1';
+		} elseif ( 'not_reported' === $vh_life ) {
+			$vh_scope['not_reportable_only'] = '1';
+		} elseif ( 'retired_all' === $vh_life ) {
+			$vh_scope['out_of_service_only'] = '1';
+		} elseif ( 'all' !== $vh_life ) {
+			$vh_scope['lifecycle_status'] = $vh_life;
+		}
+
+		$args  = array(
+			'lifecycle_status'    => $vh_scope['lifecycle_status'],
+			'in_service_only'     => $vh_scope['in_service_only'],
+			'out_of_service_only' => $vh_scope['out_of_service_only'],
+			'reportable_only'     => $vh_scope['reportable_only'],
+			'not_reportable_only' => $vh_scope['not_reportable_only'],
+			'source'           => $vh_source['source'],
+			'without_source'   => $vh_source['without_source'],
+			'sole_source'      => $vh_source['sole_source'],
+			'search'           => self::q( 'search' ),
+			'asset_type'       => self::q( 'asset_type' ),
+			'team_id'          => self::qi( 'team_id' ),
+			'needs_user'       => self::q( 'needs_user' ),
+			'coverage'         => self::q( 'coverage' ),
+			'defender'         => self::q( 'defender' ),
+			// A string, not an int: `none` is a real value meaning "no site".
+			'location_id'      => self::q( 'location_id' ),
+			'primary_source'   => self::q( 'primary_source' ),
+			'operating_system' => self::q( 'operating_system' ),
+			'patch_group'      => self::q( 'patch_group' ),
+			// Set when the reader clicked a release on the end-of-life
+			// chart. Resolved by Repo through the same matcher the chart
+			// counted with, so the list length matches the bar.
+			'eol'              => self::q( 'eol' ),
+			'orderby'          => $orderby,
+			'order'            => $order,
+			'limit'            => $per,
+			'offset'           => ( $paged - 1 ) * $per,
+		);
+		$q     = Repo::assets( array_filter( $args, static fn( $v ): bool => '' !== $v && 0 !== $v ) );
+		$pages = max( 1, (int) ceil( (int) $q['total'] / $per ) );
+		?>
+		<div class="vh-page-head">
+			<div>
+				<h1><?php esc_html_e( 'Assets &amp; owners', 'vulnhub' ); ?></h1>
+				<?php $vh_own = Repo::summary(); ?>
+				<p class="vh-sub">
+					<?php
+					printf(
+						/* translators: %s: number of assets. */
+						esc_html( _n( '%s asset in the inventory.', '%s assets in the inventory.', (int) $q['total'], 'vulnhub' ) ),
+						'<strong>' . esc_html( number_format_i18n( (int) $q['total'] ) ) . '</strong>'
+					);
+					?>
+					<?php if ( (int) $vh_own['assets_total'] > 0 ) : ?>
+						<?php
+						printf(
+							/* translators: 1: assets with a named owner, 2: user-bound assets still missing one. */
+							esc_html__( '%1$s have a named owner; %2$s still need one.', 'vulnhub' ),
+							'<strong>' . esc_html( number_format_i18n( (int) $vh_own['assets_owned'] ) ) . '</strong>',
+							'<a href="' . esc_url( self::page_url( 'assets', array( 'needs_user' => '1' ) ) ) . '">' . esc_html( number_format_i18n( (int) $vh_own['users_missing'] ) ) . '</a>'
+						);
+						?>
+						<?php if ( (int) $vh_own['sites_missing'] > 0 ) : ?>
+							<?php
+							/*
+							 * Alongside the owner gap, and for the same reason.
+							 * An asset with no site is one nobody can send an
+							 * engineer to -- and it is where coverage gaps
+							 * accumulate unseen, because until the site filter
+							 * existed the unplaced pile had no list of its own.
+							 */
+							printf(
+								/* translators: %s: number of in-service assets with no site recorded. */
+								esc_html__( '%s have no site recorded.', 'vulnhub' ),
+								'<a href="' . esc_url( self::page_url( 'assets', array( 'location_id' => 'none' ) ) ) . '">'
+									. esc_html( number_format_i18n( (int) $vh_own['sites_missing'] ) ) . '</a>'
+							);
+							?>
+						<?php endif; ?>
+					<?php endif; ?>
+				</p>
+				<?php
+				/*
+				 * A default filter nobody can see is a lie by omission. If the
+				 * in-service default is hiding rows, the header says how many
+				 * and offers them.
+				 */
+				$vh_hidden = ( '' === $vh_life || 'reportable' === $vh_life )
+					? (int) Repo::assets( array( 'not_reportable_only' => '1', 'limit' => 1 ) )['total']
+					: 0;
+				?>
+				<?php if ( '' !== $vh_life_bad ) : ?>
+					<div class="vh-notice vh-notice--warn">
+						<?php
+						printf(
+							/* translators: %s: the unrecognised value supplied in the URL. */
+							esc_html__( '%s is not a lifecycle filter this page knows, so it has been ignored and the default reporting scope applied. Nothing below is filtered by it.', 'vulnhub' ),
+							'<code>life=' . esc_html( $vh_life_bad ) . '</code>'
+						);
+						?>
+					</div>
+				<?php endif; ?>
+				<?php if ( $vh_hidden > 0 ) : ?>
+					<p class="vh-sub vh-muted">
+						<?php
+						printf(
+							/* translators: %s: a link showing the hidden assets. */
+							esc_html__( 'Showing the assets the dashboard reports on. %s hidden.', 'vulnhub' ),
+							'<a href="' . esc_url( self::page_url( 'assets', array( 'life' => 'not_reported' ) ) ) . '">'
+								. esc_html(
+									sprintf(
+										/* translators: %s: number of assets. */
+										_n( '%s asset outside the reporting scope', '%s assets outside the reporting scope', $vh_hidden, 'vulnhub' ),
+										number_format_i18n( $vh_hidden )
+									)
+								) . '</a>'
+						);
+						?>
+					</p>
+				<?php endif; ?>
+			</div>
+			<div class="vh-page-head__actions">
+				<?php VulnHub_Dash_Export::button( 'assets', $args ); ?>
+			</div>
+		</div>
+
+		<?php
+		/*
+		 * The reader arrived here from a bar on the end-of-life chart, so
+		 * say which one. Without this the page reads as "104 assets in the
+		 * inventory", which is a different and alarming claim.
+		 */
+		$vh_eol_key = self::q( 'eol' );
+		?>
+		<?php if ( '' !== $vh_eol_key ) : ?>
+			<?php $vh_eol_row = \VulnHub\Core\Eol::table()[ $vh_eol_key ] ?? null; ?>
+			<div class="vh-notice vh-notice--info">
+				<?php
+				if ( $vh_eol_row ) {
+					$vh_eol_state = \VulnHub\Core\Eol::status( (string) $vh_eol_row['eol'] );
+
+					printf(
+						/* translators: 1: product and release, 2: status, 3: date. */
+						esc_html__( 'Showing assets running %1$s. %2$s%3$s', 'vulnhub' ),
+						'<strong>' . esc_html( trim( $vh_eol_row['product'] . ' ' . $vh_eol_row['release'] ) ) . '</strong>',
+						esc_html( (string) $vh_eol_state['label'] ),
+						(string) $vh_eol_row['eol'] ? esc_html( ' — ' . $vh_eol_row['eol'] . '.' ) : '.'
+					);
+				} else {
+					esc_html_e( 'Showing assets whose operating system release the inventory does not record.', 'vulnhub' );
+				}
+				?>
+				<a href="<?php echo esc_url( remove_query_arg( 'eol' ) ); ?>"><?php esc_html_e( 'Clear this filter', 'vulnhub' ); ?></a>
+			</div>
+		<?php endif; ?>
+
+		<?php
+		/*
+		 * What just happened, in the numbers that matter: how many assets
+		 * moved and how many findings went with them. A lifecycle change that
+		 * silently removed two thousand findings from the totals would be
+		 * indistinguishable from a bug.
+		 */
+		$vh_done = self::q( 'vh_life' );
+		?>
+		<?php if ( '' !== $vh_done ) : ?>
+			<?php
+			$vh_n_assets   = self::qi( 'vh_assets' );
+			$vh_n_archived = self::qi( 'vh_archived' );
+			$vh_n_restored = self::qi( 'vh_restored' );
+			?>
+			<div class="vh-notice <?php echo 'none' === $vh_done ? 'vh-notice--warn' : 'vh-notice--good'; ?>">
+				<?php if ( 'none' === $vh_done ) : ?>
+					<?php esc_html_e( 'Nothing was selected, so nothing changed.', 'vulnhub' ); ?>
+				<?php else : ?>
+					<?php
+					printf(
+						/* translators: 1: number of assets, 2: lifecycle status label. */
+						esc_html( _n( '%1$s asset set to %2$s.', '%1$s assets set to %2$s.', $vh_n_assets, 'vulnhub' ) ),
+						'<strong>' . esc_html( number_format_i18n( $vh_n_assets ) ) . '</strong>',
+						esc_html( strtolower( (string) ( vh_lifecycle_statuses()[ $vh_done ]['label'] ?? $vh_done ) ) )
+					);
+					?>
+					<?php if ( $vh_n_archived > 0 ) : ?>
+						<?php
+						printf(
+							/* translators: %s: number of findings. */
+							esc_html( _n( '%s finding archived and taken out of the totals.', '%s findings archived and taken out of the totals.', $vh_n_archived, 'vulnhub' ) ),
+							'<strong>' . esc_html( number_format_i18n( $vh_n_archived ) ) . '</strong>'
+						);
+						?>
+					<?php endif; ?>
+					<?php if ( $vh_n_restored > 0 ) : ?>
+						<?php
+						printf(
+							/* translators: %s: number of findings. */
+							esc_html( _n( '%s finding brought back.', '%s findings brought back.', $vh_n_restored, 'vulnhub' ) ),
+							'<strong>' . esc_html( number_format_i18n( $vh_n_restored ) ) . '</strong>'
+						);
+						?>
+					<?php endif; ?>
+				<?php endif; ?>
+			</div>
+		<?php endif; ?>
+
+		<form class="vh-filters" method="get">
+			<?php
+			self::hidden_filters(
+				array( 'search', 'asset_type', 'team_id', 'coverage', 'defender', 'known', 'life', 'needs_user', 'location_id' )
+			);
+			?>
+			<label><?php esc_html_e( 'Search', 'vulnhub' ); ?>
+				<input type="search" name="search" value="<?php echo esc_attr( self::q( 'search' ) ); ?>" placeholder="<?php esc_attr_e( 'hostname, IP, owner, serial…', 'vulnhub' ); ?>">
+			</label>
+			<label><?php esc_html_e( 'Type', 'vulnhub' ); ?>
+				<select name="asset_type">
+					<option value=""><?php esc_html_e( 'All types', 'vulnhub' ); ?></option>
+					<?php foreach ( vh_asset_types() as $k => $l ) : ?>
+						<option value="<?php echo esc_attr( $k ); ?>" <?php selected( self::q( 'asset_type' ), $k ); ?>><?php echo esc_html( $l ); ?></option>
+					<?php endforeach; ?>
+				</select>
+			</label>
+			<label><?php esc_html_e( 'Team', 'vulnhub' ); ?>
+				<select name="team_id">
+					<option value="0"><?php esc_html_e( 'All teams', 'vulnhub' ); ?></option>
+					<?php foreach ( Repo::teams() as $t ) : ?>
+						<option value="<?php echo esc_attr( (string) $t['id'] ); ?>" <?php selected( self::qi( 'team_id' ), (int) $t['id'] ); ?>><?php echo esc_html( (string) $t['name'] ); ?></option>
+					<?php endforeach; ?>
+				</select>
+			</label>
+			<label>
+				<span><?php esc_html_e( 'Site', 'vulnhub' ); ?></span>
+				<select name="location_id">
+					<option value=""><?php esc_html_e( 'All sites', 'vulnhub' ); ?></option>
+					<?php
+					/*
+					 * "No site recorded" is a first-class option, not an
+					 * afterthought. It is the largest group on this estate and
+					 * the one holding the most coverage gaps, and until this
+					 * existed there was no way to ask for it from the UI at all.
+					 */
+					?>
+					<option value="none" <?php selected( self::q( 'location_id' ), 'none' ); ?>>
+						<?php esc_html_e( 'No site recorded', 'vulnhub' ); ?>
+					</option>
+					<?php foreach ( Repo::locations() as $vh_loc ) : ?>
+						<option value="<?php echo esc_attr( (string) $vh_loc['id'] ); ?>" <?php selected( self::q( 'location_id' ), (string) $vh_loc['id'] ); ?>>
+							<?php echo esc_html( (string) $vh_loc['name'] ); ?>
+						</option>
+					<?php endforeach; ?>
+				</select>
+			</label>
+			<label>
+				<span><?php esc_html_e( 'Scan coverage', 'vulnhub' ); ?></span>
+				<select name="coverage">
+					<option value=""><?php esc_html_e( 'Any coverage', 'vulnhub' ); ?></option>
+					<option value="gap" <?php selected( self::q( 'coverage' ), 'gap' ); ?>><?php esc_html_e( 'Any coverage gap', 'vulnhub' ); ?></option>
+					<?php foreach ( Coverage::states() as $vh_cov_state => $vh_cov_def ) : ?>
+						<option value="<?php echo esc_attr( (string) $vh_cov_state ); ?>" <?php selected( self::q( 'coverage' ), (string) $vh_cov_state ); ?>>
+							<?php echo esc_html( (string) $vh_cov_def['label'] ); ?>
+						</option>
+					<?php endforeach; ?>
+				</select>
+			</label>
+			<label>
+				<span><?php esc_html_e( 'Endpoint', 'vulnhub' ); ?></span>
+				<select name="defender">
+					<option value=""><?php esc_html_e( 'Any endpoint state', 'vulnhub' ); ?></option>
+					<option value="gap" <?php selected( self::q( 'defender' ), 'gap' ); ?>><?php esc_html_e( 'No Defender sensor', 'vulnhub' ); ?></option>
+					<?php foreach ( Defender_Coverage::states() as $vh_dcov_state => $vh_dcov_def ) : ?>
+						<option value="<?php echo esc_attr( (string) $vh_dcov_state ); ?>" <?php selected( self::q( 'defender' ), (string) $vh_dcov_state ); ?>>
+							<?php echo esc_html( (string) $vh_dcov_def['label'] ); ?>
+						</option>
+					<?php endforeach; ?>
+				</select>
+			</label>
+			<label>
+				<span><?php esc_html_e( 'Known by', 'vulnhub' ); ?></span>
+				<select name="known">
+					<option value=""><?php esc_html_e( 'Any source', 'vulnhub' ); ?></option>
+					<optgroup label="<?php esc_attr_e( 'Known by', 'vulnhub' ); ?>">
+						<?php foreach ( vh_asset_sources() as $vh_s => $vh_sl ) : ?>
+							<option value="<?php echo esc_attr( $vh_s ); ?>" <?php selected( self::q( 'known' ), $vh_s ); ?>><?php echo esc_html( $vh_sl ); ?></option>
+						<?php endforeach; ?>
+					</optgroup>
+					<optgroup label="<?php esc_attr_e( 'Known only by', 'vulnhub' ); ?>">
+						<?php foreach ( vh_asset_sources() as $vh_s => $vh_sl ) : ?>
+							<option value="only:<?php echo esc_attr( $vh_s ); ?>" <?php selected( self::q( 'known' ), 'only:' . $vh_s ); ?>>
+								<?php
+								printf(
+									/* translators: %s: name of a source system. */
+									esc_html__( '%s only', 'vulnhub' ),
+									esc_html( $vh_sl )
+								);
+								?>
+							</option>
+						<?php endforeach; ?>
+					</optgroup>
+					<optgroup label="<?php esc_attr_e( 'Missing from', 'vulnhub' ); ?>">
+						<?php foreach ( vh_asset_sources() as $vh_s => $vh_sl ) : ?>
+							<option value="not:<?php echo esc_attr( $vh_s ); ?>" <?php selected( self::q( 'known' ), 'not:' . $vh_s ); ?>>
+								<?php
+								printf(
+									/* translators: %s: name of a source system. */
+									esc_html__( 'Not in %s', 'vulnhub' ),
+									esc_html( $vh_sl )
+								);
+								?>
+							</option>
+						<?php endforeach; ?>
+					</optgroup>
+				</select>
+			</label>
+			<label>
+				<span><?php esc_html_e( 'Lifecycle', 'vulnhub' ); ?></span>
+				<select name="life">
+					<option value=""><?php esc_html_e( 'Reporting scope (what the dashboard counts)', 'vulnhub' ); ?></option>
+					<option value="in_service_all" <?php selected( self::q( 'life' ), 'in_service_all' ); ?>><?php esc_html_e( 'Everything with an owner expectation', 'vulnhub' ); ?></option>
+					<option value="all" <?php selected( self::q( 'life' ), 'all' ); ?>><?php esc_html_e( 'Everything, including retired', 'vulnhub' ); ?></option>
+					<option value="not_reported" <?php selected( self::q( 'life' ), 'not_reported' ); ?>><?php esc_html_e( 'Outside the reporting scope', 'vulnhub' ); ?></option>
+					<option value="retired_all" <?php selected( self::q( 'life' ), 'retired_all' ); ?>><?php esc_html_e( 'Out of service only', 'vulnhub' ); ?></option>
+					<?php foreach ( vh_lifecycle_statuses() as $vh_ls => $vh_lm ) : ?>
+						<option value="<?php echo esc_attr( $vh_ls ); ?>" <?php selected( self::q( 'life' ), $vh_ls ); ?>><?php echo esc_html( (string) $vh_lm['label'] ); ?></option>
+					<?php endforeach; ?>
+				</select>
+			</label>
+			<label class="vh-check">
+				<input type="checkbox" name="needs_user" value="1" <?php checked( self::q( 'needs_user' ), '1' ); ?>>
+				<?php esc_html_e( 'Missing a user', 'vulnhub' ); ?>
+			</label>
+			<button class="vh-btn"><?php esc_html_e( 'Apply', 'vulnhub' ); ?></button>
+			<a class="vh-btn vh-btn--ghost" href="<?php echo esc_url( self::page_url( 'assets' ) ); ?>"><?php esc_html_e( 'Reset', 'vulnhub' ); ?></a>
+		</form>
+
+		<?php
+		/*
+		 * Filters that arrived from a dashboard chart have no control in the
+		 * form above, so without this the reader sees a short list and no
+		 * explanation for why. Each chip says what is narrowing the list and
+		 * removes just itself.
+		 */
+		$vh_chips = array();
+
+		foreach ( array(
+			'primary_source'   => __( 'Discovered by', 'vulnhub' ),
+			'operating_system' => __( 'Operating system', 'vulnhub' ),
+			'patch_group'      => __( 'Patch group', 'vulnhub' ),
+		) as $vh_key => $vh_label ) {
+			$vh_value = self::q( $vh_key );
+
+			if ( '' !== $vh_value ) {
+				$vh_chips[ $vh_key ] = $vh_label . ': ' . $vh_value;
+			}
+		}
+
+		if ( '' !== $vh_known ) {
+			$vh_src_labels = vh_asset_sources();
+			$vh_bare       = (string) preg_replace( '/^(only|not):/', '', $vh_known );
+			$vh_src_name   = (string) ( $vh_src_labels[ $vh_bare ] ?? $vh_bare );
+
+			if ( str_starts_with( $vh_known, 'only:' ) ) {
+				/* translators: %s: name of a source system. */
+				$vh_chips['known'] = sprintf( __( 'Known only by %s', 'vulnhub' ), $vh_src_name );
+			} elseif ( str_starts_with( $vh_known, 'not:' ) ) {
+				/* translators: %s: name of a source system. */
+				$vh_chips['known'] = sprintf( __( 'Not in %s', 'vulnhub' ), $vh_src_name );
+			} else {
+				/* translators: %s: name of a source system. */
+				$vh_chips['known'] = sprintf( __( 'Known by %s', 'vulnhub' ), $vh_src_name );
+			}
+		}
+
+		$vh_loc = self::qi( 'location_id' );
+
+		if ( $vh_loc > 0 ) {
+			$vh_place = Repo::location( $vh_loc );
+			$vh_chips['location_id'] = __( 'Site', 'vulnhub' ) . ': ' . (string) ( $vh_place['name'] ?? $vh_loc );
+		}
+		?>
+		<?php if ( $vh_chips ) : ?>
+			<p class="vh-chips">
+				<?php foreach ( $vh_chips as $vh_key => $vh_text ) : ?>
+					<?php
+					// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+					$vh_rest = is_array( $_GET ) ? array_map( 'sanitize_text_field', wp_unslash( $_GET ) ) : array();
+					unset( $vh_rest[ $vh_key ], $vh_rest['ap'], $vh_rest['page_id'] );
+					?>
+					<a class="vh-chip vh-chip--filter" href="<?php echo esc_url( self::page_url( 'assets', $vh_rest ) ); ?>">
+						<?php echo esc_html( $vh_text ); ?>
+						<span aria-hidden="true">&times;</span>
+						<span class="screen-reader-text"><?php esc_html_e( 'Remove this filter', 'vulnhub' ); ?></span>
+					</a>
+				<?php endforeach; ?>
+			</p>
+		<?php endif; ?>
+
+		<?php
+		/*
+		 * Decommissioning is a run, not a single act: somebody works down a
+		 * filtered list of a hundred CMDB-only rows deciding which machines
+		 * are really gone. So it is a bulk action on the list, not a button
+		 * buried on each asset's own page.
+		 *
+		 * Gated on TRIAGE. A read-only viewer gets the same table without the
+		 * checkbox column rather than a column of controls that refuse them.
+		 */
+		$vh_can_edit = current_user_can( \VulnHub\Core\Caps::TRIAGE );
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$vh_here     = self::page_url( 'assets', array_diff_key( is_array( $_GET ) ? array_map( 'sanitize_text_field', wp_unslash( $_GET ) ) : array(), array_flip( array( 'page_id', 'vh_life', 'vh_assets', 'vh_archived', 'vh_restored' ) ) ) );
+		?>
+		<?php if ( $vh_can_edit ) : ?>
+		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="vh-bulk" data-vh-bulk>
+			<input type="hidden" name="action" value="vulnhub_set_lifecycle">
+			<input type="hidden" name="back" value="<?php echo esc_url( $vh_here ); ?>">
+			<?php wp_nonce_field( 'vulnhub_set_lifecycle' ); ?>
+		<?php endif; ?>
+
+		<div class="vh-tablewrap vh-tablewrap--cards">
+			<table class="vh-table">
+				<thead><tr>
+					<?php if ( $vh_can_edit ) : ?>
+						<th class="vh-tick">
+							<input type="checkbox" data-vh-tick-all aria-label="<?php esc_attr_e( 'Select every asset on this page', 'vulnhub' ); ?>">
+						</th>
+					<?php endif; ?>
+					<?php self::sort_th( 'hostname', __( 'Host', 'vulnhub' ), $orderby, $order, 'assets' ); ?>
+					<th>
+						<?php esc_html_e( 'Scan coverage', 'vulnhub' ); ?>
+						<span class="vh-th__src"><?php esc_html_e( 'Tenable', 'vulnhub' ); ?></span>
+					</th>
+					<th>
+						<?php esc_html_e( 'EDR coverage', 'vulnhub' ); ?>
+						<span class="vh-th__src"><?php esc_html_e( 'Defender', 'vulnhub' ); ?></span>
+					</th>
+					<th><?php esc_html_e( 'Known by', 'vulnhub' ); ?></th>
+					<?php self::sort_th( 'asset_type', __( 'Type', 'vulnhub' ), $orderby, $order, 'assets' ); ?>
+					<th><?php esc_html_e( 'Operating system', 'vulnhub' ); ?></th>
+					<?php self::sort_th( 'owner_person_id', __( 'Owner', 'vulnhub' ), $orderby, $order, 'assets' ); ?>
+					<th><?php esc_html_e( 'Team', 'vulnhub' ); ?></th>
+					<?php self::sort_th( 'risk_score', __( 'Open exposure', 'vulnhub' ), $orderby, $order, 'assets' ); ?>
+				</tr></thead>
+				<tbody>
+				<?php foreach ( $q['rows'] as $a ) : ?>
+					<?php
+					$owner = Repo::person( (int) $a['owner_person_id'] );
+					$team  = Repo::team( (int) $a['team_id'] );
+					$needs = in_array( (string) $a['asset_type'], vh_user_bound_asset_types(), true );
+					$counts = array(
+						'critical' => (int) $a['open_critical'],
+						'high'     => (int) $a['open_high'],
+						'medium'   => (int) $a['open_medium'],
+						'low'      => (int) $a['open_low'],
+					);
+					$sum = array_sum( $counts );
+					?>
+					<?php $vh_in_svc = in_array( (string) $a['lifecycle_status'], vh_in_service_statuses(), true ); ?>
+					<tr<?php echo $vh_in_svc ? '' : ' class="vh-row--retired"'; ?>>
+						<?php if ( $vh_can_edit ) : ?>
+							<td class="vh-tick">
+								<input type="checkbox" name="assets[]" value="<?php echo esc_attr( (string) (int) $a['id'] ); ?>" data-vh-tick
+									aria-label="<?php echo esc_attr( sprintf( /* translators: %s: hostname. */ __( 'Select %s', 'vulnhub' ), (string) $a['hostname'] ) ); ?>">
+							</td>
+						<?php endif; ?>
+						<td data-th="<?php esc_attr_e( 'Host', 'vulnhub' ); ?>"><a class="vh-mono" href="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $a['id'] ) ) ); ?>"><strong><?php echo esc_html( (string) $a['hostname'] ); ?></strong></a>
+							<?php if ( ! $vh_in_svc ) : ?>
+								<span class="vh-chip vh-chip--warn"><?php echo esc_html( (string) ( vh_lifecycle_statuses()[ (string) $a['lifecycle_status'] ]['label'] ?? $a['lifecycle_status'] ) ); ?></span>
+							<?php endif; ?>
+							<span class="vh-meta"><?php echo esc_html( (string) $a['ipv4'] ); ?></span></td>
+						<td data-th="<?php esc_attr_e( 'Scan coverage', 'vulnhub' ); ?>">
+							<?php $vh_cov = (string) ( $a['coverage_state'] ?? '' ); ?>
+							<?php if ( $vh_cov ) : ?>
+								<span class="vh-chip vh-chip--<?php echo esc_attr( Coverage::tone( $vh_cov ) ); ?>"><?php echo esc_html( Coverage::label( $vh_cov ) ); ?></span>
+								<?php if ( ! empty( $a['tenable_last_scan'] ) ) : ?>
+									<span class="vh-meta"><?php echo esc_html( vh_ago( (string) $a['tenable_last_scan'] ) ); ?></span>
+								<?php endif; ?>
+							<?php else : ?>
+								<span class="vh-muted">—</span>
+							<?php endif; ?>
+						</td>
+						<td data-th="<?php esc_attr_e( 'EDR coverage', 'vulnhub' ); ?>">
+							<?php
+							/*
+							 * Defender's answer, not Tenable's. `unknown` is
+							 * the pre-migration default rather than a state
+							 * anybody set, so it shows as no answer instead
+							 * of as a finding -- claiming "unknown" for rows
+							 * the recalculation has never touched would put
+							 * a number on the dashboard that means nothing.
+							 */
+							$vh_edr = (string) ( $a['defender_coverage_state'] ?? '' );
+							?>
+							<?php if ( '' !== $vh_edr && 'unknown' !== $vh_edr ) : ?>
+								<span class="vh-chip vh-chip--<?php echo esc_attr( Defender_Coverage::tone( $vh_edr ) ); ?>"><?php echo esc_html( Defender_Coverage::label( $vh_edr ) ); ?></span>
+								<?php if ( ! empty( $a['defender_last_seen'] ) ) : ?>
+									<span class="vh-meta"><?php echo esc_html( vh_ago( (string) $a['defender_last_seen'] ) ); ?></span>
+								<?php endif; ?>
+							<?php else : ?>
+								<span class="vh-muted">—</span>
+							<?php endif; ?>
+						</td>
+						<td data-th="<?php esc_attr_e( 'Known by', 'vulnhub' ); ?>"><?php echo self::source_chips( (string) ( $a['sources_json'] ?? '' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+						<td data-th="<?php esc_attr_e( 'Type', 'vulnhub' ); ?>"><?php echo esc_html( vh_asset_types()[ (string) $a['asset_type'] ] ?? '' ); ?></td>
+						<td data-th="<?php esc_attr_e( 'Operating system', 'vulnhub' ); ?>"><?php
+							echo $a['operating_system']
+								? \VulnHub\Core\Os::badge( (string) $a['operating_system'], true, (string) ( $a['os_version'] ?? '' ), (string) $a['asset_type'] ) // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+								: '<span class="vh-muted">—</span>';
+						?></td>
+						<td data-th="<?php esc_attr_e( 'Owner', 'vulnhub' ); ?>">
+							<?php if ( $owner ) : ?>
+								<?php echo esc_html( (string) $owner['display_name'] ); ?>
+							<?php elseif ( $needs ) : ?>
+								<span class="vh-chip vh-chip--warn"><?php esc_html_e( 'Missing', 'vulnhub' ); ?></span>
+							<?php else : ?>—<?php endif; ?>
+						</td>
+						<td data-th="<?php esc_attr_e( 'Team', 'vulnhub' ); ?>"><?php echo esc_html( (string) ( $team['name'] ?? '—' ) ); ?></td>
+						<td data-th="<?php esc_attr_e( 'Open exposure', 'vulnhub' ); ?>">
+							<?php if ( $sum > 0 ) : ?>
+								<span class="vh-minibar" role="img" aria-label="<?php echo esc_attr( sprintf( 'Critical %d, high %d, medium %d, low %d', $counts['critical'], $counts['high'], $counts['medium'], $counts['low'] ) ); ?>">
+									<?php foreach ( VulnHub_Dash_Charts::severity_order() as $sev ) : ?>
+										<?php if ( ! empty( $counts[ $sev ] ) ) : ?>
+											<span style="flex:<?php echo esc_attr( (string) $counts[ $sev ] ); ?>;background:<?php echo esc_attr( VulnHub_Dash_Charts::severity_var( $sev ) ); ?>"></span>
+										<?php endif; ?>
+									<?php endforeach; ?>
+								</span>
+								<span class="vh-meta"><?php echo esc_html( sprintf( '%d / %d / %d / %d', $counts['critical'], $counts['high'], $counts['medium'], $counts['low'] ) ); ?></span>
+							<?php else : ?>
+								<span class="vh-sub"><?php esc_html_e( 'clean', 'vulnhub' ); ?></span>
+							<?php endif; ?>
+						</td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+		</div>
+
+		<?php if ( $vh_can_edit ) : ?>
+			<div class="vh-bulk__bar">
+				<p class="vh-sub">
+					<span data-vh-tick-count>0</span>
+					<?php esc_html_e( 'selected.', 'vulnhub' ); ?>
+					<span class="vh-muted"><?php esc_html_e( 'Decommissioning takes an asset out of scan coverage and archives its open findings, so the totals stop counting risk you no longer carry. Nothing is deleted, and returning an asset to service puts every finding back as it was.', 'vulnhub' ); ?></span>
+				</p>
+				<div class="vh-bulk__actions">
+					<button type="submit" name="lifecycle" value="retired" class="vh-btn vh-btn--danger" data-vh-bulk-submit
+						data-vh-confirm="<?php esc_attr_e( 'Mark the selected assets decommissioned? Their open findings will be archived and removed from every total. You can undo this by returning them to service.', 'vulnhub' ); ?>">
+						<?php esc_html_e( 'Mark decommissioned', 'vulnhub' ); ?>
+					</button>
+					<button type="submit" name="lifecycle" value="in_service" class="vh-btn vh-btn--ghost" data-vh-bulk-submit>
+						<?php esc_html_e( 'Return to service', 'vulnhub' ); ?>
+					</button>
+					<?php
+					/*
+					 * Its own field name, not a second control called `lifecycle`.
+					 * A select and a submit button sharing one name both post, and
+					 * PHP keeps whichever came last in the markup -- so an empty
+					 * dropdown would quietly cancel the button the operator
+					 * actually pressed.
+					 */
+					?>
+					<label class="vh-bulk__more">
+						<span class="screen-reader-text"><?php esc_html_e( 'Another status', 'vulnhub' ); ?></span>
+						<select name="lifecycle_other" data-vh-bulk-select>
+							<option value=""><?php esc_html_e( 'Another status…', 'vulnhub' ); ?></option>
+							<?php foreach ( vh_lifecycle_statuses() as $vh_ls => $vh_lm ) : ?>
+								<?php if ( in_array( $vh_ls, array( 'retired', 'in_service' ), true ) ) : continue; endif; ?>
+								<option value="<?php echo esc_attr( $vh_ls ); ?>"><?php echo esc_html( (string) $vh_lm['label'] ); ?></option>
+							<?php endforeach; ?>
+						</select>
+					</label>
+					<button type="submit" name="apply_other" value="1" class="vh-btn vh-btn--ghost" data-vh-bulk-submit>
+						<?php esc_html_e( 'Apply', 'vulnhub' ); ?>
+					</button>
+				</div>
+			</div>
+		</form>
+		<?php endif; ?>
+
+		<?php self::pager( $paged, $pages, 'ap' ); ?>
+		<?php
+	}
+
+	/* ---------------------------------------------------------- tickets. */
+
+	private static function view_tickets(): void {
+		$s     = Repo::summary();
+		$per   = 25;
+		$paged = max( 1, self::qi( 'tp', 1 ) );
+		$q     = Tickets::query(
+			array_filter(
+				array(
+					'status_category'    => self::q( 'status_category' ),
+					'verification_state' => self::q( 'verification_state' ),
+					'search'             => self::q( 'search' ),
+					'limit'              => $per,
+					'offset'             => ( $paged - 1 ) * $per,
+				),
+				static fn( $v ): bool => '' !== $v
+			)
+		);
+		$pages = max( 1, (int) ceil( (int) $q['total'] / $per ) );
+		?>
+		<div class="vh-page-head">
+			<div>
+				<h1><?php esc_html_e( 'Remediation tickets', 'vulnhub' ); ?></h1>
+				<p class="vh-sub"><?php esc_html_e( 'Every ticket raised from a finding, and whether the scanner agrees it is actually fixed.', 'vulnhub' ); ?></p>
+			</div>
+		</div>
+
+		<section class="vh-tiles">
+			<?php
+			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Open', 'vulnhub' ), 'value' => (int) $s['tickets_open'], 'tone' => 'neutral' ) ); // phpcs:ignore
+			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Closed', 'vulnhub' ), 'value' => (int) $s['tickets_done'], 'tone' => 'good' ) ); // phpcs:ignore
+			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Awaiting verification', 'vulnhub' ), 'value' => (int) $s['awaiting_verify'], 'tone' => 'warning', 'meta' => __( 'closed in Jira, not yet re-scanned', 'vulnhub' ) ) ); // phpcs:ignore
+			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Closed but still detected', 'vulnhub' ), 'value' => (int) $s['verify_failed'], 'tone' => (int) $s['verify_failed'] > 0 ? 'critical' : 'good', 'meta' => __( 'the scanner disagrees', 'vulnhub' ) ) ); // phpcs:ignore
+			?>
+		</section>
+
+		<form class="vh-filters" method="get">
+			<?php self::hidden_filters( array( 'search', 'status_category', 'verification_state' ) ); ?>
+			<label><?php esc_html_e( 'Search', 'vulnhub' ); ?>
+				<input type="search" name="search" value="<?php echo esc_attr( self::q( 'search' ) ); ?>" placeholder="<?php esc_attr_e( 'key or summary…', 'vulnhub' ); ?>">
+			</label>
+			<label><?php esc_html_e( 'Status', 'vulnhub' ); ?>
+				<select name="status_category">
+					<option value=""><?php esc_html_e( 'All', 'vulnhub' ); ?></option>
+					<option value="new" <?php selected( self::q( 'status_category' ), 'new' ); ?>><?php esc_html_e( 'To do', 'vulnhub' ); ?></option>
+					<option value="indeterminate" <?php selected( self::q( 'status_category' ), 'indeterminate' ); ?>><?php esc_html_e( 'In progress', 'vulnhub' ); ?></option>
+					<option value="done" <?php selected( self::q( 'status_category' ), 'done' ); ?>><?php esc_html_e( 'Done', 'vulnhub' ); ?></option>
+				</select>
+			</label>
+			<label><?php esc_html_e( 'Verification', 'vulnhub' ); ?>
+				<select name="verification_state">
+					<option value=""><?php esc_html_e( 'All', 'vulnhub' ); ?></option>
+					<?php foreach ( Tickets::verification_labels() as $k => $l ) : ?>
+						<option value="<?php echo esc_attr( $k ); ?>" <?php selected( self::q( 'verification_state' ), $k ); ?>><?php echo esc_html( $l ); ?></option>
+					<?php endforeach; ?>
+				</select>
+			</label>
+			<button class="vh-btn"><?php esc_html_e( 'Apply', 'vulnhub' ); ?></button>
+			<a class="vh-btn vh-btn--ghost" href="<?php echo esc_url( self::page_url( 'tickets' ) ); ?>"><?php esc_html_e( 'Reset', 'vulnhub' ); ?></a>
+		</form>
+
+		<?php if ( ! $q['rows'] ) : ?>
+			<p class="vh-chart-empty"><?php esc_html_e( 'No tickets yet. Raise one from the Vulnerabilities screen.', 'vulnhub' ); ?></p>
+		<?php else : ?>
+			<div class="vh-tablewrap">
+				<table class="vh-table">
+					<thead><tr>
+						<th><?php esc_html_e( 'Key', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Summary', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Status', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Assignee', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Findings', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Verification', 'vulnhub' ); ?></th>
+					</tr></thead>
+					<tbody>
+					<?php foreach ( $q['rows'] as $t ) : ?>
+						<?php
+						$vstate = (string) $t['verification_state'];
+						$vtone  = match ( $vstate ) {
+							Tickets::VERIFY_CONFIRMED  => 'good',
+							Tickets::VERIFY_STILL_OPEN => 'bad',
+							Tickets::VERIFY_PENDING    => 'warn',
+							default                    => 'neutral',
+						};
+						?>
+						<tr>
+							<td><a class="vh-mono" href="<?php echo esc_url( (string) $t['url'] ); ?>" target="_blank" rel="noopener noreferrer"><strong><?php echo esc_html( (string) $t['external_key'] ); ?></strong></a></td>
+							<td><?php echo esc_html( vh_trim( (string) $t['summary'], 78 ) ); ?></td>
+							<td><span class="vh-chip vh-chip--<?php echo 'done' === $t['status_category'] ? 'good' : 'neutral'; ?>"><?php echo esc_html( (string) $t['status'] ); ?></span></td>
+							<td><?php echo esc_html( (string) ( $t['assignee'] ?: '—' ) ); ?></td>
+							<td><?php echo esc_html( number_format_i18n( (int) $t['finding_count'] ) ); ?></td>
+							<td><span class="vh-chip vh-chip--<?php echo esc_attr( $vtone ); ?>"><?php echo esc_html( Tickets::verification_labels()[ $vstate ] ?? '—' ); ?></span></td>
+						</tr>
+					<?php endforeach; ?>
+					</tbody>
+				</table>
+			</div>
+			<?php self::pager( $paged, $pages, 'tp' ); ?>
+		<?php endif; ?>
+		<?php
+	}
+
+	/* ------------------------------------------------------- exceptions. */
+
+	private static function view_exceptions(): void {
+		$s = Repo::summary();
+		$q = Exceptions::query( array( 'status' => self::q( 'status' ), 'limit' => 100 ) );
+		?>
+		<div class="vh-page-head">
+			<div>
+				<h1><?php esc_html_e( 'Exception register', 'vulnhub' ); ?></h1>
+				<p class="vh-sub"><?php esc_html_e( 'Time-boxed, justified risk acceptances. Nothing is hidden — an expired exception puts its findings straight back into the open count.', 'vulnhub' ); ?></p>
+			</div>
+			<?php if ( current_user_can( Caps::REQUEST_EXCEPTION ) ) : ?>
+				<a class="vh-btn vh-btn--primary" href="<?php echo esc_url( self::page_url( 'vulnerabilities' ) ); ?>"><?php esc_html_e( 'Find a finding to except', 'vulnhub' ); ?></a>
+			<?php endif; ?>
+		</div>
+
+		<section class="vh-tiles">
+			<?php
+			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Awaiting approval', 'vulnhub' ), 'value' => (int) $s['exceptions_open'], 'tone' => (int) $s['exceptions_open'] > 0 ? 'warning' : 'neutral' ) ); // phpcs:ignore
+			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Active', 'vulnhub' ), 'value' => (int) $s['exceptions_active'], 'tone' => 'neutral' ) ); // phpcs:ignore
+			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Findings suppressed', 'vulnhub' ), 'value' => (int) $s['excepted'], 'tone' => 'neutral', 'meta' => __( 'still tracked, not counted as open', 'vulnhub' ) ) ); // phpcs:ignore
+			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Expiring in 30 days', 'vulnhub' ), 'value' => (int) Exceptions::query( array( 'expiring_days' => 30, 'limit' => 1 ) )['total'], 'tone' => 'warning' ) ); // phpcs:ignore
+			?>
+		</section>
+
+		<?php
+		/*
+		 * The status filter existed in the query for a long time with no way
+		 * to reach it except by typing the query string. A register you can
+		 * only narrow by hand-editing the URL is a register nobody narrows.
+		 */
+		?>
+		<form class="vh-filters" method="get">
+			<?php self::hidden_filters( array( 'status' ) ); ?>
+			<label><?php esc_html_e( 'Status', 'vulnhub' ); ?>
+				<select name="status">
+					<option value=""><?php esc_html_e( 'All statuses', 'vulnhub' ); ?></option>
+					<?php foreach ( Exceptions::statuses() as $vh_st => $vh_st_label ) : ?>
+						<option value="<?php echo esc_attr( (string) $vh_st ); ?>" <?php selected( self::q( 'status' ), (string) $vh_st ); ?>>
+							<?php echo esc_html( (string) $vh_st_label ); ?>
+						</option>
+					<?php endforeach; ?>
+				</select>
+			</label>
+			<button class="vh-btn"><?php esc_html_e( 'Apply', 'vulnhub' ); ?></button>
+			<a class="vh-btn vh-btn--ghost" href="<?php echo esc_url( self::page_url( 'exceptions' ) ); ?>"><?php esc_html_e( 'Reset', 'vulnhub' ); ?></a>
+		</form>
+
+		<?php if ( ! $q['rows'] ) : ?>
+			<p class="vh-chart-empty">
+				<?php
+				echo esc_html(
+					'' !== self::q( 'status' )
+						? __( 'No exceptions with that status.', 'vulnhub' )
+						: __( 'No exceptions on record. Raise one from a finding when remediation genuinely is not possible.', 'vulnhub' )
+				);
+				?>
+			</p>
+		<?php else : ?>
+			<div class="vh-tablewrap">
+				<table class="vh-table">
+					<thead><tr>
+						<th><?php esc_html_e( 'Ref', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Title', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Reason', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Findings', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Status', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Requested by', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Expires', 'vulnhub' ); ?></th>
+					</tr></thead>
+					<tbody>
+					<?php foreach ( $q['rows'] as $e ) : ?>
+						<tr>
+							<td class="vh-mono"><strong><?php echo esc_html( (string) $e['reference'] ); ?></strong></td>
+							<td><?php echo esc_html( vh_trim( (string) $e['title'], 62 ) ); ?></td>
+							<td class="vh-sub"><?php echo esc_html( Exceptions::reasons()[ (string) $e['reason'] ] ?? '' ); ?></td>
+							<td><?php echo esc_html( number_format_i18n( (int) $e['affected_count'] ) ); ?></td>
+							<td>
+								<?php
+								$tone = match ( (string) $e['status'] ) {
+									'approved' => 'good',
+									'pending'  => 'warn',
+									'rejected', 'revoked' => 'bad',
+									default    => 'neutral',
+								};
+								?>
+								<span class="vh-chip vh-chip--<?php echo esc_attr( $tone ); ?>"><?php echo esc_html( Exceptions::statuses()[ (string) $e['status'] ] ?? '' ); ?></span>
+							</td>
+							<td><?php echo esc_html( (string) $e['requested_by_name'] ); ?></td>
+							<td><?php echo esc_html( $e['expires_at'] ? vh_date( (string) $e['expires_at'], 'j M Y' ) : '—' ); ?></td>
+						</tr>
+					<?php endforeach; ?>
+					</tbody>
+				</table>
+			</div>
+		<?php endif; ?>
+		<?php
+	}
+
+	/* -----------------------------------------------------------------
+	 * Shared bits
+	 * --------------------------------------------------------------- */
+
+	/**
+	 * Carry the filters this form has no control for.
+	 *
+	 * A GET form submits its own fields and nothing else, so pressing Apply
+	 * on a list reached from a chart used to throw away whichever filter the
+	 * chart applied. Arriving on 5,361 findings from the attack-path widget
+	 * and narrowing to Critical silently dropped `route` and `poc` and
+	 * returned 2,459 -- a different question, answered without saying so.
+	 *
+	 * Anything already in the query string that the form cannot express is
+	 * re-submitted as a hidden field. Paging keys are deliberately not: page
+	 * four of the old filter is not page four of the new one.
+	 *
+	 * @param string[] $own Field names this form already renders.
+	 */
+	/**
+	 * The filters currently in the query string, for building a link that
+	 * changes one of them and keeps the rest.
+	 *
+	 * Paging keys are left out for the same reason hidden_filters() drops
+	 * them: page four of the old filter is not page four of the new one.
+	 *
+	 * @param string[] $keys Query keys worth carrying.
+	 * @return array<string,string>
+	 */
+	private static function current_filters( array $keys ): array {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$get = is_array( $_GET ) ? wp_unslash( $_GET ) : array();
+		$out = array();
+
+		foreach ( $keys as $key ) {
+			if ( isset( $get[ $key ] ) && ! is_array( $get[ $key ] ) && '' !== $get[ $key ] ) {
+				$out[ $key ] = sanitize_text_field( (string) $get[ $key ] );
+			}
+		}
+
+		return $out;
+	}
+
+	private static function hidden_filters( array $own ): void {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$get  = is_array( $_GET ) ? wp_unslash( $_GET ) : array();
+		$skip = array_merge( $own, array( 'page_id', 'ap', 'vp', 'tp', 'ep', 'paged', 'asset', 'vuln', 'ticket' ) );
+
+		foreach ( $get as $key => $value ) {
+			if ( is_array( $value ) || in_array( (string) $key, $skip, true ) ) {
+				continue;
+			}
+
+			$name = sanitize_key( (string) $key );
+
+			if ( '' === $name ) {
+				continue;
+			}
+
+			printf(
+				'<input type="hidden" name="%s" value="%s">',
+				esc_attr( $name ),
+				esc_attr( sanitize_text_field( (string) $value ) )
+			);
+		}
+	}
+
+	private static function pager( int $current, int $pages, string $key ): void {
+		if ( $pages < 2 ) {
+			return;
+		}
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$base = remove_query_arg( $key, add_query_arg( array_map( 'sanitize_text_field', wp_unslash( $_GET ) ) ) );
+
+		echo '<nav class="vh-pager" aria-label="' . esc_attr__( 'Pagination', 'vulnhub' ) . '">';
+		if ( $current > 1 ) {
+			echo '<a class="vh-btn vh-btn--ghost" href="' . esc_url( add_query_arg( $key, $current - 1, $base ) ) . '">&larr; ' . esc_html__( 'Previous', 'vulnhub' ) . '</a>';
+		}
+		printf(
+			'<span class="vh-pager__count">%s</span>',
+			esc_html(
+				sprintf(
+					/* translators: 1: current page, 2: total pages. */
+					__( 'Page %1$d of %2$d', 'vulnhub' ),
+					$current,
+					$pages
+				)
+			)
+		);
+		if ( $current < $pages ) {
+			echo '<a class="vh-btn vh-btn--ghost" href="' . esc_url( add_query_arg( $key, $current + 1, $base ) ) . '">' . esc_html__( 'Next', 'vulnhub' ) . ' &rarr;</a>';
+		}
+		echo '</nav>';
+	}
+}
+

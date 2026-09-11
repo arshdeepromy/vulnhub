@@ -1,0 +1,1141 @@
+/* auto-extracted legacy component styles, re-themed via shared dark tokens */
+.vh-sub--foot { margin-top: 10px; font-size: 12px; }
+.vh-overdue { color: var(--vh-bad); font-weight: 600; }
+.vh-back { font-size: 13px; }
+.vh-topbar__end { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.vh-brand__text { font-weight: 650; color: var(--vh-ink); }
+.vh-panel__head { margin-bottom: 14px; }
+.vh-panel__head h2 { color: var(--vh-ink); }
+.vh-tile__meta { font-size: 12px; color: var(--vh-ink-2); }
+.vh-chart-wrap { position: relative; }
+.vh-legend--scale { margin: 0 0 12px; }
+.vh-bars { display: flex; flex-direction: column; gap: 9px; }
+.vh-stack__row { display: grid; grid-template-columns: minmax(112px, 1.2fr) 3fr auto; gap: 10px; align-items: center; }
+.vh-stack__label {
+  font-size: 12.5px; color: var(--vh-ink-2);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere;
+}
+.vh-stack__track { display: flex; gap: 2px; height: 10px; min-width: fit-content; }
+.vh-stack__seg { display: block; border-radius: 2px; min-width: 3px; }
+.vh-stack__seg:first-child { border-radius: 4px 2px 2px 4px; }
+.vh-stack__seg:last-child { border-radius: 2px 4px 4px 2px; }
+.vh-stack__value { font-size: 12.5px; font-weight: 620; font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
+.vh-segbars__row { display: grid; grid-template-columns: minmax(120px, 1.1fr) 3fr auto; gap: 10px; align-items: center; }
+.vh-segbars__label {
+  font-size: 12.5px; color: var(--vh-ink); font-weight: 560;
+  display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere;
+}
+.vh-segbars__label a { color: inherit; text-decoration: none; }
+.vh-segbars__label a:hover, .vh-segbars__label a:focus-visible { text-decoration: underline; }
+.vh-segbars__sub { font-size: 11.5px; font-weight: 400; color: var(--vh-muted); }
+.vh-segbars__track { display: flex; gap: 2px; height: 18px; min-width: fit-content; }
+.vh-segbars__seg {
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 2px; min-width: 4px; overflow: hidden;
+  text-decoration: none;
+}
+.vh-segbars__seg:first-child { border-radius: 5px 2px 2px 5px; }
+.vh-segbars__seg:last-child { border-radius: 2px 5px 5px 2px; }
+.vh-segbars__seg-n {
+  font-size: 11px; font-weight: 640; font-variant-numeric: tabular-nums;
+  color: #fff; padding: 0 5px; white-space: nowrap;
+  
+  mix-blend-mode: normal;
+}
+.vh-segbars__seg { container-type: inline-size; }
+@container (max-width: 34px) {
+.vh-segbars__seg-n { display: none; }
+}
+a.vh-segbars__seg { cursor: pointer; }
+a.vh-segbars__seg:hover, a.vh-segbars__seg:focus-visible { outline: 2px solid var(--vh-ink); outline-offset: -2px; }
+.vh-segbars__total { font-size: 12.5px; font-weight: 640; font-variant-numeric: tabular-nums; min-width: 44px; text-align: right; }
+.vh-w__note { margin: 12px 0 0; font-size: 12px; line-height: 1.5; color: var(--vh-ink-2); }
+@media (max-width: 640px) {
+.vh-segbars__row { grid-template-columns: 1fr auto; }
+.vh-segbars__track { grid-column: 1 / -1; }
+}
+.vh-meterblock__head { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--vh-ink-2); margin-bottom: 5px; }
+.vh-meterblock__head strong { color: var(--vh-ink); font-variant-numeric: tabular-nums; }
+.vh-meterblock__track { height: 7px; background: var(--vh-neutral-bg); border-radius: 4px; overflow: hidden; }
+.vh-meterblock__fill { display: block; height: 100%; border-radius: 4px; background: var(--vh-series-1); }
+.vh-meterblock__fill--ok { background: var(--vh-good); }
+.vh-meterblock__fill--warn { background: var(--vh-sev-medium); }
+.vh-meterblock__fill--bad { background: var(--vh-bad); }
+.vh-meterblock__meta { font-size: 11.5px; color: var(--vh-muted); margin-top: 4px; }
+.vh-tag {
+  display: inline-block; padding: 1px 7px; margin-left: 6px;
+  border: 1px solid var(--vh-line); border-radius: 999px;
+  font-size: 11px; font-weight: 600; line-height: 1.6;
+  color: var(--vh-ink-2); background: var(--vh-plane); white-space: nowrap;
+}
+.vh-th__src {
+  display: block; margin-top: 2px;
+  font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--vh-muted);
+}
+.vh-chip--muted { background: var(--vh-plane); color: var(--vh-muted); }
+
+/* ---------------------------------------------------------------------------
+ * The export button and its column picker.
+ *
+ * A <details> rather than a menu built in JavaScript, because the panel is a
+ * real GET form: with scripting off the disclosure still opens, the checkboxes
+ * still tick and the submit still downloads. The All/None buttons are the only
+ * part that needs JS, and the only part whose absence costs nothing.
+ * ------------------------------------------------------------------------ */
+/*
+ * The open disclosure has to win the stacking contest, not just its panel.
+ *
+ * z-index on the panel alone was not enough: the filter row that follows the
+ * panel header creates its own stacking context later in the document, so its
+ * labels painted over the panel and swallowed the click on Download. Raising
+ * the <details> itself puts the whole popover above everything after it.
+ */
+.vh-export { position: relative; display: inline-block; z-index: 1; }
+.vh-export[open] { z-index: 60; }
+
+/*
+ * ...and its container has to win too.
+ *
+ * The panel header and the filter row are siblings inside .vh-panel, and the
+ * filter row carries `position: relative; z-index: 1`. That put every filter
+ * label above the popover regardless of the popover's own z-index, because a
+ * child cannot out-paint its parent's stacking position. elementsFromPoint on
+ * the Download button returned the filter form's LABEL first, which is why
+ * the click did nothing at all.
+ */
+.vh-panel__head { position: relative; z-index: 3; }
+.vh-export > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.vh-export > summary::-webkit-details-marker { display: none; }
+.vh-export[open] > summary { background: var(--vh-plane); }
+
+/*
+ * Anchored to its button, and deliberately NOT position: fixed.
+ *
+ * `.vh-main` carries a transform, which makes it the containing block for
+ * fixed positioning -- so a "centred on the viewport" sheet centred itself on
+ * the whole scrolling page instead and landed at y=961 in a 900px window.
+ * Absolute against the button is honest about where it belongs, and the
+ * Download button lives in the panel header so the panel's height can never
+ * put the primary action out of reach.
+ */
+.vh-export__panel {
+  position: absolute; z-index: 60; top: calc(100% + 6px); left: 0; right: auto;
+  width: min(600px, calc(100vw - 32px));
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 14px; border-radius: 14px;
+  border: 1px solid var(--vh-line);
+  /*
+   * Solid colour first, card gradient over it.
+   *
+   * --vh-raised is a 92%-opaque gradient, which is right for a card sitting
+   * in the page and wrong for a popover: the rows underneath showed through
+   * the checkbox list. --vh-raised-solid is the same colour at full opacity,
+   * so the panel keeps the card's look and stops being see-through.
+   */
+  background-color: var(--vh-raised-solid, var(--vh-surface));
+  background-image: var(--vh-raised);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .40);
+  text-align: left;
+}
+
+/* Where the button is right-aligned, so is its panel. */
+.vh-page-head__actions .vh-export__panel { left: auto; right: 0; }
+
+.vh-export__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.vh-export__head strong { font-size: 13px; color: var(--vh-ink); }
+.vh-export__toggles { margin-left: auto; display: inline-flex; gap: 10px; }
+.vh-export__head > button[type="submit"] { flex: 0 0 auto; }
+
+.vh-linkbtn {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; font-size: 12px; color: var(--vh-link, var(--vh-series-1)); text-decoration: underline;
+}
+.vh-linkbtn:hover, .vh-linkbtn:focus-visible { text-decoration: none; }
+
+/*
+ * Its own scroller. The findings view has twenty-two columns in four groups,
+ * which is taller than a phone -- and a panel that grows past the viewport
+ * puts its Download button somewhere nobody can reach.
+ */
+.vh-export__cols {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 14px;
+  max-height: min(46vh, 380px); overflow-y: auto; padding-right: 4px;
+}
+.vh-export__group { border: 0; margin: 0; padding: 0; min-width: 0; }
+.vh-export__group legend {
+  padding: 0 0 4px; font-size: 10px; font-weight: 700;
+  letter-spacing: .05em; text-transform: uppercase; color: var(--vh-muted);
+}
+.vh-export__group label {
+  display: flex; align-items: flex-start; gap: 6px; text-transform: none; letter-spacing: 0;
+  font-size: 12.5px; font-weight: 400; color: var(--vh-ink-2); padding: 2px 0; cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.vh-export__group input { margin-top: 2px; flex: 0 0 auto; }
+
+.vh-export__note { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--vh-muted); }
+
+/*
+ * The panel grows out of the button it hangs off.
+ *
+ * An animation, not a transition: <details> reveals its content in one frame
+ * with no prior state to transition from, so there is nothing for a
+ * transition to interpolate. The transform-origin follows the anchor, so a
+ * right-aligned panel unfolds from its right corner and a left-aligned one
+ * from its left -- it reads as the button opening rather than a box landing
+ * on the page. app.js plays the reverse before flipping `open` back off.
+ */
+@keyframes vhExportIn {
+  from { opacity: 0; transform: translateY(-6px) scale(.97); }
+  to   { opacity: 1; transform: none; }
+}
+
+.vh-export > .vh-export__panel { transform-origin: top left; }
+.vh-page-head__actions .vh-export > .vh-export__panel { transform-origin: top right; }
+
+.vh-export[open] > .vh-export__panel {
+  animation: vhExportIn .17s cubic-bezier(.2, .8, .3, 1) both;
+}
+
+.vh-export.is-closing > .vh-export__panel {
+  animation: vhExportIn .13s cubic-bezier(.4, 0, 1, 1) reverse both;
+}
+
+/* The trigger settles into the panel's surface rather than snapping to it. */
+.vh-export > summary { transition: background .18s var(--vh-ease, ease), color .18s var(--vh-ease, ease); }
+
+@media (prefers-reduced-motion: reduce) {
+  .vh-export[open] > .vh-export__panel,
+  .vh-export.is-closing > .vh-export__panel { animation: none; }
+}
+
+
+@media (max-width: 640px) {
+  /*
+   * On a phone the panel stops floating and joins the document.
+   *
+   * A popover that opens downward from a control already two thirds of the
+   * way down a 844px screen has nowhere to go, and an absolutely positioned
+   * one does not lengthen the page, so scrolling cannot rescue it. In the
+   * flow it pushes the page taller and every checkbox is reachable with an
+   * ordinary scroll -- which is what a disclosure should have done here all
+   * along.
+   */
+  .vh-export { display: block; }
+  .vh-export__panel {
+    position: static; width: auto; margin-top: 8px;
+    box-shadow: none; max-height: none;
+  }
+  .vh-export__cols { max-height: none; overflow: visible; }
+}
+.vh-col-check { width: 34px; }
+.vh-dl { display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; margin: 0; font-size: 13px; }
+.vh-dl dt { color: var(--vh-muted); font-weight: 600; }
+.vh-dl dd { margin: 0; }
+.vh-list { list-style: none; margin: 0 0 12px; padding: 0; }
+.vh-list li { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--vh-line); }
+.vh-list li:last-child { border-bottom: 0; }
+.vh-sevgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.vh-sevgrid__cell { text-align: center; padding: 10px 4px; border: 1px solid var(--vh-line); border-radius: 8px; }
+.vh-sevgrid__n { display: block; font-size: 21px; font-weight: 650; line-height: 1.1; }
+.vh-sevgrid__l { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--vh-muted); }
+.vh-tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 0; }
+.vh-ok-note { background: var(--vh-good-bg); color: var(--vh-good); }
+.vh-ok-note svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+.vh-pager { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 18px 0; }
+.vh-pager__count { font-size: 12.5px; color: var(--vh-muted); }
+.vh-signin {
+  display: flex; align-items: center; justify-content: center;
+  min-height: calc(100vh - 220px); padding: 40px 16px;
+}
+.vh-signin__card {
+  width: 100%; max-width: 392px;
+  padding: 28px 28px 24px;
+  background: var(--vh-surface);
+  border: 1px solid var(--vh-line);
+  border-radius: var(--vh-radius);
+  box-shadow: var(--vh-shadow);
+}
+.vh-signin__brand {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  margin-bottom: 18px;
+}
+.vh-signin__brand svg {
+  width: 26px; height: 26px; flex: 0 0 auto; color: var(--vh-series-1);
+}
+.vh-signin__brand span { font-size: 14px; font-weight: 620; color: var(--vh-ink); }
+.vh-signin h1 { font-size: 20px; margin: 0 0 4px; text-align: center; }
+.vh-signin__sub {
+  margin: 0 0 20px; text-align: center;
+  font-size: 13px; color: var(--vh-ink-2);
+}
+.vh-signin__error {
+  margin-bottom: 16px; padding: 9px 11px;
+  border: 1px solid var(--vh-bad); border-left-width: 3px; border-radius: 8px;
+  background: var(--vh-bad-bg); color: var(--vh-bad);
+  font-size: 12.5px;
+}
+.vh-signin__form { display: flex; flex-direction: column; gap: 5px; }
+.vh-signin__form label {
+  font-size: 12.5px; font-weight: 560; color: var(--vh-ink-2);
+}
+.vh-signin__form label + input { margin-bottom: 12px; }
+.vh-signin__form input[type="text"],
+.vh-signin__form input[type="password"] {
+  width: 100%; box-sizing: border-box; height: 38px; padding: 0 11px;
+  border: 1px solid var(--vh-line); border-radius: 8px;
+  background: var(--vh-surface); color: var(--vh-ink);
+  font-family: inherit; font-size: 14px;
+}
+.vh-signin__form input[type="text"]:focus,
+.vh-signin__form input[type="password"]:focus {
+  outline: 2px solid var(--vh-link); outline-offset: 1px; border-color: var(--vh-link);
+}
+.vh-signin__remember {
+  display: flex; align-items: center; gap: 8px;
+  margin: 2px 0 16px; font-weight: 500; color: var(--vh-ink-2);
+}
+.vh-signin__remember input { width: 15px; height: 15px; margin: 0; accent-color: var(--vh-link); }
+.vh-signin__foot { margin: 16px 0 0; text-align: center; font-size: 12.5px; }
+.vh-gate { max-width: 480px; margin: 80px auto; text-align: center; }
+.vh-gate h1 { font-size: 21px; }
+.vh-gate p { color: var(--vh-ink-2); margin: 8px 0 20px; }
+.vh-footer {
+  display: flex; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+  max-width: 1360px; margin: 0 auto; padding: 22px 24px 40px;
+  font-size: 12px; color: var(--vh-muted);
+}
+.vh-toast {
+  position: fixed; right: 20px; bottom: 20px; z-index: 1000;
+  background: var(--vh-surface); color: var(--vh-ink);
+  border: 1px solid var(--vh-line); border-left: 3px solid var(--vh-series-1);
+  padding: 12px 16px; border-radius: 9px; box-shadow: var(--vh-shadow);
+  font-size: 13px; max-width: 380px; transition: opacity .35s, transform .35s;
+}
+.vh-toast--good { border-left-color: var(--vh-good); }
+.vh-toast--warn { border-left-color: var(--vh-sev-medium); }
+.vh-toast--bad { border-left-color: var(--vh-bad); }
+.vh-toast.is-out { opacity: 0; transform: translateY(8px); }
+.vh-gate { padding: 40px 0; }
+.vh-gate h1 { margin: 0 0 6px; }
+.vh-sort__mark { font-size: 9px; line-height: 1; color: var(--vh-series-1); }
+.vh-board {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+  grid-auto-flow: row dense;
+}
+.vh-board.is-packed {
+  align-items: stretch;
+  grid-auto-rows: var(--vh-board-unit, 8px);
+}
+.vh-w--3 { grid-column: span 3; }
+.vh-w--4 { grid-column: span 4; }
+.vh-w--6 { grid-column: span 6; }
+.vh-w--8 { grid-column: span 8; }
+.vh-w--12 { grid-column: span 12; }
+.vh-w__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.vh-w__head > div { flex: 1 1 auto; min-width: 0; }
+.vh-w__grip {
+  flex: 0 0 auto; order: -1;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; margin: -3px 0 0 -6px; padding: 0;
+  background: none; border: 0; border-radius: 7px;
+  color: var(--vh-muted); cursor: grab; touch-action: none;
+  opacity: 0; transition: opacity .15s ease, background .15s ease, color .15s ease;
+}
+.vh-w__grip svg { width: 15px; height: 15px; }
+.vh-w__grip:hover { background: var(--vh-neutral-bg); color: var(--vh-ink-2); }
+.vh-w__grip:active { cursor: grabbing; }
+.vh-board__status {
+  position: fixed; inset: auto 20px 20px auto; z-index: 40;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 14px; border-radius: 999px;
+  background: var(--vh-surface); border: 1px solid var(--vh-line);
+  box-shadow: var(--vh-raised, var(--vh-shadow));
+  font-size: 12.5px; color: var(--vh-ink-2);
+  opacity: 0; transform: translateY(6px); pointer-events: none;
+  transition: opacity .2s ease, transform .2s ease;
+}
+.vh-board__status.is-visible { opacity: 1; transform: translateY(0); }
+.vh-visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+.vh-w__head h2 { margin: 0; font-size: 15px; font-weight: 640; color: var(--vh-ink); }
+.vh-w__body { flex: 1; min-width: 0; }
+.vh-w__menu { position: relative; flex: 0 0 auto; }
+.vh-w__menu > summary {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 7px; cursor: pointer;
+  list-style: none; color: var(--vh-muted); border: 1px solid transparent;
+}
+.vh-w__menu > summary::-webkit-details-marker { display: none; }
+.vh-w__menu > summary::marker { content: ''; }
+.vh-w__menu > summary:hover { background: var(--vh-neutral-bg); color: var(--vh-ink); border-color: var(--vh-line); }
+.vh-w__menu > summary svg { width: 15px; height: 15px; }
+.vh-w__menu-body {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 25;
+  min-width: 168px; padding: 6px;
+  background: var(--vh-surface); border: 1px solid var(--vh-line);
+  border-radius: 9px; box-shadow: var(--vh-shadow);
+}
+.vh-w__export {
+  display: block; width: 100%; text-align: left;
+  padding: 7px 9px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--vh-ink-2);
+  font: inherit; font-size: 13px; cursor: pointer; text-decoration: none;
+}
+.vh-w__export:hover { background: var(--vh-neutral-bg); color: var(--vh-ink); text-decoration: none; }
+.vh-legend--stack { list-style: none; margin: 0; padding: 0; flex: 1 1 190px; min-width: 168px; }
+.vh-legend--stack li {
+  display: grid; grid-template-columns: 10px 1fr auto auto;
+  align-items: center; gap: 8px;
+  padding: 3px 0; font-size: 12.5px; color: var(--vh-ink-2);
+}
+.vh-legend__label {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere;
+}
+.vh-legend__share { font-variant-numeric: tabular-nums; color: var(--vh-muted); min-width: 38px; text-align: right; }
+.vh-funnel { list-style: none; margin: 0; padding: 0; }
+.vh-funnel__head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.vh-funnel__label { font-size: 13px; color: var(--vh-ink-2); }
+.vh-cov { list-style: none; margin: 0; padding: 0; }
+.vh-cov__label { color: var(--vh-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vh-list { list-style: none; margin: 0; padding: 0; }
+.vh-flash {
+  margin: 0 0 16px; padding: 10px 14px; font-size: 13.5px;
+  background: var(--vh-neutral-bg); border: 1px solid var(--vh-line);
+  border-left: 3px solid var(--vh-series-1); border-radius: 8px;
+}
+.vh-page-head__actions { display: flex; gap: 8px; align-items: center; }
+.vh-customise {
+  margin: 0 0 20px; padding: 18px 20px;
+  background: var(--vh-surface); border: 1px solid var(--vh-line);
+  border-radius: var(--vh-radius); box-shadow: var(--vh-shadow);
+}
+.vh-customise__head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.vh-customise__head h2 { margin: 0; font-size: 16px; }
+.vh-customise__actions { display: flex; gap: 8px; }
+.vh-customise__col h3 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--vh-muted); }
+.vh-picked { list-style: none; margin: 0; padding: 0; }
+.vh-picked__row {
+  display: grid; grid-template-columns: 18px minmax(0, 1fr) auto 26px;
+  align-items: center; gap: 8px;
+  padding: 8px 10px; margin-bottom: 6px;
+  background: var(--vh-plane); border: 1px solid var(--vh-line);
+  border-radius: 8px; font-size: 13px; cursor: grab;
+}
+.vh-picked__row.is-dragging { opacity: .45; }
+.vh-picked__row.is-over { border-color: var(--vh-series-1); box-shadow: inset 0 2px 0 var(--vh-series-1); }
+.vh-picked__grip { color: var(--vh-muted); letter-spacing: -2px; cursor: grab; }
+.vh-picked__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vh-picked__width select { padding: 3px 6px; border-radius: 6px; border: 1px solid var(--vh-line); background: var(--vh-surface); color: var(--vh-ink); font: inherit; font-size: 12px; }
+.vh-picked__remove {
+  width: 24px; height: 24px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--vh-line); background: var(--vh-surface);
+  color: var(--vh-muted); font-size: 16px; line-height: 1;
+}
+.vh-picked__remove:hover { color: var(--vh-bad); border-color: var(--vh-bad); }
+.vh-picked__empty { color: var(--vh-muted); font-size: 13px; }
+.vh-available__plus { color: var(--vh-series-1); font-weight: 700; }
+@media (max-width: 1100px) {
+.vh-w--3, .vh-w--4, .vh-w--6, .vh-w--8 { grid-column: span 12; }
+}
+@media (max-width: 900px) {
+.vh-chart-wrap { padding-left: 6px; }
+.vh-chart-legend { font-size: 12px; }
+}
+@media (max-width: 560px) {
+.vh-chart-wrap { padding-left: 14px; }
+}
+@media (prefers-reduced-motion: reduce) {
+.vh-toast { transition: none; }
+}
+.vh-prose {
+	font-size: 13px;
+	line-height: 1.6;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	max-height: 30em;
+	overflow-y: auto;
+	color: var(--vh-ink);
+}
+.vh-links { margin: 6px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.7; }
+.vh-links li { overflow-wrap: anywhere; }
+.vh-matrix { position: relative; }
+.vh-matrix__note { margin: 0 0 10px; max-width: 62ch; }
+.vh-matrix__tools { position: absolute; top: -4px; right: 0; display: flex; gap: 6px; }
+.vh-matrix__table { table-layout: fixed; }
+.vh-matrix__table th[scope="col"] { font-size: 12px; }
+.vh-matrix__sev { position: relative; padding-left: 16px !important; white-space: nowrap; font-weight: 600; }
+.vh-matrix__rule { position: absolute; left: 0; top: 6px; bottom: 6px; width: 4px; border-radius: 2px; }
+.vh-matrix__cell { vertical-align: top; }
+.vh-matrix__n {
+	display: block;
+	font-size: 26px;
+	line-height: 1.15;
+	font-weight: 650;
+	letter-spacing: -0.01em;
+	color: var(--vh-ink);
+	text-decoration: none;
+}
+.vh-matrix__n:hover, .vh-matrix__n:focus-visible { text-decoration: underline; }
+.vh-matrix__sub { display: block; margin-top: 2px; font-size: 11.5px; color: var(--vh-muted); }
+.vh-matrix__move { vertical-align: middle; white-space: nowrap; }
+.vh-matrix__foot {
+	display: flex;
+	justify-content: space-between;
+	gap: 16px;
+	flex-wrap: wrap;
+	margin: 10px 0 0;
+	font-size: 11.5px;
+	color: var(--vh-muted);
+}
+.vh-move--good { background: var(--vh-good-bg); color: var(--vh-good); }
+.vh-move--bad { background: var(--vh-bad-bg); color: var(--vh-bad); }
+.vh-move--flat { color: var(--vh-muted); }
+@media (max-width: 720px) {
+.vh-matrix__tools { position: static; margin: 0 0 10px; }
+.vh-matrix__n { font-size: 21px; }
+}
+/*
+ * One grid per row, carried by the row's own wrapper (a link, or a static
+ * span when the slice has no drill-through). The row <li> is just a block:
+ * putting a grid on BOTH the <li> and the wrapper dropped the whole wrapper
+ * into the <li>'s first 150px column, so the bar filled ~40% of the card and
+ * the rest sat empty. Here the wrapper spans the full width and the track
+ * column (1fr) takes whatever the labels and numbers leave. */
+.vh-cov__row { display: block; margin: 2px 0; }
+.vh-cov__link {
+	display: grid;
+	grid-template-columns: minmax(110px, 190px) minmax(80px, 1fr) auto auto auto;
+	align-items: center;
+	gap: 4px 12px;
+	width: 100%;
+	color: inherit;
+	text-decoration: none;
+	border-radius: 6px;
+	padding: 5px 8px;
+	margin: 0 -8px;
+}
+.vh-cov__link--static { cursor: default; }
+.vh-cov__track { width: 100%; height: 9px; }
+.vh-cov__pct { justify-self: end; }
+a.vh-cov__link:hover, a.vh-cov__link:focus-visible { background: var(--vh-raised); }
+a.vh-cov__link:hover .vh-cov__label, a.vh-cov__link:focus-visible .vh-cov__label { text-decoration: underline; }
+.vh-bulk__actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.vh-bulk__more select { margin: 0; }
+.vh-row--retired td { opacity: .62; }
+.vh-life1 { display: inline; margin-left: 8px; }
+.vh-notice {
+  margin: 0 0 14px; padding: 10px 14px; border-radius: 10px;
+  border: 1px solid var(--vh-line); background: var(--vh-surface);
+  font-size: 13px; color: var(--vh-ink-2);
+}
+.vh-notice--good { border-color: var(--vh-good); background: var(--vh-good-bg); color: var(--vh-good); }
+.vh-notice--warn { border-color: var(--vh-warn); background: var(--vh-warn-bg); color: var(--vh-warn); }
+.vh-notice--info { border-color: var(--vh-series-1); background: var(--vh-plane); color: var(--vh-ink-2); }
+.vh-notice--info a { margin-left: 8px; }
+.vh-notice strong { color: inherit; }
+.vh-srcs__link { text-decoration: none; }
+.vh-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+a.vh-stack__seg { cursor: pointer; }
+a.vh-stack__seg:hover, a.vh-stack__seg:focus-visible { outline: 2px solid var(--vh-ink); outline-offset: -2px; }
+.vh-stack__label a { color: inherit; text-decoration: none; }
+.vh-stack__label a:hover, .vh-stack__label a:focus-visible { text-decoration: underline; }
+.vh-os__logo { width: 16px; height: 16px; flex: 0 0 auto; object-fit: contain; }
+.vh-os__mono {
+  flex: 0 0 auto;
+  display: inline-grid; place-items: center;
+  width: 22px; height: 22px; border-radius: 6px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: .01em;
+  font-variant: none; text-transform: none;
+}
+.vh-os__text { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+.vh-os__name { color: var(--vh-ink); overflow-wrap: anywhere; }
+.vh-os__detail { font-size: 11px; color: var(--vh-muted); }
+.vh-os__detail--unknown { font-style: italic; }
+.vh-os__detail--fixed { color: var(--vh-ink-2); border-bottom: 1px dotted var(--vh-baseline); cursor: help; }
+.vh-os__mono--azure { background: rgba(94,163,255,.16); color: #8fb8ff; }
+.vh-os__mono--crimson { background: rgba(255,90,102,.16); color: #ff8c94; }
+.vh-os__mono--ember { background: rgba(255,154,60,.16); color: #ffb36b; }
+.vh-os__mono--amber { background: rgba(245,208,74,.16); color: #f5d04a; }
+.vh-os__mono--forest { background: rgba(74,222,128,.16); color: #86efac; }
+.vh-os__mono--violet { background: rgba(176,150,255,.18); color: #c9b8ff; }
+.vh-os__mono--slate { background: rgba(120,160,210,.14); color: #a3b1c6; }
+.vh-os__mono--muted { background: var(--vh-neutral-bg); color: var(--vh-muted); }
+.vh-rawtext { margin-top: 12px; }
+.vh-rawtext > summary {
+  cursor: pointer; font-size: 12.5px; color: var(--vh-ink-2);
+  padding: 4px 0; min-height: 24px;
+}
+.vh-rawtext > summary:hover { color: var(--vh-ink); }
+.vh-rawtext__body {
+  margin: 8px 0 0; padding: 12px 14px;
+  max-height: 360px; overflow: auto;
+  background: var(--vh-neutral-bg); border: 1px solid var(--vh-line); border-radius: 8px;
+  font-family: var(--vh-mono); font-size: 11.5px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word; color: var(--vh-ink-2);
+}
+.vh-prodlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.vh-prodrow { display: flex; align-items: center; gap: 12px; }
+.vh-prodrow__main { flex: 1 1 auto; min-width: 0; }
+.vh-prodrow__head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.vh-prodrow__name { font-weight: 600; color: var(--vh-ink); text-decoration: none; }
+.vh-prodrow__name:hover { color: var(--vh-link); text-decoration: underline; }
+.vh-prodrow__nums { margin-left: auto; color: var(--vh-ink-2); font-size: 12.5px; white-space: nowrap; }
+.vh-prodrow__nums strong { color: var(--vh-ink); }
+.vh-prodrow__bar { position: relative; height: 8px; margin-top: 6px; border-radius: 999px;
+  background: var(--vh-neutral-bg); overflow: hidden; }
+.vh-prodrow__bar > span { position: absolute; inset: 0 auto 0 0; border-radius: 999px;
+  background: linear-gradient(90deg, var(--vh-series-1), var(--vh-series-2)); }
+.vh-prodico { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 9px;
+  display: grid; place-items: center; color: #fff; box-shadow: var(--vh-shadow); }
+.vh-prodico svg { width: 22px; height: 22px; fill: #fff; }
+.vh-prodico--mono { font: 600 13px/1 var(--vh-font); letter-spacing: .02em; }
+.vh-kind { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em;
+  padding: 2px 7px; border-radius: 999px; background: var(--vh-neutral-bg); color: var(--vh-ink-2); }
+.vh-kind--library { background: color-mix(in srgb, var(--vh-series-1) 18%, transparent); color: var(--vh-series-1); }
+.vh-kind--os_package, .vh-kind--os_update { background: var(--vh-warn-bg); color: var(--vh-warn); }
+
+
+/* ============================================================
+   Targeted overrides — lay out the real (icon+text) shell markup
+   in the dark design system. Loaded after app.css so these win
+   over the design's icon-only rail assumptions. Colours all defer
+   to the design tokens.
+   ============================================================ */
+.vh-topbar {
+  display: flex; align-items: center; gap: 20px;
+  padding: 0 22px; height: 58px;
+  border-right: 0; border-bottom: 1px solid var(--vh-line);
+  position: sticky; top: 0; z-index: 20;
+}
+.admin-bar .vh-topbar { top: 32px; }
+.vh-nav { display: flex; gap: 4px; flex: 1; overflow-x: auto; }
+.vh-nav__link {
+  width: auto; height: 36px; padding: 0 12px; gap: 8px; border-radius: 10px;
+  font-weight: 500; font-size: 13.5px; white-space: nowrap;
+}
+.vh-nav__link svg { width: 16px; height: 16px; }
+.vh-brand svg { width: 36px; height: 36px; }
+.vh-topbar__end { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.vh-account { position: relative; }
+
+/* attack-path flow: fill sub-elements the design base didn't reach */
+.vh-flow__door { fill: none; stroke: rgba(var(--vh-accent-rgb),.35); stroke-width: 1.2; }
+.vh-flow__net { fill: none; }
+.vh-flow__globe, .vh-flow__globe-lines { fill: none; }
+.vh-flow__svg { color: var(--vh-faint); }
+.vh-flow__svg text { fill: var(--vh-faint); }
+
+/* ============================================================
+   Board box-model fix.
+   The design's app.css put overflow:hidden on .vh-w (to clip the flow
+   canvas to the rounded corner). But the dashboard board is a JS masonry:
+   app.js measures each widget and sets grid-row-end: span N. With
+   overflow:hidden, any widget the packer sized a hair short had its chart
+   clipped — Remediation health, Patch availability and the EOL bars all
+   lost their lower half. The original .vh-w was a flex column with visible
+   overflow, so nothing clipped and packing measured true. Restore that, and
+   round the decorative layers so visible overflow keeps the card corners.
+   ============================================================ */
+.vh-w, .vh-card, .vh-panel, .vh-connector { overflow: visible; }
+.vh-w { display: flex; flex-direction: column; }
+.vh-w > .vh-flow-canvas,
+.vh-card > .vh-flow-canvas,
+.vh-panel > .vh-flow-canvas,
+.vh-connector > .vh-flow-canvas,
+.vh-w > span[aria-hidden="true"],
+.vh-card > span[aria-hidden="true"],
+.vh-tile > span[aria-hidden="true"] { border-radius: var(--vh-radius); }
+/* Tables keep their clip so the rounded header/footer corners stay crisp. */
+.vh-tablewrap, .vh-table-wrap { overflow: hidden; }
+
+/* ============================================================
+   Container fix — .vh-meterblock and .vh-segbars are stacks (head / track /
+   meta rows), but the design app.css grouped them with the 8px bar TRACKS and
+   collapsed both to a clipped 8px strip. That crushed Remediation health (its
+   three meters overlapped in a sliver) and Patch availability (bars cut off).
+   Restore them as block containers; their __track children stay the bars.
+   ============================================================ */
+.vh-meterblock, .vh-segbars { display: block; height: auto; gap: 0; background: none; border-radius: 0; overflow: visible; }
+.vh-meterblock + .vh-meterblock { margin-top: 14px; }
+.vh-segbars__row + .vh-segbars__row { margin-top: 10px; }
+
+/* ============================================================
+   OS badge is a labelled cell (logo + name + detail), not the icon-only
+   24x24 chip the motion layer builds. The design app.css sized .vh-os as a
+   fixed 24x24 box, which crushed the logo and OS name together. Restore the
+   readable flex layout; the logo sits in a small dark tile.
+   ============================================================ */
+.vh-os { display: inline-flex; align-items: center; gap: 9px; width: auto; height: auto;
+  background: none; border: 0; border-radius: 0; margin-right: 0; font: inherit; vertical-align: top; }
+.vh-os__logo { width: 26px; height: 26px; flex: 0 0 auto; object-fit: contain; padding: 4px;
+  border-radius: 7px; background: var(--vh-neutral-bg); border: 1px solid var(--vh-line); }
+.vh-os__text { display: inline-flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+.vh-os__name { color: var(--vh-ink); overflow-wrap: anywhere; font-size: 13px; }
+.vh-os__detail { font-size: 11px; color: var(--vh-muted); }
+.vh-os__detail--unknown { font-style: italic; }
+.vh-os__detail--fixed { color: var(--vh-ink-2); border-bottom: 1px dotted var(--vh-baseline); cursor: help; }
+.vh-os__mono { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: 0 0 auto;
+  border-radius: 7px; font: 700 9px/1 var(--vh-mono); }
+
+/* ============================================================
+   Strict aligned rows (operator preference over dense masonry).
+   The board is a 12-col grid and app.js packs it into a masonry by setting
+   per-widget grid-row spans. Neutralise that: lay widgets out in reading
+   order, one implicit row at a time, and stretch each row to a common height
+   so tops and bottoms line up. !important beats the inline spans app.js sets.
+   ============================================================ */
+.vh-board { grid-auto-flow: row !important; align-items: stretch !important; }
+.vh-board.is-packed { grid-auto-rows: auto !important; }
+.vh-board.is-packed .vh-w, .vh-board .vh-w { grid-row: auto !important; align-self: stretch !important; }
+
+/* ============================================================
+   Vertical icon rail (the design's shell — this was the big miss).
+   The prototype is a 64px sticky left rail: a 36px "vul" brand tile on top,
+   a column of 40px icon-only nav buttons, admin/theme/account pinned to the
+   bottom. The markup ships as a horizontal <header class="vh-topbar">, so we
+   fix it to the left edge, stack it, hide the text labels, and push the page
+   in by 64px. Overrides the earlier horizontal-topbar rules in this file.
+   ============================================================ */
+.vh-topbar {
+  position: fixed; left: 0; top: 0; bottom: 0; width: 64px; height: 100vh;
+  display: flex; flex-direction: column; align-items: center; gap: 0;
+  padding: 14px 0; border-right: 1px solid rgba(120,160,210,.12); border-bottom: 0;
+  overflow: visible; z-index: 40;
+}
+.admin-bar .vh-topbar { top: 32px; height: calc(100vh - 32px); }
+.vh-main, .vh-footer, footer.vh-footer { margin-left: 64px; }
+
+/* brand: just the 36px tile, no org text in the rail */
+.vh-topbar .vh-brand { gap: 0; margin-bottom: 16px; }
+.vh-topbar .vh-brand span { display: none; }
+.vh-topbar .vh-brand svg { width: 36px; height: 36px; margin: 0; }
+
+/* nav: vertical column of 40px icon buttons */
+.vh-topbar .vh-nav { flex: 1 1 auto; flex-direction: column; align-items: center;
+  gap: 6px; width: 100%; overflow-y: auto; overflow-x: hidden; }
+.vh-topbar .vh-nav__link { width: 44px; height: 44px; padding: 0; justify-content: center; gap: 0; }
+.vh-topbar .vh-nav__link svg { width: 20px; height: 20px; }
+.vh-topbar .vh-nav__txt { position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+
+/* bottom cluster: admin, theme, account pinned to the foot of the rail */
+.vh-topbar .vh-topbar__end { flex-direction: column; align-items: center; gap: 10px;
+  margin-top: auto; margin-left: 0; width: 100%; }
+.vh-topbar .vh-topbar__end .vh-chip { display: none; }            /* sample-data chip: not in the rail */
+.vh-topbar .vh-nav__link--admin { width: 44px; height: 44px; }
+/* account dropdown opens to the right of the rail, not off the bottom */
+.vh-topbar .vh-account { position: relative; }
+.vh-topbar .vh-account__menu { position: absolute; left: calc(100% + 10px); bottom: 0; margin: 0; }
+
+/* ============================================================
+   Status left-border accents. The design defines .vh-tile--critical etc. with
+   border-left, then later gives .vh-tile / .vh-card a `border` shorthand that
+   resets it — so the coloured edge vanished. Re-assert it here (loaded last).
+   ============================================================ */
+.vh-tile--critical, .vh-card--bad, .vh-card--crit { border-left: 3px solid var(--vh-sev-critical) !important; }
+.vh-tile--serious,  .vh-card--high                { border-left: 3px solid var(--vh-sev-high) !important; }
+.vh-tile--warning,  .vh-card--warn, .vh-card--med { border-left: 3px solid var(--vh-sev-medium) !important; }
+.vh-tile--good,     .vh-card--ok                  { border-left: 3px solid var(--vh-good) !important; }
+.vh-tile--neutral                                 { border-left: 3px solid var(--vh-series-1) !important; }
+
+/* ============================================================
+   Phone layout. Below 768px the 64px fixed rail costs too much of a narrow
+   screen, so it becomes a full-width sticky top bar (icons in a scrollable
+   row) and the content takes the whole width. Fixed-rail rules above are
+   overridden here.
+   ============================================================ */
+@media (max-width: 767px) {
+  .vh-topbar {
+    position: sticky; left: auto; top: 0; bottom: auto; right: auto;
+    width: 100%; height: auto; flex-direction: row; align-items: center;
+    gap: 4px; padding: 8px 10px;
+    border-right: 0; border-bottom: 1px solid rgba(120,160,210,.12);
+    overflow-x: auto; overflow-y: visible;
+  }
+  .admin-bar .vh-topbar { top: 0; height: auto; }
+  .vh-main, .vh-footer, footer.vh-footer { margin-left: 0; }
+  .vh-topbar .vh-brand { margin-bottom: 0; margin-right: 4px; flex: 0 0 auto; }
+  .vh-topbar .vh-nav { flex-direction: row; flex: 1 1 auto; width: auto; gap: 4px; overflow-x: auto; overflow-y: hidden; }
+  .vh-topbar .vh-nav__link { width: 40px; height: 40px; flex: 0 0 auto; }
+  .vh-topbar .vh-topbar__end { flex-direction: row; margin-top: 0; margin-left: auto; width: auto; flex: 0 0 auto; }
+  .vh-topbar .vh-account__menu { left: auto; right: 0; bottom: auto; top: calc(100% + 8px); margin: 0; }
+  .vh-main { padding: 16px 14px 24px; }
+  .vh-page-head h1 { font-size: 22px; }
+  /* tables and wide blocks scroll inside their own frame, never the page */
+  .vh-tablewrap, .vh-table-wrap, .vh-tableview__scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+}
+
+/* Exposure-by-product: the "ships a vulnerable X" line under app rows. */
+.vh-prodrow__note { margin: 6px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--vh-ink-2); }
+.vh-prodrow__note strong { color: var(--vh-warn); }
+
+/* Vuln detail: App cell (icon + name) and install path column. */
+.vh-appcell { display: inline-flex; align-items: center; gap: 7px; }
+.vh-appcell .vh-prodico { width: 22px; height: 22px; border-radius: 6px; box-shadow: none; }
+.vh-appcell .vh-prodico svg { width: 14px; height: 14px; }
+.vh-appcell .vh-prodico--mono { font-size: 10px; }
+.vh-path { font-family: var(--vh-mono); font-size: 11px; color: var(--vh-ink-2);
+  display: inline-block; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+
+/* --------------------------------------------------- products page. */
+
+/* Platform filter: a segmented control above the full product list. */
+.vh-segbar { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 16px; }
+.vh-seg {
+  padding: 6px 14px; font-size: 12.5px; font-weight: 560;
+  color: var(--vh-ink-2); text-decoration: none; white-space: nowrap;
+  border: 1px solid var(--vh-line); border-radius: 999px;
+  background: var(--vh-plane); transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.vh-seg:hover, .vh-seg:focus-visible { color: var(--vh-ink); border-color: var(--vh-link); }
+.vh-seg.is-active {
+  color: #fff; background: var(--vh-link, var(--vh-series-1));
+  border-color: var(--vh-link, var(--vh-series-1));
+}
+
+/* The full list inside its own card gets a little breathing room per row. */
+.vh-card--flush { padding: 6px 4px; }
+.vh-prodlist--full { gap: 4px; }
+.vh-prodlist--full .vh-prodrow { padding: 12px 14px; border-radius: var(--vh-radius); }
+.vh-prodlist--full .vh-prodrow:hover { background: var(--vh-plane); }
+
+/* "View all products" control under the dashboard widget's list. */
+.vh-prodlist__more { margin: 14px 0 0; }
+
+/* -------------------------------------------- line-chart hover layer.
+ * The trend chart tiles invisible <rect class="vh-hit"> columns to drive
+ * the crosshair + tooltip. An SVG rect with no fill paints BLACK, and
+ * app.css glows every .vh-chart rect -- so without this the hit layer
+ * showed as solid black slabs over (and outside) the sparkline. Make it
+ * genuinely invisible while still catching the pointer. */
+.vh-chart .vh-hit { fill: transparent; filter: none; }
+.vh-chart .vh-hit:hover { fill: rgba(255, 255, 255, .04); }
+.vh-chart .vh-crosshair { stroke: var(--vh-muted); stroke-width: 1; filter: none; opacity: .6; }
+
+/* ------------------------------------------ data tables on small screens.
+ * The list tables (vulnerabilities, assets) carry 8-10 columns. On a phone
+ * that meant a horizontal scroll that clipped the right-hand columns with
+ * no affordance -- the asset and movement columns simply vanished. Tables
+ * tagged .vh-tablewrap--cards restack as one card per row, each cell on its
+ * own line under its column name, so nothing is hidden and nothing scrolls
+ * sideways. Desktop is untouched. */
+@media (max-width: 640px) {
+	.vh-tablewrap--cards { overflow: visible; }
+	.vh-tablewrap--cards > table.vh-table,
+	.vh-tablewrap--cards > table.vh-table > tbody { display: block; width: 100%; }
+	.vh-tablewrap--cards > table.vh-table > thead { display: none; }
+
+	.vh-tablewrap--cards > table.vh-table > tbody > tr {
+		display: block;
+		margin: 0 0 12px;
+		padding: 10px 14px;
+		border: 1px solid var(--vh-line);
+		border-radius: var(--vh-radius);
+		background: var(--vh-plane);
+	}
+
+	.vh-tablewrap--cards > table.vh-table > tbody > tr > td {
+		display: block;
+		width: auto;
+		padding: 7px 0;
+		border: 0;
+		border-bottom: 1px solid var(--vh-line);
+		text-align: left;
+		white-space: normal;
+	}
+	.vh-tablewrap--cards > table.vh-table > tbody > tr > td:last-child { border-bottom: 0; }
+
+	/* The column name, from the header, printed above each value. */
+	.vh-tablewrap--cards > table.vh-table > tbody > tr > td[data-th]::before {
+		content: attr(data-th);
+		display: block;
+		margin-bottom: 3px;
+		font-size: 10.5px;
+		font-weight: 600;
+		letter-spacing: .05em;
+		text-transform: uppercase;
+		color: var(--vh-muted);
+	}
+
+	/* Cells with no column name: the row checkbox and the action buttons. */
+	.vh-tablewrap--cards td.vh-col-check { padding-bottom: 2px; border-bottom: 0; }
+	.vh-tablewrap--cards td.vh-col-act,
+	.vh-tablewrap--cards td.vh-col-act .vh-btn { width: 100%; }
+	.vh-tablewrap--cards td.vh-col-act .vh-btn { margin: 4px 0 0; }
+	.vh-tablewrap--cards td .vh-meta { display: block; }
+}
+@media (max-width: 640px) {
+	.vh-tablewrap--cards td.vh-tick { padding-bottom: 2px; border-bottom: 0; }
+}
+
+/* Coverage rows: the 5-column grid is too wide for a phone, so it stacks --
+ * label on its own line, the bar full width beneath it, then the numbers. */
+@media (max-width: 640px) {
+	.vh-cov__link { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+	.vh-cov__label { flex: 1 0 100%; }
+	.vh-cov__track { flex: 1 0 100%; order: 2; }
+	.vh-cov__pct  { order: 3; }
+	.vh-cov__gap  { order: 4; }
+	.vh-cov__flag { order: 5; flex: 1 0 100%; }
+}
+
+/* --------------------------------------------------- donut centre label.
+ * The centre readout is SVG <text>, so it colours from `fill`, not `color`.
+ * app.css set neither on .vh-donut__centre (SVG text with no fill paints
+ * BLACK) and used `color` on the sub-label (ignored by SVG) -- so both were
+ * near-invisible on the dark ground. Theme-aware tokens fix both themes. */
+.vh-donut__centre { fill: var(--vh-ink); }
+.vh-donut__centre-label { fill: var(--vh-faint); }
+
+/* ==========================================================
+   Carrying a widget
+   ==========================================================
+   The widget leaves the grid and follows the pointer, and a ghost holds the
+   space it will drop into. Both halves matter: without the ghost you are
+   dragging blind, and without the lift it never feels like you picked
+   anything up.
+   ---------------------------------------------------------- */
+
+.vh-w.is-dragging {
+  position: fixed;
+  margin: 0;
+  z-index: 200;
+  /*
+   * This line is the whole feature.
+   *
+   * `.vh-w` carries `animation: vhIn .5s both`, and vhIn ends on
+   * `transform: none`. `fill-mode: both` keeps applying that final keyframe
+   * for ever after the animation finishes -- and a CSS animation outranks an
+   * inline style in the cascade. So the per-frame `style.transform` written
+   * by the drag was computing to the identity matrix and the widget sat at
+   * 0,0 while the inline value said translate3d(345px, 277px, 0).
+   *
+   * Nothing about that is visible in the inline style, which is why it looked
+   * like the transform "wasn't applying": it was, and was being overruled.
+   */
+  animation: none !important;
+  /*
+   * The pointer has to reach the board underneath: elementFromPoint is what
+   * decides where the ghost goes, and a widget under the cursor would answer
+   * every time and pin the gap to wherever the drag started.
+   */
+  pointer-events: none;
+  /*
+   * No transition on transform. It is rewritten every frame from the pointer
+   * position, so easing it would put the widget permanently behind the hand
+   * carrying it. The drop animation adds its own transition and removes it.
+   */
+  transition: box-shadow .18s ease;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .55), 0 0 0 1px rgba(var(--vh-accent-rgb), .35);
+  cursor: grabbing;
+  will-change: transform;
+}
+
+/* Held slightly larger and tilted, so it reads as lifted off the page. */
+.vh-w.is-dragging > * { transform: none; }
+.vh-w.is-dragging { --vh-lift: 1; }
+
+/* The grip is opacity 0 until hover; while carrying there is nothing to
+   hover, so hold it visible or the widget looks like it has lost its handle. */
+.vh-w.is-dragging .vh-w__grip { opacity: 1; cursor: grabbing; }
+
+/* The space it will land in. */
+.vh-w-ghost {
+  border: 1.5px dashed rgba(var(--vh-accent-rgb), .55);
+  border-radius: 14px;
+  background: rgba(var(--vh-accent-rgb), .07);
+  min-height: 60px;
+  animation: vhGhostIn .16s ease both;
+}
+
+@keyframes vhGhostIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Everything else settles as the gap moves between them. */
+.vh-board.is-arranging .vh-w {
+  transition: transform .2s cubic-bezier(.2, .8, .3, 1);
+}
+
+/*
+ * Stop the browser second-guessing the scroll position mid-drag.
+ *
+ * The gap moves between slots of different heights, which changes the height
+ * of content *above* the viewport -- and Chrome's scroll anchoring reacts to
+ * that by adjusting scrollY to keep what you were looking at still. During a
+ * drag that is exactly wrong: it fights the edge auto-scroll, and the page
+ * was measured drifting 447px downwards while the pointer was held against
+ * the top edge asking it to go up.
+ */
+body.vh-is-dragging,
+body.vh-is-dragging .vh-board,
+.vh-board.is-arranging { overflow-anchor: none; }
+
+/*
+ * Kill text selection for the whole drag. Without this, sweeping the pointer
+ * across the board while holding the button selects every heading it passes
+ * and the page fills with blue.
+ */
+body.vh-is-dragging {
+  cursor: grabbing;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vh-w-ghost { animation: none; }
+  .vh-board.is-arranging .vh-w { transition: none; }
+}
+
+/* ============================================================ vendors page. */
+.vh-vendorgrid {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px;
+}
+.vh-vendor {
+  display: flex; gap: 14px; align-items: flex-start;
+  padding: 14px 16px; border: 1px solid var(--vh-line); border-radius: var(--vh-radius);
+  background: var(--vh-plane);
+}
+.vh-vendor__main { flex: 1 1 auto; min-width: 0; }
+.vh-vendor__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.vh-vendor__name { font-weight: 650; color: var(--vh-ink); }
+.vh-vendor__stats { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 8px 0; font-size: 12.5px; color: var(--vh-ink-2); }
+.vh-vstat strong { color: var(--vh-ink); font-variant-numeric: tabular-nums; }
+.vh-vstat--crit strong { color: var(--vh-sev-critical); }
+.vh-vstat--warn strong { color: var(--vh-sev-medium, var(--vh-warn)); }
+.vh-vstat--muted { color: var(--vh-muted); }
+.vh-vendor__links { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 12px; }
+.vh-vendor__link { color: var(--vh-link); text-decoration: none; white-space: nowrap; }
+.vh-vendor__link:hover { text-decoration: underline; }
+.vh-vendor__link--none { color: var(--vh-muted); }
+.vh-vendor__hq { color: var(--vh-muted); }
+.vh-vendor__hq::before { content: "\1F4CD"; margin-right: 3px; opacity: .7; }
+
+/* vendor logo tile */
+.vh-vendico {
+  flex: 0 0 auto; width: 44px; height: 44px; border-radius: 10px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: #fff; border: 1px solid var(--vh-line); overflow: hidden;
+}
+.vh-vendico img { width: 40px; height: 40px; object-fit: contain; display: block; }
+.vh-vendico--mono { background: var(--vh-raised-solid, #10192e); color: var(--vh-ink); font: 650 15px/1 var(--vh-font); }
+
+/* exposure band pill */
+.vh-band { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; margin-left: auto; }
+.vh-band--none     { background: rgba(120,160,210,.12); color: var(--vh-muted); }
+.vh-band--low      { background: rgba(46,160,110,.16); color: var(--vh-good, #2ea06e); }
+.vh-band--moderate { background: rgba(214,158,46,.16); color: var(--vh-sev-medium, #d69e2e); }
+.vh-band--high     { background: rgba(221,107,32,.18); color: var(--vh-sev-high, #dd6b20); }
+.vh-band--critical { background: rgba(229,62,62,.18); color: var(--vh-sev-critical, #e53e3e); }
+
+/* kind badge variants for vendors */
+.vh-kind--hardware { }
+.vh-kind--software { }
+.vh-kind--both { }
+
+@media (max-width: 640px) {
+  .vh-vendorgrid { grid-template-columns: 1fr; }
+  .vh-band { margin-left: 0; }
+}
+
+/* -------------------------------------------- reveal on scroll (vh-motion).
+ * Widgets and list cards flow up as they enter the viewport. The hidden start
+ * state is only applied by JS to elements below the fold (class vh-reveal),
+ * so nothing is ever hidden without the script running, and reduced-motion or
+ * no-JS shows everything immediately. */
+.vh-w.vh-reveal,
+.vh-vendor.vh-reveal,
+.vh-prodrow.vh-reveal {
+  animation: none !important; /* cancel the load-time vhIn, whose animated opacity would win */
+  opacity: 0;
+  transform: translateY(30px);
+  will-change: opacity, transform;
+  transition: opacity .55s cubic-bezier(.22, .61, .36, 1),
+              transform .55s cubic-bezier(.22, .61, .36, 1);
+}
+.vh-w.vh-reveal.vh-inview,
+.vh-vendor.vh-reveal.vh-inview,
+.vh-prodrow.vh-reveal.vh-inview {
+  opacity: 1;
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .vh-w.vh-reveal,
+  .vh-vendor.vh-reveal,
+  .vh-prodrow.vh-reveal { opacity: 1; transform: none; transition: none; }
+}
+
+/* ------------------------------------------- vendor stats: clickable links. */
+a.vh-vstat {
+  color: inherit; text-decoration: none; cursor: pointer;
+  border-bottom: 1px dotted transparent; transition: border-color .15s ease, color .15s ease;
+}
+a.vh-vstat:hover, a.vh-vstat:focus-visible { border-bottom-color: currentColor; }
+a.vh-vstat:focus-visible { outline: 2px solid var(--vh-link); outline-offset: 2px; border-radius: 2px; }
+
+/* ======================================================== drill-down modal. */
+.vh-modal {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; background: rgba(5, 9, 18, .66); backdrop-filter: blur(3px);
+  animation: vhModalIn .18s ease;
+}
+@keyframes vhModalIn { from { opacity: 0; } to { opacity: 1; } }
+body.vh-modal-open { overflow: hidden; }
+.vh-modal[hidden] { display: none !important; }
+
+.vh-modal__panel {
+  width: 100%; max-width: 1040px; max-height: 88vh;
+  display: flex; flex-direction: column;
+  background: var(--vh-raised-solid, var(--vh-surface)); color: var(--vh-ink);
+  border: 1px solid var(--vh-line-strong, var(--vh-line)); border-radius: 14px;
+  box-shadow: var(--vh-shadow-hover, 0 20px 60px rgba(0,0,0,.5)); overflow: hidden;
+}
+.vh-modal__head { display: flex; align-items: flex-start; gap: 12px; padding: 16px 18px 12px; border-bottom: 1px solid var(--vh-line); }
+.vh-modal__title { margin: 0; font-size: 17px; font-weight: 650; color: var(--vh-ink); }
+.vh-modal__sub { margin: 2px 0 0; font-size: 12.5px; color: var(--vh-muted); }
+.vh-modal__close { margin-left: auto; flex: 0 0 auto; width: 32px; height: 32px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--vh-muted); font-size: 22px; line-height: 1; cursor: pointer; }
+.vh-modal__close:hover { background: var(--vh-plane); color: var(--vh-ink); }
+
+.vh-modal__tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--vh-line); }
+.vh-modal__search { flex: 1 1 220px; min-width: 160px; padding: 7px 11px; font: inherit; font-size: 13px;
+  border: 1px solid var(--vh-line); border-radius: 8px; background: var(--vh-surface); color: var(--vh-ink); }
+.vh-modal__filter { padding: 7px 10px; font: inherit; font-size: 13px; border: 1px solid var(--vh-line);
+  border-radius: 8px; background: var(--vh-surface); color: var(--vh-ink); }
+.vh-modal__export { margin-left: auto; }
+
+.vh-modal__body { flex: 1 1 auto; overflow: auto; min-height: 120px; }
+.vh-modal__loading, .vh-modal__empty { padding: 40px 18px; text-align: center; color: var(--vh-muted); }
+.vh-modal__scroll { overflow-x: auto; }
+.vh-modal__table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.vh-modal__table th { position: sticky; top: 0; z-index: 1; text-align: left; padding: 9px 14px; white-space: nowrap;
+  background: var(--vh-raised-solid, var(--vh-surface)); color: var(--vh-muted); font-size: 11px; letter-spacing: .04em;
+  text-transform: uppercase; border-bottom: 1px solid var(--vh-line); }
+.vh-modal__table td { padding: 9px 14px; border-bottom: 1px solid var(--vh-line); color: var(--vh-ink-2); vertical-align: top; }
+.vh-modal__table tr:hover td { background: var(--vh-plane); }
+
+.vh-modal__foot { display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-top: 1px solid var(--vh-line); font-size: 12.5px; color: var(--vh-muted); }
+.vh-modal__pager { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.vh-modal__pager .vh-btn:disabled { opacity: .45; cursor: default; }
+
+@media (max-width: 640px) {
+  .vh-modal { padding: 0; }
+  .vh-modal__panel { max-width: 100%; max-height: 100vh; height: 100vh; border-radius: 0; border: 0; }
+  .vh-modal__export { margin-left: 0; }
+}
+
+/* Product tiles that carry a real bundled brand logo (assets/products). */
+.vh-prodico--logo { background: #fff; padding: 4px; }
+.vh-prodico--logo img { width: 100%; height: 100%; object-fit: contain; display: block; }

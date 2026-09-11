@@ -1,0 +1,214 @@
+[
+  {
+    "page": "dashboard",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "vulnerabilities",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "vulns-critical",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "vulns-search",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "vulns-overdue",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "assets",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "assets-needs-user",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "tickets",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "exceptions",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "admin-overview",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "admin-integrations",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "admin-imports",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "admin-rules",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "admin-teams",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "admin-activity",
+    "viewport": "desktop",
+    "found": [
+      {
+        "kind": "small-target",
+        "sel": "a.vh-mono",
+        "detail": "21x25 (min 24x24)"
+      }
+    ]
+  },
+  {
+    "page": "admin-audit",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "admin-settings",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "admin-appearance",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "el-overview",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "el-estate",
+    "viewport": "desktop",
+    "found": []
+  },
+  {
+    "page": "dashboard",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "vulnerabilities",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "vulns-critical",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "vulns-search",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "vulns-overdue",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "assets",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "assets-needs-user",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "tickets",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "exceptions",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "admin-overview",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "admin-integrations",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "admin-imports",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "admin-rules",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "admin-teams",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "admin-activity",
+    "viewport": "phone",
+    "found": [
+      {
+        "kind": "small-target",
+        "sel": "a.vh-mono",
+        "detail": "21x25 (min 24x24)"
+      }
+    ]
+  },
+  {
+    "page": "admin-audit",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "admin-settings",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "admin-appearance",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "el-overview",
+    "viewport": "phone",
+    "found": []
+  },
+  {
+    "page": "el-estate",
+    "viewport": "phone",
+    "found": []
+  }
+]

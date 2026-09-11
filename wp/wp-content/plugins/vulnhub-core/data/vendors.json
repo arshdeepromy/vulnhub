@@ -1,0 +1,722 @@
+[
+ {
+  "slug": "microsoft",
+  "name": "Microsoft",
+  "kind": "both",
+  "domain": "microsoft.com",
+  "hq": "Redmond, Washington, USA",
+  "advisory": "https://msrc.microsoft.com/update-guide/vulnerability",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/microsoft.com"
+ },
+ {
+  "slug": "hp",
+  "name": "HP Inc.",
+  "kind": "hardware",
+  "domain": "hp.com",
+  "hq": "Palo Alto, California, USA",
+  "advisory": "https://support.hp.com/us-en/security-bulletins",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/hp.com"
+ },
+ {
+  "slug": "hpe",
+  "name": "Hewlett Packard Enterprise",
+  "kind": "hardware",
+  "domain": "hpe.com",
+  "hq": "Spring, Texas, USA",
+  "advisory": "https://support.hpe.com/connect/s/securitybulletinlibrary",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/hpe.com"
+ },
+ {
+  "slug": "vmware",
+  "name": "VMware (Broadcom)",
+  "kind": "both",
+  "domain": "broadcom.com",
+  "hq": "Palo Alto, California, USA",
+  "advisory": "https://support.broadcom.com/web/ecx/security-advisory",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/broadcom.com"
+ },
+ {
+  "slug": "amazon",
+  "name": "Amazon Web Services",
+  "kind": "both",
+  "domain": "aws.amazon.com",
+  "hq": "Seattle, Washington, USA",
+  "advisory": "https://aws.amazon.com/security/security-bulletins/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/aws.amazon.com"
+ },
+ {
+  "slug": "oracle",
+  "name": "Oracle",
+  "kind": "software",
+  "domain": "oracle.com",
+  "hq": "Austin, Texas, USA",
+  "advisory": "https://www.oracle.com/security-alerts/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/oracle.com"
+ },
+ {
+  "slug": "apache",
+  "name": "Apache Software Foundation",
+  "kind": "software",
+  "domain": "apache.org",
+  "hq": "Wilmington, Delaware, USA",
+  "advisory": "https://security.apache.org/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/apache.org"
+ },
+ {
+  "slug": "redhat",
+  "name": "Red Hat",
+  "kind": "software",
+  "domain": "redhat.com",
+  "hq": "Raleigh, North Carolina, USA",
+  "advisory": "https://access.redhat.com/security/security-updates/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/redhat.com"
+ },
+ {
+  "slug": "google",
+  "name": "Google",
+  "kind": "software",
+  "domain": "google.com",
+  "hq": "Mountain View, California, USA",
+  "advisory": "https://chromereleases.googleblog.com/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/google.com"
+ },
+ {
+  "slug": "cisco",
+  "name": "Cisco",
+  "kind": "both",
+  "domain": "cisco.com",
+  "hq": "San Jose, California, USA",
+  "advisory": "https://sec.cloudapps.cisco.com/security/center/publicationListing.x",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/cisco.com"
+ },
+ {
+  "slug": "dell",
+  "name": "Dell Technologies",
+  "kind": "hardware",
+  "domain": "dell.com",
+  "hq": "Round Rock, Texas, USA",
+  "advisory": "https://www.dell.com/support/security/en-us",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/dell.com"
+ },
+ {
+  "slug": "poly",
+  "name": "Poly (HP)",
+  "kind": "hardware",
+  "domain": "poly.com",
+  "hq": "Santa Cruz, California, USA",
+  "advisory": "https://www.poly.com/us/en/support/security-center",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/poly.com"
+ },
+ {
+  "slug": "nvidia",
+  "name": "NVIDIA",
+  "kind": "both",
+  "domain": "nvidia.com",
+  "hq": "Santa Clara, California, USA",
+  "advisory": "https://www.nvidia.com/en-us/security/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/nvidia.com"
+ },
+ {
+  "slug": "checkpoint",
+  "name": "Check Point Software",
+  "kind": "hardware",
+  "domain": "checkpoint.com",
+  "hq": "Tel Aviv, Israel",
+  "advisory": "https://advisories.checkpoint.com/advisories/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/checkpoint.com"
+ },
+ {
+  "slug": "purestorage",
+  "name": "Pure Storage",
+  "kind": "hardware",
+  "domain": "purestorage.com",
+  "hq": "Santa Clara, California, USA",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/purestorage.com"
+ },
+ {
+  "slug": "mozilla",
+  "name": "Mozilla",
+  "kind": "software",
+  "domain": "mozilla.org",
+  "hq": "San Francisco, California, USA",
+  "advisory": "https://www.mozilla.org/en-US/security/advisories/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/mozilla.org"
+ },
+ {
+  "slug": "adobe",
+  "name": "Adobe",
+  "kind": "software",
+  "domain": "adobe.com",
+  "hq": "San Jose, California, USA",
+  "advisory": "https://helpx.adobe.com/security/security-bulletin.html",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/adobe.com"
+ },
+ {
+  "slug": "python",
+  "name": "Python Software Foundation",
+  "kind": "software",
+  "domain": "python.org",
+  "hq": "Beaverton, Oregon, USA",
+  "advisory": "https://www.python.org/news/security/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/python.org"
+ },
+ {
+  "slug": "jetbrains",
+  "name": "JetBrains",
+  "kind": "software",
+  "domain": "jetbrains.com",
+  "hq": "Prague, Czech Republic",
+  "advisory": "https://www.jetbrains.com/privacy-security/issues-fixed/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/jetbrains.com"
+ },
+ {
+  "slug": "docker",
+  "name": "Docker",
+  "kind": "software",
+  "domain": "docker.com",
+  "hq": "Palo Alto, California, USA",
+  "advisory": "https://docs.docker.com/security/security-announcements/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/docker.com"
+ },
+ {
+  "slug": "zoom",
+  "name": "Zoom",
+  "kind": "software",
+  "domain": "zoom.us",
+  "hq": "San Jose, California, USA",
+  "advisory": "https://www.zoom.com/en/trust/security-bulletin/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/zoom.us"
+ },
+ {
+  "slug": "tenable",
+  "name": "Tenable",
+  "kind": "software",
+  "domain": "tenable.com",
+  "hq": "Columbia, Maryland, USA",
+  "advisory": "https://www.tenable.com/security",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/tenable.com"
+ },
+ {
+  "slug": "anthropic",
+  "name": "Anthropic",
+  "kind": "software",
+  "domain": "anthropic.com",
+  "hq": "San Francisco, California, USA",
+  "advisory": "https://trust.anthropic.com/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/anthropic.com"
+ },
+ {
+  "slug": "anysphere",
+  "name": "Anysphere (Cursor)",
+  "kind": "software",
+  "domain": "cursor.com",
+  "hq": "San Francisco, California, USA",
+  "advisory": "https://www.cursor.com/security",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/cursor.com"
+ },
+ {
+  "slug": "openssl",
+  "name": "OpenSSL Project",
+  "kind": "software",
+  "domain": "openssl.org",
+  "hq": "USA (OpenSSL Foundation)",
+  "advisory": "https://www.openssl.org/news/vulnerabilities.html",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/openssl.org"
+ },
+ {
+  "slug": "nodejs",
+  "name": "OpenJS Foundation (Node.js)",
+  "kind": "software",
+  "domain": "nodejs.org",
+  "hq": "San Francisco, California, USA",
+  "advisory": "https://nodejs.org/en/blog/vulnerability",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/nodejs.org"
+ },
+ {
+  "slug": "postgresql",
+  "name": "PostgreSQL",
+  "kind": "software",
+  "domain": "postgresql.org",
+  "hq": "Global (PostgreSQL Global Development Group)",
+  "advisory": "https://www.postgresql.org/support/security/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/postgresql.org"
+ },
+ {
+  "slug": "sqlite",
+  "name": "SQLite (Hwaci)",
+  "kind": "software",
+  "domain": "sqlite.org",
+  "hq": "Charlotte, North Carolina, USA",
+  "advisory": "https://www.sqlite.org/cves.html",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/sqlite.org"
+ },
+ {
+  "slug": "azul",
+  "name": "Azul Systems",
+  "kind": "software",
+  "domain": "azul.com",
+  "hq": "Sunnyvale, California, USA",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/azul.com"
+ },
+ {
+  "slug": "ibm",
+  "name": "IBM",
+  "kind": "software",
+  "domain": "ibm.com",
+  "hq": "Armonk, New York, USA",
+  "advisory": "https://www.ibm.com/support/pages/ibm-security-bulletins",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/ibm.com"
+ },
+ {
+  "slug": "videolan",
+  "name": "VideoLAN",
+  "kind": "software",
+  "domain": "videolan.org",
+  "hq": "Paris, France",
+  "advisory": "https://www.videolan.org/security/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/videolan.org"
+ },
+ {
+  "slug": "wireshark",
+  "name": "Wireshark Foundation",
+  "kind": "software",
+  "domain": "wireshark.org",
+  "hq": "San Francisco, California, USA",
+  "advisory": "https://www.wireshark.org/security/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/wireshark.org"
+ },
+ {
+  "slug": "autodesk",
+  "name": "Autodesk",
+  "kind": "software",
+  "domain": "autodesk.com",
+  "hq": "San Francisco, California, USA",
+  "advisory": "https://www.autodesk.com/trust/security-advisories",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/autodesk.com"
+ },
+ {
+  "slug": "devolutions",
+  "name": "Devolutions",
+  "kind": "software",
+  "domain": "devolutions.net",
+  "hq": "Lavaltrie, Quebec, Canada",
+  "advisory": "https://devolutions.net/security/advisories/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/devolutions.net"
+ },
+ {
+  "slug": "splunk",
+  "name": "Splunk (Cisco)",
+  "kind": "software",
+  "domain": "splunk.com",
+  "hq": "San Francisco, California, USA",
+  "advisory": "https://advisory.splunk.com/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/splunk.com"
+ },
+ {
+  "slug": "teamviewer",
+  "name": "TeamViewer",
+  "kind": "software",
+  "domain": "teamviewer.com",
+  "hq": "Goppingen, Germany",
+  "advisory": "https://www.teamviewer.com/en/resources/trust-center/security-bulletins/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/teamviewer.com"
+ },
+ {
+  "slug": "foxit",
+  "name": "Foxit Software",
+  "kind": "software",
+  "domain": "foxit.com",
+  "hq": "Fremont, California, USA",
+  "advisory": "https://www.foxit.com/support/security-bulletins.html",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/foxit.com"
+ },
+ {
+  "slug": "progress",
+  "name": "Progress (Telerik)",
+  "kind": "software",
+  "domain": "progress.com",
+  "hq": "Burlington, Massachusetts, USA",
+  "advisory": "https://www.progress.com/security",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/progress.com"
+ },
+ {
+  "slug": "intel",
+  "name": "Intel",
+  "kind": "both",
+  "domain": "intel.com",
+  "hq": "Santa Clara, California, USA",
+  "advisory": "https://www.intel.com/content/www/us/en/security-center/default.html",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/intel.com"
+ },
+ {
+  "slug": "ruby",
+  "name": "Ruby",
+  "kind": "software",
+  "domain": "ruby-lang.org",
+  "hq": "Global (Ruby community)",
+  "advisory": "https://www.ruby-lang.org/en/security/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/ruby-lang.org"
+ },
+ {
+  "slug": "rockylinux",
+  "name": "Rocky Linux",
+  "kind": "software",
+  "domain": "rockylinux.org",
+  "hq": "Global (RESF)",
+  "advisory": "https://errata.rockylinux.org/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/rockylinux.org"
+ },
+ {
+  "slug": "git",
+  "name": "Git",
+  "kind": "software",
+  "domain": "git-scm.com",
+  "hq": "Global (Git community)",
+  "advisory": "https://github.com/git/git/security/advisories",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/git-scm.com"
+ },
+ {
+  "slug": "github",
+  "name": "GitHub",
+  "kind": "software",
+  "domain": "github.com",
+  "hq": "San Francisco, California, USA",
+  "advisory": "https://github.blog/tag/security/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/github.com"
+ },
+ {
+  "slug": "keepassxc",
+  "name": "KeePassXC",
+  "kind": "software",
+  "domain": "keepassxc.org",
+  "hq": "Global (open source)",
+  "advisory": "https://github.com/keepassxreboot/keepassxc/security/advisories",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/keepassxc.org"
+ },
+ {
+  "slug": "putty",
+  "name": "PuTTY (Simon Tatham)",
+  "kind": "software",
+  "domain": "chiark.greenend.org.uk",
+  "hq": "Cambridge, United Kingdom",
+  "advisory": "https://www.chiark.greenend.org.uk/~sgtatham/putty/wishlist/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/chiark.greenend.org.uk"
+ },
+ {
+  "slug": "winscp",
+  "name": "WinSCP",
+  "kind": "software",
+  "domain": "winscp.net",
+  "hq": "Prague, Czech Republic",
+  "advisory": "https://winscp.net/eng/docs/security",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/winscp.net"
+ },
+ {
+  "slug": "7zip",
+  "name": "7-Zip (Igor Pavlov)",
+  "kind": "software",
+  "domain": "7-zip.org",
+  "hq": "Global (open source)",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/7-zip.org"
+ },
+ {
+  "slug": "notepadpp",
+  "name": "Notepad++ (Don Ho)",
+  "kind": "software",
+  "domain": "notepad-plus-plus.org",
+  "hq": "Global (open source)",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/notepad-plus-plus.org"
+ },
+ {
+  "slug": "greenshot",
+  "name": "Greenshot",
+  "kind": "software",
+  "domain": "getgreenshot.org",
+  "hq": "Global (open source)",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/getgreenshot.org"
+ },
+ {
+  "slug": "mobatek",
+  "name": "Mobatek (MobaXterm)",
+  "kind": "software",
+  "domain": "mobatek.net",
+  "hq": "Toulouse, France",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/mobatek.net"
+ },
+ {
+  "slug": "firebird",
+  "name": "Firebird",
+  "kind": "software",
+  "domain": "firebirdsql.org",
+  "hq": "Global (Firebird Foundation)",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/firebirdsql.org"
+ },
+ {
+  "slug": "ollama",
+  "name": "Ollama",
+  "kind": "software",
+  "domain": "ollama.com",
+  "hq": "USA",
+  "advisory": "https://github.com/ollama/ollama/security/advisories",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/ollama.com"
+ },
+ {
+  "slug": "pnpm",
+  "name": "pnpm",
+  "kind": "software",
+  "domain": "pnpm.io",
+  "hq": "Global (open source)",
+  "advisory": "https://github.com/pnpm/pnpm/security/advisories",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/pnpm.io"
+ },
+ {
+  "slug": "rclone",
+  "name": "Rclone",
+  "kind": "software",
+  "domain": "rclone.org",
+  "hq": "Global (open source)",
+  "advisory": "https://github.com/rclone/rclone/security/advisories",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/rclone.org"
+ },
+ {
+  "slug": "rproject",
+  "name": "R Foundation",
+  "kind": "software",
+  "domain": "r-project.org",
+  "hq": "Vienna, Austria",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/r-project.org"
+ },
+ {
+  "slug": "podman",
+  "name": "Podman (Red Hat)",
+  "kind": "software",
+  "domain": "podman.io",
+  "hq": "Raleigh, North Carolina, USA",
+  "advisory": "https://github.com/containers/podman/security/advisories",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/podman.io"
+ },
+ {
+  "slug": "ricoh",
+  "name": "Ricoh",
+  "kind": "hardware",
+  "domain": "ricoh.com",
+  "hq": "Tokyo, Japan",
+  "advisory": "https://www.ricoh.com/products/security/vulnerabilities",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/ricoh.com"
+ },
+ {
+  "slug": "netgear",
+  "name": "Netgear",
+  "kind": "hardware",
+  "domain": "netgear.com",
+  "hq": "San Jose, California, USA",
+  "advisory": "https://www.netgear.com/about/security/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/netgear.com"
+ },
+ {
+  "slug": "asus",
+  "name": "ASUS",
+  "kind": "hardware",
+  "domain": "asus.com",
+  "hq": "Taipei, Taiwan",
+  "advisory": "https://www.asus.com/content/asus-product-security-advisory/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/asus.com"
+ },
+ {
+  "slug": "tplink",
+  "name": "TP-Link",
+  "kind": "hardware",
+  "domain": "tp-link.com",
+  "hq": "Shenzhen, China",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/tp-link.com"
+ },
+ {
+  "slug": "citrix",
+  "name": "Citrix / XenProject",
+  "kind": "hardware",
+  "domain": "xenproject.org",
+  "hq": "Fort Lauderdale, Florida, USA",
+  "advisory": "https://xenbits.xen.org/xsa/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/xenproject.org"
+ },
+ {
+  "slug": "crestron",
+  "name": "Crestron",
+  "kind": "hardware",
+  "domain": "crestron.com",
+  "hq": "Rockleigh, New Jersey, USA",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/crestron.com"
+ },
+ {
+  "slug": "brother",
+  "name": "Brother",
+  "kind": "hardware",
+  "domain": "brother.com",
+  "hq": "Nagoya, Japan",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/brother.com"
+ },
+ {
+  "slug": "epson",
+  "name": "Epson",
+  "kind": "hardware",
+  "domain": "epson.com",
+  "hq": "Suwa, Nagano, Japan",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/epson.com"
+ },
+ {
+  "slug": "quantum",
+  "name": "Quantum",
+  "kind": "hardware",
+  "domain": "quantum.com",
+  "hq": "San Jose, California, USA",
+  "advisory": "https://www.quantum.com/en/support/security-advisories/",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/quantum.com"
+ },
+ {
+  "slug": "audiocodes",
+  "name": "AudioCodes",
+  "kind": "hardware",
+  "domain": "audiocodes.com",
+  "hq": "Lod, Israel",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/audiocodes.com"
+ },
+ {
+  "slug": "avm",
+  "name": "AVM",
+  "kind": "hardware",
+  "domain": "avm.de",
+  "hq": "Berlin, Germany",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/avm.de"
+ },
+ {
+  "slug": "ring",
+  "name": "Ring (Amazon)",
+  "kind": "hardware",
+  "domain": "ring.com",
+  "hq": "Santa Monica, California, USA",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/ring.com"
+ },
+ {
+  "slug": "tsc",
+  "name": "TSC Printronix",
+  "kind": "hardware",
+  "domain": "tscprinters.com",
+  "hq": "New Taipei City, Taiwan",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/tscprinters.com"
+ },
+ {
+  "slug": "innerrange",
+  "name": "Inner Range",
+  "kind": "hardware",
+  "domain": "innerrange.com",
+  "hq": "Melbourne, Australia",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/innerrange.com"
+ },
+ {
+  "slug": "forth",
+  "name": "FS Forth-Systeme",
+  "kind": "hardware",
+  "domain": "fs-net.de",
+  "hq": "Breisach, Germany",
+  "advisory": "",
+  "advisory_verified": false,
+  "ratings": "https://securityscorecard.com/security-rating/fs-net.de"
+ },
+ {
+  "slug": "curl",
+  "name": "curl (Daniel Stenberg)",
+  "kind": "software",
+  "domain": "curl.se",
+  "hq": "Huddinge, Sweden",
+  "advisory": "https://curl.se/docs/security.html",
+  "advisory_verified": true,
+  "ratings": "https://securityscorecard.com/security-rating/curl.se"
+ }
+]

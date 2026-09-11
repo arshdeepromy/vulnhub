@@ -1,0 +1,273 @@
+/*
+ * VulnHub portal sign-in.
+ *
+ * A full-viewport scene: the animated asset sphere on a canvas, a vignette and
+ * a masked grid over it, and the page itself sitting on top. Every value here
+ * comes from the signed-off design (see the handoff spec) and is deliberate --
+ * the sphere is centred on the viewport, so the sign-in card's translucency and
+ * blur are what keep the two readable at the same time.
+ *
+ * Scoped under `.vh-login` throughout: the app shell already styles headings,
+ * links and inputs for the product UI, and this screen answers to none of it.
+ */
+
+/* The scene is full-bleed, so the shell's centred, padded main is undone. */
+body.vh-login-body { margin: 0; background: #050810; }
+body.vh-login-body .vh-main { max-width: none; margin: 0; padding: 0; }
+
+.vh-login {
+  position: relative;
+  min-height: 100vh;
+  overflow: hidden;
+  background: radial-gradient(ellipse at 50% 40%, #0a1220 0%, #050810 65%);
+  color: #e6edf7;
+  font-family: 'Space Grotesk', Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+
+  /*
+   * The app shell sets a 14px/1.55 body with a 300 weight and a touch of
+   * negative tracking, which is right for dense product tables and wrong for
+   * everything here. The design assumes browser defaults and then names the
+   * few places it wants something else, so this hands those defaults back.
+   * Every element below states its own size, so only these three inherit.
+   */
+  font-weight: 400;
+  line-height: normal;
+  letter-spacing: normal;
+}
+.vh-login *, .vh-login *::before, .vh-login *::after { box-sizing: border-box; }
+.vh-login a { color: #8fd7ff; text-decoration: none; }
+.vh-login a:hover { color: #c8ecff; text-decoration: none; }
+
+/* ---------------------------------------------------------------- scene. */
+
+.vh-login__canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; z-index: 0; }
+
+.vh-login__vignette {
+  position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background: radial-gradient(ellipse at 50% 50%, rgba(5,8,16,0) 45%, rgba(5,8,16,0.85) 100%);
+}
+
+.vh-login__grid {
+  position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    linear-gradient(rgba(120,190,255,0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(120,190,255,0.035) 1px, transparent 1px);
+  background-size: 48px 48px;
+  -webkit-mask-image: radial-gradient(ellipse at 50% 50%, black 20%, transparent 75%);
+          mask-image: radial-gradient(ellipse at 50% 50%, black 20%, transparent 75%);
+}
+
+.vh-login__inner {
+  position: relative; z-index: 1;
+  min-height: 100vh;
+  display: flex; flex-direction: column;
+  padding: 28px 40px;
+}
+
+/* --------------------------------------------------------------- header. */
+
+.vh-login__header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.vh-login__brand { display: flex; align-items: center; gap: 12px; }
+.vh-login__mark {
+  width: 34px; height: 34px; border-radius: 9px;
+  border: 1px solid rgba(120,200,255,0.35);
+  background: linear-gradient(135deg, rgba(94,224,255,0.18), rgba(94,224,255,0.02));
+  display: grid; place-items: center;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px; color: #8fd7ff; letter-spacing: 0.02em;
+}
+.vh-login__word { font-size: 16px; font-weight: 600; letter-spacing: 0.01em; color: #e6edf7; }
+.vh-login__status {
+  display: flex; align-items: center; gap: 8px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px; color: #6f819c; letter-spacing: 0.08em;
+}
+.vh-login__dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #5ee0ff; box-shadow: 0 0 10px #5ee0ff; display: inline-block;
+}
+
+/* ----------------------------------------------------------------- main. */
+
+.vh-login__main {
+  flex: 1;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 48px; align-items: center;
+  max-width: 1180px; width: 100%; margin: 0 auto; padding: 48px 0;
+}
+
+.vh-login__copy { display: flex; flex-direction: column; gap: 22px; max-width: 520px; }
+.vh-login__eyebrow {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px; color: #8fd7ff; letter-spacing: 0.16em;
+}
+.vh-login .vh-login__h1 {
+  margin: 0;
+  font-size: clamp(36px, 4.6vw, 60px);
+  line-height: 1.02; font-weight: 500; letter-spacing: -0.025em;
+  color: #e6edf7; text-wrap: pretty;
+}
+.vh-login__lede {
+  margin: 0; font-size: 17px; line-height: 1.55;
+  color: #a3b1c6; max-width: 460px; text-wrap: pretty;
+}
+.vh-login__chips { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 4px; }
+.vh-login__chip {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px; letter-spacing: 0.06em; color: #a3b1c6;
+  padding: 6px 10px; border-radius: 6px;
+  border: 1px solid rgba(120,160,210,0.18);
+  background: rgba(120,160,210,0.06);
+}
+
+/* ----------------------------------------------------------------- card. */
+
+.vh-login__card {
+  justify-self: end; width: 100%; max-width: 420px;
+  padding: 34px 32px; border-radius: 18px;
+  background: rgba(9,14,26,0.72);
+  -webkit-backdrop-filter: blur(22px);
+          backdrop-filter: blur(22px);
+  border: 1px solid rgba(120,200,255,0.16);
+  box-shadow: 0 30px 80px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.05);
+  display: flex; flex-direction: column; gap: 18px;
+}
+.vh-login__cardhead { display: flex; flex-direction: column; gap: 6px; }
+.vh-login__title { font-size: 22px; font-weight: 500; letter-spacing: -0.01em; color: #e6edf7; }
+.vh-login__host {
+  font-size: 13px; color: #8593ab;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/*
+ * The sign-in failure notice. Not in the original design file, which had no
+ * failure state at all -- but a login form that cannot say "that was wrong"
+ * is not a login form, so it borrows the danger colour the canvas already
+ * uses for event pulses and otherwise stays out of the way.
+ */
+.vh-login__error {
+  margin: 0; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid rgba(255,90,102,0.4);
+  background: rgba(255,90,102,0.1);
+  color: #ffb3ba; font-size: 13px; line-height: 1.45;
+}
+
+.vh-login__field { display: flex; flex-direction: column; gap: 7px; font-size: 13px; color: #a3b1c6; }
+.vh-login__labelrow { display: flex; justify-content: space-between; align-items: center; }
+.vh-login__labelrow a { font-size: 12px; }
+
+.vh-login__input {
+  width: 100%; height: 46px; padding: 0 14px;
+  border-radius: 10px; border: 1px solid rgba(120,160,210,0.2);
+  background: #0b1220; color: #e6edf7;
+  font-size: 15px; font-family: inherit; outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+.vh-login__input::placeholder { color: #5a6a82; }
+.vh-login__input:focus {
+  border-color: rgba(94,224,255,0.7);
+  box-shadow: 0 0 0 3px rgba(94,224,255,0.14);
+}
+/* Chrome paints its own autofill background; this is the only way back. */
+.vh-login__input:-webkit-autofill,
+.vh-login__input:-webkit-autofill:hover,
+.vh-login__input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 40px #0b1220 inset;
+  -webkit-text-fill-color: #e6edf7;
+}
+
+.vh-login__pw { position: relative; display: flex; }
+.vh-login__pw .vh-login__input { padding-right: 74px; }
+.vh-login__toggle {
+  position: absolute; right: 8px; top: 8px;
+  height: 30px; padding: 0 10px; border-radius: 7px;
+  border: 1px solid rgba(120,160,210,0.18);
+  background: rgba(120,160,210,0.08);
+  color: #a3b1c6;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px; letter-spacing: 0.06em; cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.vh-login__toggle:hover { color: #e6edf7; border-color: rgba(120,160,210,0.4); }
+
+.vh-login__check {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; color: #a3b1c6; cursor: pointer; user-select: none;
+}
+.vh-login__check input { width: 16px; height: 16px; accent-color: #5ee0ff; margin: 0; }
+
+.vh-login__submit {
+  height: 48px; border-radius: 11px; border: none;
+  background: linear-gradient(180deg, #7fe8ff, #4fd3f5);
+  color: #06101c; font-size: 15px; font-weight: 600; font-family: inherit;
+  letter-spacing: 0.01em; cursor: pointer;
+  box-shadow: 0 8px 28px rgba(94,224,255,0.28), inset 0 1px 0 rgba(255,255,255,0.5);
+  transition: transform .12s, box-shadow .12s;
+}
+.vh-login__submit:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 34px rgba(94,224,255,0.38), inset 0 1px 0 rgba(255,255,255,0.5);
+}
+.vh-login__submit:active { transform: translateY(0); }
+.vh-login__submit[disabled] { cursor: default; opacity: 0.9; transform: none; }
+
+.vh-login__or {
+  display: flex; align-items: center; gap: 12px;
+  color: #5a6a82; font-size: 12px;
+}
+.vh-login__or span { flex: 1; height: 1px; background: rgba(120,160,210,0.15); }
+
+.vh-login__sso {
+  height: 46px; border-radius: 11px;
+  border: 1px solid rgba(120,160,210,0.22);
+  background: rgba(120,160,210,0.06);
+  color: #e6edf7; font-size: 14px; font-family: inherit; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  transition: background .15s, border-color .15s;
+}
+.vh-login__sso:hover { background: rgba(120,160,210,0.12); border-color: rgba(120,160,210,0.4); color: #e6edf7; }
+.vh-login__sso[aria-disabled="true"] { cursor: not-allowed; opacity: 0.55; }
+.vh-login__sso[aria-disabled="true"]:hover { background: rgba(120,160,210,0.06); border-color: rgba(120,160,210,0.22); }
+.vh-login__ssoicon {
+  width: 14px; height: 14px; border-radius: 3px;
+  border: 1.5px solid #8fd7ff; display: inline-block; flex: none;
+}
+
+.vh-login__foot { text-align: center; font-size: 13px; color: #8593ab; padding-top: 2px; }
+
+/* --------------------------------------------------------------- footer. */
+
+.vh-login__footer {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 16px; flex-wrap: wrap;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px; color: #5a6a82; letter-spacing: 0.06em;
+}
+.vh-login__links { display: flex; gap: 22px; }
+.vh-login__links a { color: #6f819c; }
+.vh-login__links a:hover { color: #c8ecff; }
+
+/* ----------------------------------------------------------- responsive. */
+
+/*
+ * The grid already collapses on its own at minmax(320px, 1fr); this is about
+ * what happens after it does. The card stops hugging the right edge, and the
+ * scene loses the wide gutters that only make sense on a desktop viewport.
+ */
+@media (max-width: 720px) {
+  .vh-login__inner { padding: 22px 20px; }
+  .vh-login__main { gap: 36px; padding: 36px 0; }
+  .vh-login__card { justify-self: stretch; max-width: none; padding: 28px 22px; }
+  .vh-login__copy { max-width: none; }
+}
+
+/*
+ * A sphere that never stops moving behind a password field is exactly the
+ * kind of motion this setting exists to stop. The canvas keeps drawing at a
+ * crawl rather than freezing, so the scene still reads as the same scene.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .vh-login__submit { transition: none; }
+  .vh-login__submit:hover { transform: none; }
+}
