@@ -1,0 +1,31 @@
+Hostname,CI ID,Serial Number,IP Address,Operating System,OS Version,CI Class,Support Group,Business Service,Environment,Site,Business Criticality,Assigned To,Install Status
+NZAKLDC01,CI100083,748B4BBD0D,10.20.10.93,Windows Server,10.0.20348.2402,cmdb_ci_win_server,Infrastructure,Active Directory,Production,Auckland HQ,high,ben.kaur@example.com,Installed
+NZAKLDC02,CI100084,8CD83389AC,10.20.10.94,Windows Server,10.0.20348.2402,cmdb_ci_win_server,Infrastructure,Active Directory,Production,Auckland HQ,high,ben.kaur@example.com,Installed
+NZAKLFS01,CI100085,15901D09EB,10.20.10.95,Windows Server,10.0.17763.5936,cmdb_ci_win_server,Infrastructure,File Services,Production,Auckland HQ,high,ben.kaur@example.com,Installed
+NZAKLSQL01,CI100086,5AA5B1454D,10.20.10.96,Windows Server,10.0.20348.2402,cmdb_ci_win_server,Application Support,Finance ERP,Production,Auckland HQ,high,chloe.andersen@example.com,Installed
+NZAKLSQL02,CI100087,C64B4B7DB7,10.20.10.97,Windows Server,10.0.17763.5936,cmdb_ci_win_server,Application Support,Finance ERP,Production,Auckland HQ,high,chloe.andersen@example.com,Installed
+NZWLGAPP01,CI100088,37277F5F40,10.20.10.98,Windows Server,10.0.20348.2402,cmdb_ci_win_server,Application Support,Intranet,Production,Wellington Office,high,chloe.andersen@example.com,Installed
+NZWLGAPP02,CI100089,88E70AE1BA,10.20.10.99,Windows Server,10.0.20348.2402,cmdb_ci_win_server,Application Support,Intranet,Staging,Wellington Office,medium,chloe.andersen@example.com,Installed
+NZAKLWEB01,CI100090,1967C52FFC,10.20.10.100,Ubuntu,22.04.4 LTS,cmdb_ci_linux_server,Cloud Platform,Customer Portal,Production,Auckland HQ,high,eleni.gallagher@example.com,Installed
+NZAKLWEB02,CI100091,ED7D9F85DA,10.20.10.101,Ubuntu,22.04.4 LTS,cmdb_ci_linux_server,Cloud Platform,Customer Portal,Production,Auckland HQ,high,eleni.gallagher@example.com,Installed
+NZAKLWEB03,CI100092,8C1807E9E9,10.20.10.102,Ubuntu,20.04.6 LTS,cmdb_ci_linux_server,Cloud Platform,Customer Portal,Staging,Auckland HQ,medium,eleni.gallagher@example.com,Installed
+NZAKLAPI01,CI100093,40C984EE8E,10.20.10.103,Ubuntu,22.04.4 LTS,cmdb_ci_linux_server,Cloud Platform,Partner API,Production,Auckland HQ,high,eleni.gallagher@example.com,Installed
+NZAKLK8S01,CI100094,46115595B6,10.20.10.104,Ubuntu,22.04.4 LTS,cmdb_ci_linux_server,Cloud Platform,Container Platform,Production,Auckland HQ,high,eleni.gallagher@example.com,Installed
+NZAKLK8S02,CI100095,EF35D47926,10.20.10.105,Ubuntu,22.04.4 LTS,cmdb_ci_linux_server,Cloud Platform,Container Platform,Production,Auckland HQ,high,eleni.gallagher@example.com,Installed
+NZAKLK8S03,CI100096,76C3B1DA6B,10.20.10.106,Ubuntu,22.04.4 LTS,cmdb_ci_linux_server,Cloud Platform,Container Platform,Production,Auckland HQ,high,eleni.gallagher@example.com,Installed
+NZAKLBKP01,CI100097,E169201E51,10.20.10.107,Windows Server,10.0.17763.5936,cmdb_ci_win_server,Infrastructure,Backup,Production,Auckland HQ,high,ben.kaur@example.com,Installed
+NZAKLPRT01,CI100098,B5B205930D,10.20.10.108,Windows Server,10.0.17763.5936,cmdb_ci_win_server,End User Computing,Print Services,Production,Auckland HQ,high,aroha.ngata@example.com,Installed
+NZCHCFS01,CI100099,4EF03482CD,10.20.10.109,Windows Server,10.0.20348.2402,cmdb_ci_win_server,Infrastructure,File Services,Production,Christchurch Office,high,ben.kaur@example.com,Installed
+NZAKLMON01,CI100100,DADD160FA6,10.20.10.110,Debian,12.5,cmdb_ci_linux_server,Infrastructure,Monitoring,Production,Auckland HQ,high,ben.kaur@example.com,Installed
+NZAKLLEG01,CI100101,6FF9BEDF20,10.20.10.111,Windows Server,6.3.9600,cmdb_ci_win_server,Application Support,Legacy Payroll,Production,Auckland HQ,high,chloe.andersen@example.com,Installed
+NZAKLDEV01,CI100102,A816840931,10.20.10.112,Ubuntu,22.04.4 LTS,cmdb_ci_linux_server,Cloud Platform,Build Agent,Development,Auckland HQ,medium,eleni.gallagher@example.com,Installed
+NZAKLDEV02,CI100103,EF73EC7D22,10.20.10.113,Ubuntu,22.04.4 LTS,cmdb_ci_linux_server,Cloud Platform,Build Agent,Development,Auckland HQ,medium,eleni.gallagher@example.com,Installed
+NZAKLVPN01,CI100104,968805C068,10.20.10.114,Ubuntu,22.04.4 LTS,cmdb_ci_linux_server,Network Operations,Remote Access,Production,Auckland HQ,high,daniel.dubois@example.com,Installed
+NZAKLSW-CORE01,CI100105,969F66E591,10.10.1.115,Cisco,IOS-XE 17.09.04a,cmdb_ci_ip_switch,Network Operations,Core Network,Production,Auckland HQ,critical,daniel.dubois@example.com,Installed
+NZAKLSW-CORE02,CI100106,2F87924E84,10.10.1.116,Cisco,IOS-XE 17.09.04a,cmdb_ci_ip_switch,Network Operations,Core Network,Production,Auckland HQ,critical,daniel.dubois@example.com,Installed
+NZAKLSW-EDGE01,CI100107,D0E6E4EE5B,10.10.1.117,Cisco,IOS 15.2(7)E6,cmdb_ci_ip_switch,Network Operations,Core Network,Production,Auckland HQ,critical,daniel.dubois@example.com,Installed
+NZWLGSW-EDGE01,CI100108,10FF218F3E,10.10.1.118,Aruba,AOS-CX 10.11,cmdb_ci_ip_switch,Network Operations,Core Network,Production,Wellington Office,critical,daniel.dubois@example.com,Installed
+NZAKLFW01,CI100109,ED28C7ACCB,10.10.1.119,Palo Alto,PAN-OS 11.0.3,cmdb_ci_ip_firewall,Network Operations,Core Network,Production,Auckland HQ,critical,daniel.dubois@example.com,Installed
+NZAKLFW02,CI100110,1A000C62C3,10.10.1.120,Palo Alto,PAN-OS 10.2.7,cmdb_ci_ip_firewall,Network Operations,Core Network,Production,Auckland HQ,critical,daniel.dubois@example.com,Installed
+NZAKLWLC01,CI100111,1AD4F1F837,10.10.1.121,Cisco,IOS-XE 17.09.04a,cmdb_ci_ip_switch,Network Operations,Core Network,Production,Auckland HQ,critical,daniel.dubois@example.com,Installed
+NZCHCSW-EDGE01,CI100112,FA83FCADDC,10.10.1.122,Aruba,AOS-CX 10.10,cmdb_ci_ip_switch,Network Operations,Core Network,Production,Christchurch Office,critical,daniel.dubois@example.com,Installed

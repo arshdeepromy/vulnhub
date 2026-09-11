@@ -1,0 +1,12 @@
+.env
+db/
+wp/wp-config.php
+wp/wp-content/uploads/
+wp/wp-content/debug.log
+wp/wp-content/upgrade/
+*.log
+.admin_pass
+.db_pass
+.vh_enc_key
+.mcp_token
+.portal_test_pass

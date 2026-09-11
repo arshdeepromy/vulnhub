@@ -1,0 +1,86 @@
+/*
+ * Classification rules screen.
+ *
+ * Built entirely from the portal's own tokens and classes (vh-panel, vh-table,
+ * vh-btn, vh-chip, vh-sub) so it reads as part of the product, not a bolt-on.
+ */
+
+.vh-rules { display: block; }
+
+.vh-rules__intro { margin-bottom: 16px; }
+.vh-rules__introhead { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.vh-rules__introhead .vh-sub { max-width: 78ch; }
+.vh-rules__apply { margin: 0; }
+
+.vh-rules__orderform { margin: 0 0 8px; }
+
+/* -------------------------------------------------------------- the list. */
+.vh-rules__table td { vertical-align: top; }
+.vh-rules__table .vh-sub { display: block; font-size: 12px; }
+.vh-rules__row.is-off { opacity: .58; }
+.vh-rules__row.is-editing { background: var(--vh-neutral-bg); }
+.vh-rules__row.is-dragging { opacity: .4; }
+.vh-rules__empty { color: var(--vh-muted); text-align: center; padding: 22px 14px; }
+
+.vh-rules__col-order { width: 108px; white-space: nowrap; }
+.vh-rules__handle { cursor: grab; color: var(--vh-muted); font-size: 15px; margin-right: 4px; }
+.vh-rules__pos { font-variant-numeric: tabular-nums; font-weight: 650; margin-right: 4px; }
+.vh-rules__arrows { display: inline-flex; gap: 2px; }
+.vh-rules__arrows form { display: inline; margin: 0; }
+.vh-rules__arrows .vh-btn { padding: 2px 6px; line-height: 1.2; }
+
+.vh-rules__when .vh-mono { display: block; margin-top: 4px; color: var(--vh-ink-2); font-size: 12px; line-height: 1.5; max-width: 44ch; }
+.vh-rules__inline { display: inline; margin: 0; }
+.vh-rules__table .vh-col-act .vh-btn { margin-left: 4px; }
+
+/* --------------------------------------------------------------- preview. */
+.vh-rules__preview { margin-top: 16px; border-left: 3px solid var(--vh-series-1); }
+.vh-rules__diff { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.vh-rules__diff li { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.vh-rules__diffkey { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--vh-muted); font-weight: 650; }
+
+/* ---------------------------------------------------------------- editor. */
+.vh-rules__editor { margin-top: 16px; }
+.vh-rules__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+.vh-rules__field { display: flex; flex-direction: column; gap: 4px; }
+.vh-rules__field > span { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--vh-muted); }
+.vh-rules__field--narrow { max-width: 240px; }
+
+.vh-rules input[type="text"],
+.vh-rules input[type="number"],
+.vh-rules select {
+  font-family: inherit; font-size: 13px;
+  padding: 7px 10px; border-radius: 7px; border: 1px solid var(--vh-line);
+  background: var(--vh-surface); color: var(--vh-ink); width: 100%;
+}
+.vh-rules input:focus-visible,
+.vh-rules select:focus-visible { outline: 2px solid var(--vh-series-1); outline-offset: 1px; }
+
+.vh-rules__conditions { display: flex; flex-direction: column; gap: 8px; }
+.vh-rules__condition {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.2fr) minmax(130px, 1fr) minmax(150px, 1.1fr) minmax(140px, 1.4fr) auto;
+  gap: 8px; align-items: center;
+  background: var(--vh-plane); border: 1px solid var(--vh-line);
+  border-radius: 8px; padding: 8px 10px;
+}
+.vh-rules__condition label { display: block; margin: 0; }
+.vh-rules__condition [hidden] { display: none !important; }
+.vh-rules__remove { justify-self: end; }
+
+.vh-rules__switches { display: flex; flex-wrap: wrap; gap: 16px; margin: 14px 0 4px; }
+.vh-rules__check { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--vh-ink-2); }
+.vh-rules__check input { width: auto; }
+
+.vh-rules__actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+
+/* ------------------------------------------------------------------ help. */
+.vh-rules__help { margin-top: 16px; }
+.vh-rules__help summary { cursor: pointer; font-size: 13px; color: var(--vh-ink-2); }
+.vh-rules__helplist { margin: 12px 0 0; padding-left: 18px; color: var(--vh-ink-2); font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
+
+@media (max-width: 900px) {
+  .vh-rules__condition { grid-template-columns: 1fr; }
+  .vh-rules__col-order { width: auto; }
+}
+

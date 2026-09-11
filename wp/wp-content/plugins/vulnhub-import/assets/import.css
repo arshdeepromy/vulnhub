@@ -1,0 +1,78 @@
+/*
+ * VulnHub Import — only the components the portal shell does not already have.
+ *
+ * Everything else on this screen (vh-panel, vh-table, vh-tablewrap, vh-btn,
+ * vh-chip, vh-filters, vh-meterblock, vh-sub, vh-mono) comes from the
+ * application stylesheet and is deliberately not restyled here. The three
+ * things below are genuinely new: a drop target, a counter card, and the
+ * mapping row's sample-value cell.
+ */
+
+.vh-import { display: block; }
+
+/* ------------------------------------------------------------ drop target. */
+.vh-drop {
+  border: 1.5px dashed var(--vh-baseline);
+  border-radius: var(--vh-radius);
+  background: var(--vh-plane);
+  padding: 30px 20px;
+  text-align: center;
+  transition: border-color .15s ease, background .15s ease;
+  cursor: pointer;
+}
+.vh-drop:hover,
+.vh-drop:focus-visible {
+  border-color: var(--vh-series-1);
+  background: var(--vh-neutral-bg);
+  outline: none;
+}
+.vh-drop.is-over {
+  border-color: var(--vh-series-1);
+  border-style: solid;
+  background: var(--vh-neutral-bg);
+}
+.vh-drop.is-busy { opacity: .55; pointer-events: none; }
+.vh-drop__icon { width: 30px; height: 30px; color: var(--vh-series-1); }
+.vh-drop__lead { font-size: 15px; font-weight: 620; margin: 6px 0 2px; }
+.vh-drop .vh-btn { margin-top: 14px; }
+
+/* --------------------------------------------------------- counter cards. */
+.vh-import__counters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 16px 0 4px;
+}
+/* .vh-card and its parts now live in vulnhub-dashboard/assets/app.css, which
+ * this stylesheet already depends on. */
+
+/* --------------------------------------------------------- mapping table. */
+.vh-import__form .vh-import__upload { margin-top: 16px; }
+.vh-import__sample {
+  color: var(--vh-ink-2);
+  font-family: var(--vh-mono);
+  font-size: 12px;
+  max-width: 340px;
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+.vh-import__req { color: var(--vh-bad); font-weight: 700; margin-left: 3px; }
+.vh-import select[data-vh-col],
+.vh-import select[data-vh-shape] {
+  background: var(--vh-surface);
+  color: var(--vh-ink);
+  border: 1px solid var(--vh-line);
+  border-radius: 7px;
+  padding: 5px 8px;
+  font-size: 13px;
+  max-width: 320px;
+}
+.vh-import .vh-filters span.vh-mono { font-size: 13px; text-transform: none; letter-spacing: 0; color: var(--vh-ink); }
+
+@media (prefers-reduced-motion: reduce) {
+  .vh-drop { transition: none; }
+}
+

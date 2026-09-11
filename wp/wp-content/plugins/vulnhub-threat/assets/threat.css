@@ -1,0 +1,243 @@
+/*
+ * Attack-path widget.
+ *
+ * Colours come from the dashboard's own custom properties, so this inherits
+ * light and dark without declaring either. Lane identity is never carried by
+ * hue alone: every lane also has a position, a label, a number and a row in
+ * the CSV, which is the rule the rest of the product's charts follow.
+ */
+
+.vh-flow { display: flex; flex-direction: column; gap: 18px; }
+
+.vh-flow__stage { width: 100%; overflow: hidden; }
+
+.vh-flow__svg {
+	width: 100%;
+	height: auto;
+	display: block;
+	font-family: var(--vh-font);
+	overflow: visible;
+}
+
+/* --------------------------------------------------------- the internet. */
+
+.vh-flow__globe {
+	fill: var(--vh-neutral-bg);
+	stroke: var(--vh-baseline);
+	stroke-width: 1.5;
+}
+
+.vh-flow__globe-lines {
+	fill: none;
+	stroke: var(--vh-muted);
+	stroke-width: 1.2;
+	opacity: .75;
+}
+
+/*
+ * A slow breath on the globe. It is the only thing on the board that says
+ * "this is live" rather than "this is a report", and it is deliberately at
+ * the source of the flow rather than on the numbers.
+ */
+.vh-flow__pulse {
+	fill: none;
+	stroke: var(--vh-sev-critical);
+	stroke-width: 1.5;
+	transform-origin: 100px 212px;
+	animation: vh-flow-pulse 3.4s ease-out infinite;
+}
+
+@keyframes vh-flow-pulse {
+	0%   { transform: scale(1);    opacity: .5; }
+	70%  { transform: scale(1.35); opacity: 0; }
+	100% { transform: scale(1.35); opacity: 0; }
+}
+
+.vh-flow__net-label { fill: var(--vh-ink); font-size: 15px; font-weight: 650; }
+.vh-flow__net-sub   { fill: var(--vh-muted); font-size: 11.5px; }
+
+/* ---------------------------------------------------------- the boundary. */
+
+.vh-flow__perimeter {
+	stroke: var(--vh-baseline);
+	stroke-width: 1.5;
+	stroke-dasharray: 5 6;
+}
+
+.vh-flow__perimeter-label {
+	fill: var(--vh-muted);
+	font-size: 10.5px;
+	letter-spacing: .08em;
+	text-transform: uppercase;
+}
+
+/* -------------------------------------------------------------- the flow. */
+
+.vh-flow__line { fill: none; opacity: .5; stroke-linecap: round; }
+
+.vh-flow__line--edge   { stroke: var(--vh-sev-critical); }
+.vh-flow__line--user   { stroke: var(--vh-sev-high); }
+.vh-flow__line--inside { stroke: var(--vh-series-1); stroke-dasharray: 4 5; opacity: .42; }
+
+.vh-flow__dot {
+	offset-rotate: 0deg;
+	animation: vh-flow-travel 3.6s linear infinite;
+}
+
+.vh-flow__dot--edge   { fill: var(--vh-sev-critical); }
+.vh-flow__dot--user   { fill: var(--vh-sev-high); }
+.vh-flow__dot--inside { fill: var(--vh-series-1); }
+
+@keyframes vh-flow-travel {
+	0%   { offset-distance: 0%;   opacity: 0; }
+	12%  { opacity: 1; }
+	88%  { opacity: 1; }
+	100% { offset-distance: 100%; opacity: 0; }
+}
+
+/*
+ * Somebody who has asked their system for less motion gets the same diagram,
+ * standing still, with the dots parked mid-flight so the lines still read as
+ * carrying something.
+ */
+@media (prefers-reduced-motion: reduce) {
+	.vh-flow__dot { animation: none; offset-distance: 60%; opacity: 1; }
+	.vh-flow__pulse { animation: none; opacity: .28; }
+}
+
+/* ------------------------------------------------- doors, and the person. */
+
+.vh-flow__door rect {
+	fill: var(--vh-plane);
+	stroke: var(--vh-line);
+	stroke-width: 1;
+}
+
+.vh-flow__door text {
+	fill: var(--vh-ink-2);
+	font-size: 11px;
+	font-weight: 600;
+}
+
+.vh-flow__person circle {
+	fill: var(--vh-warn-bg);
+	stroke: var(--vh-sev-high);
+	stroke-width: 1.5;
+}
+
+.vh-flow__person path {
+	fill: none;
+	stroke: var(--vh-sev-high);
+	stroke-width: 1.6;
+}
+
+/* ---------------------------------------------------------- landing boxes. */
+
+.vh-flow__box rect {
+	fill: var(--vh-raised-solid, #0e1526); /* SVG fill cannot be a gradient; --vh-raised is one */
+	stroke: var(--vh-line);
+	stroke-width: 1.5;
+	transition: stroke .15s ease;
+}
+
+.vh-flow__box .vh-flow__box-edge { stroke: none; }
+
+.vh-flow__box--edge   .vh-flow__box-edge { fill: var(--vh-sev-critical); }
+.vh-flow__box--user   .vh-flow__box-edge { fill: var(--vh-sev-high); }
+.vh-flow__box--inside .vh-flow__box-edge { fill: var(--vh-series-1); }
+
+.vh-flow__box:hover rect,
+.vh-flow__box:focus-visible rect { stroke: var(--vh-link); }
+
+.vh-flow__box { cursor: pointer; }
+
+.vh-flow__n {
+	font-size: 34px;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+	fill: var(--vh-ink);
+}
+
+.vh-flow__box--edge   .vh-flow__n { fill: var(--vh-sev-critical); }
+.vh-flow__box--user   .vh-flow__n { fill: var(--vh-sev-high); }
+.vh-flow__box--inside .vh-flow__n { fill: var(--vh-series-1); }
+
+.vh-flow__n-unit    { font-size: 11.5px; fill: var(--vh-muted); }
+.vh-flow__box-label { font-size: 14.5px; font-weight: 650; fill: var(--vh-ink); }
+.vh-flow__box-sub   { font-size: 11.5px; fill: var(--vh-muted); }
+.vh-flow__box-cta   { font-size: 11.5px; font-weight: 600; fill: var(--vh-link); }
+
+/* ------------------------------------------------ the same, as text cards. */
+
+.vh-flow__cards {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 12px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.vh-flow__card a {
+	display: block;
+	height: 100%;
+	padding: 14px 16px;
+	border: 1px solid var(--vh-line);
+	border-left-width: 4px;
+	border-radius: var(--vh-radius);
+	background: var(--vh-plane);
+	text-decoration: none;
+	transition: border-color .15s ease, background .15s ease;
+}
+
+.vh-flow__card a:hover,
+.vh-flow__card a:focus-visible { background: var(--vh-raised); border-color: var(--vh-link); }
+
+.vh-flow__card--edge   a { border-left-color: var(--vh-sev-critical); }
+.vh-flow__card--user   a { border-left-color: var(--vh-sev-high); }
+.vh-flow__card--inside a { border-left-color: var(--vh-series-1); }
+
+.vh-flow__card-n {
+	display: block;
+	font-size: 26px;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+	line-height: 1.1;
+	color: var(--vh-ink);
+}
+
+.vh-flow__card-label {
+	display: block;
+	margin-top: 2px;
+	font-size: 13px;
+	font-weight: 650;
+	color: var(--vh-ink);
+}
+
+.vh-flow__card-note {
+	display: block;
+	margin-top: 6px;
+	font-size: 12px;
+	line-height: 1.45;
+	color: var(--vh-muted);
+}
+
+.vh-flow__evidence,
+.vh-flow__foot {
+	margin: 0;
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--vh-muted);
+}
+
+/* ------------------------------------------------------------ small screens. */
+
+@media (max-width: 860px) {
+	/*
+	 * The diagram carries three numbers and eleven labels across 1160 units.
+	 * Below this width the labels are smaller than the product's minimum type
+	 * size, so the cards become the widget rather than sitting under it.
+	 */
+	.vh-flow__stage { display: none; }
+	.vh-flow__cards { grid-template-columns: 1fr; }
+}

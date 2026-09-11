@@ -1,0 +1,511 @@
+/*
+ * Only what the portal's own stylesheet does not already carry.
+ *
+ * A VulnHub widget can land on a page built with any theme, so the few
+ * variables the app takes for granted are restated with fallbacks rather than
+ * assumed. Everything else -- cards, tables, tiles, charts -- comes from
+ * app.css, which is a hard dependency of every widget.
+ */
+
+/*
+ * These widgets referred to `--vh-text`, `--vh-border` and `--vh-accent`, none
+ * of which the app defines -- the real names are --vh-ink, --vh-line and
+ * --vh-link. Every one of them therefore fell through to its hard-coded light
+ * fallback, so in dark mode the Elementor pages drew near-black headings,
+ * team names and figures on a near-black surface. The fallbacks are kept for
+ * the Elementor editor canvas, which loads these widgets without the app.
+ */
+.vh-el__heading {
+	font-size: 1.1rem;
+	font-weight: 650;
+	letter-spacing: -0.01em;
+	margin: 0 0 0.6rem;
+	color: var(--vh-ink, #16181d);
+}
+
+.vh-el__notice {
+	border: 1px dashed var(--vh-line, #d5d8de);
+	border-radius: 10px;
+	padding: 1rem 1.1rem;
+	color: var(--vh-muted, #61656e);
+	background: var(--vh-surface, #fff);
+	font-size: 0.9rem;
+}
+
+.vh-el__notice p {
+	margin: 0;
+}
+
+/* ---------------------------------------------------------- coverage pills */
+
+/*
+ * Coverage state is not severity, so it does not borrow the severity pills.
+ * Each one carries its word as well as its colour -- the label is the meaning,
+ * the tint is only reinforcement.
+ */
+.vh-pill--cov-good {
+	background: var(--vh-good-bg);
+	color: var(--vh-good);
+}
+
+.vh-pill--cov-warn {
+	background: var(--vh-warn-bg);
+	color: var(--vh-warn);
+}
+
+.vh-pill--cov-bad {
+	background: var(--vh-bad-bg);
+	color: var(--vh-bad);
+}
+
+.vh-pill--cov-muted {
+	background: var(--vh-neutral-bg);
+	color: var(--vh-muted);
+}
+
+/*
+ * The three source pills were wrapping one per line inside a 118px cell, so
+ * every row in the device table was three rows tall. The table already lives
+ * in a horizontal scroller -- let the cell ask for the width it needs.
+ */
+.vh-el__ids {
+	white-space: nowrap;
+}
+
+.vh-el__ids .vh-pill {
+	margin-right: 0.25rem;
+}
+
+/* Device names and IPs are identifiers; they read badly broken mid-token. */
+.elementor-widget-vulnhub-devices .vh-table td strong,
+.elementor-widget-vulnhub-devices .vh-table td .vh-muted {
+	white-space: nowrap;
+}
+
+/* ------------------------------------------------------------- the team wall */
+
+/*
+ * An explicit column count, because the editor control promises one. `auto-fit`
+ * with a min width ignores the choice and picks its own number -- asking for
+ * three gave four on a 1440px screen.
+ */
+.vh-teamwall {
+	display: grid;
+	gap: 0.9rem;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.vh-teamwall--2 {
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.vh-teamwall--4 {
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 1000px) {
+	.vh-teamwall,
+	.vh-teamwall--3,
+	.vh-teamwall--4 {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+}
+
+@media (max-width: 620px) {
+	.vh-teamwall,
+	.vh-teamwall--2,
+	.vh-teamwall--3,
+	.vh-teamwall--4 {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.vh-teamcard {
+	background: var(--vh-surface, #fff);
+	border: 1px solid var(--vh-line, #d5d8de);
+	border-radius: 12px;
+	padding: 1rem;
+}
+
+.vh-teamcard__avatar {
+	display: inline-grid;
+	place-items: center;
+	width: 2.25rem;
+	height: 2.25rem;
+	border-radius: 50%;
+	background: var(--vh-neutral-bg, #e4ecff);
+	/* Link blue on the neutral tint is 4.16:1 in dark mode; the disc carries an
+	   initial, so it takes primary ink rather than the link colour. */
+	color: var(--vh-ink, #1f4bd8);
+	font-weight: 700;
+	font-size: 0.8rem;
+	letter-spacing: 0.02em;
+}
+
+.vh-teamcard__name {
+	font-size: 0.98rem;
+	margin: 0.6rem 0 0.15rem;
+	color: var(--vh-ink, #16181d);
+}
+
+.vh-teamcard__lead {
+	margin: 0 0 0.7rem;
+	font-size: 0.82rem;
+	color: var(--vh-muted, #61656e);
+	overflow-wrap: anywhere;
+}
+
+.vh-teamcard__lead a {
+	color: inherit;
+}
+
+.vh-teamcard__stats {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 0.4rem 0.8rem;
+	margin: 0;
+}
+
+.vh-teamcard__stats dt {
+	font-size: 0.72rem;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--vh-muted, #61656e);
+}
+
+.vh-teamcard__stats dd {
+	margin: 0;
+	font-weight: 650;
+	font-variant-numeric: tabular-nums;
+	color: var(--vh-ink, #16181d);
+}
+
+/* ------------------------------------------------------------- freshness */
+
+.vh-freshness {
+	list-style: none;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem 1.2rem;
+	margin: 0;
+	padding: 0;
+	font-size: 0.82rem;
+	color: var(--vh-muted, #61656e);
+}
+
+.vh-freshness__source {
+	font-weight: 650;
+	color: var(--vh-ink, #16181d);
+}
+
+/* --------------------------------------------------- chrome inside Elementor */
+
+/*
+ * The portal's nav is a full-width bar in the app shell. Dropped into an
+ * Elementor header it is one item among several, so it stops stretching and
+ * loses the bar chrome the container is now providing.
+ */
+.vh-nav--el {
+	position: static;
+	width: auto;
+	border: 0;
+	background: none;
+	box-shadow: none;
+	padding: 0;
+}
+
+/*
+ * The Theme Builder header is one nowrap flex row of widgets, and every widget
+ * was a shrinkable flex item. Between about 900px and 1360px that squeezed all
+ * of them at once: the brand lost the organisation name, the "Sample data"
+ * chip broke over two lines, the theme toggle was clipped from 32px to 20px
+ * and the account name was cut off at the right edge -- while the nav, the one
+ * thing built to scroll, kept its full width.
+ *
+ * Only the nav shrinks now. Below the app's own 900px breakpoint it wraps to a
+ * second row and scrolls there, so the chrome stays whole on a phone.
+ */
+header.elementor-location-header .e-con > .elementor-widget { flex: 0 0 auto; }
+header.elementor-location-header .elementor-widget-vulnhub-nav { flex: 1 1 auto; min-width: 0; }
+
+@media (max-width: 900px) {
+	header.elementor-location-header .e-con {
+		flex-wrap: wrap;
+		row-gap: 10px;
+		column-gap: 14px;
+	}
+
+	header.elementor-location-header .elementor-widget-vulnhub-nav {
+		order: 10;
+		flex: 1 0 100%;
+	}
+
+	/*
+	 * On its own full-width row the nav has the space to wrap, and two tidy
+	 * lines of links beat one line behind a scrollbar the user has to find.
+	 */
+	header.elementor-location-header .vh-nav--el {
+		flex-wrap: wrap;
+		overflow-x: visible;
+		row-gap: 2px;
+	}
+}
+
+.vh-el__portal-notice {
+	margin: 0 auto;
+	max-width: var(--vh-max, 1400px);
+	padding: 0 1rem;
+}
+
+/*
+ * Elementor's editor draws widgets on a plain white canvas with no portal
+ * body class, so the app's variables are unresolved there. This is the
+ * minimum set that stops every widget rendering as black-on-black.
+ */
+.elementor-editor-active .vh-card,
+.elementor-editor-active .vh-w {
+	background: #fff;
+}
+
+
+/* ------------------------------------------------------------- findings */
+
+/*
+ * `.vh-list__row` is a two-column grid -- label, then number. A finding has
+ * three parts (severity, what and where, when it was due), and the third was
+ * wrapping on to a line of its own, which read as a centred title.
+ */
+/*
+ * Something on the Elementor pages turns these list items into flex rows, and
+ * a flex row with space-between parked the finding's title in the middle of
+ * the card with a gap either side. Restate the grid at a specificity that
+ * survives, so the three parts read pill / title / when from the left.
+ */
+.vh-el__findings.vh-list li.vh-list__row {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: center;
+	justify-content: start;
+	gap: 4px 12px;
+}
+
+.vh-el__findings .vh-list__main {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.vh-el__findings .vh-list__meta {
+	color: var(--vh-muted);
+	font-size: 11.5px;
+	white-space: nowrap;
+}
+
+/* --------------------------------------------------- the account dropdown */
+
+/*
+ * Inside the Theme Builder header, `.vh-account__menu` computed
+ * `position: static` -- Elementor's own stylesheets are enqueued after the
+ * app's (deliberately, so a kit can override a theme) and something in them
+ * beat the app's unqualified rule. A statically positioned dropdown is not a
+ * dropdown: it pushed the header open instead of floating over the page.
+ * Scoped to `.elementor` so only the chrome is affected.
+ */
+/*
+ * Specific enough to win on merit, because it cannot win on order: Elementor
+ * 4's base-desktop/base-mobile sheets are enqueued after this one, and at
+ * equal specificity the later rule takes it. `.elementor details.vh-account >`
+ * is (0,2,2) and settles it without reaching for !important.
+ */
+.elementor details.vh-account > .vh-account__menu {
+	position: absolute;
+	top: calc(100% + 8px);
+	right: 0;
+	z-index: 30;
+	min-width: 232px;
+}
+
+.elementor details.vh-account { position: relative; }
+
+/* ==========================================================
+   Device information: the OS badge, and column sizing
+   ==========================================================
+   The operating-system column looked cramped, but the column was never the
+   problem. `.vh-os` is styled twice in the dashboard plugin: app.css sizes it
+   as a fixed 24x24 icon chip with a 9px monospace font, and app-redesign.css
+   overrides that with the readable two-line layout. Elementor pages enqueue
+   app.css and NOT app-redesign.css -- so on this page the badge was still a
+   24px box, and "Red Hat Enterprise Linux" was being folded into it four
+   lines deep at 9px.
+
+   Widening the column did nothing, because an `inline-grid` box with an
+   explicit `width: 24px` does not care how much room the cell has.
+
+   So this plugin styles its own widget output rather than depending on which
+   layers of another plugin's cascade happen to be present. The rules mirror
+   app-redesign.css deliberately: wherever both load, they agree.
+   ---------------------------------------------------------- */
+
+.vh-table--estate .vh-os {
+  display: inline-flex; align-items: center; gap: 9px;
+  width: auto; height: auto;
+  background: none; border: 0; border-radius: 0; margin-right: 0;
+  font: inherit; vertical-align: top;
+}
+.vh-table--estate .vh-os__logo {
+  width: 26px; height: 26px; flex: 0 0 auto; object-fit: contain; padding: 4px;
+  border-radius: 7px; background: var(--vh-neutral-bg); border: 1px solid var(--vh-line);
+}
+.vh-table--estate .vh-os__mono {
+  display: inline-grid; place-items: center; width: 26px; height: 26px; flex: 0 0 auto;
+  border-radius: 7px; font: 700 9px/1 var(--vh-mono);
+}
+.vh-table--estate .vh-os__text { display: inline-flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+.vh-table--estate .vh-os__name { color: var(--vh-ink); font-size: 13px; }
+.vh-table--estate .vh-os__detail { font-size: 11px; color: var(--vh-muted); white-space: nowrap; }
+.vh-table--estate .vh-os__detail--unknown { font-style: italic; }
+
+/*
+ * Break at spaces, not inside words.
+ *
+ * `overflow-wrap: anywhere` is right for a hostname, which has no spaces to
+ * break at, and wrong for a product name: starved of room it yields
+ * "Red Hat / Enterpris / e Linux" instead of asking for more.
+ */
+.vh-table--estate .vh-os__name { overflow-wrap: normal; word-break: normal; }
+
+/* Nine columns laid out `table-layout: auto` distribute by content, and pills
+   measure wider than prose -- so the two pill columns were taking room the
+   names needed. A floor on the text columns, and the pill and figure columns
+   shrunk to their content, settles it without a fixed layout. */
+.vh-table--estate .vh-col-os    { min-width: 220px; }
+.vh-table--estate .vh-col-owner { min-width: 130px; }
+.vh-table--estate .vh-col-type  { width: 1%; white-space: nowrap; }
+.vh-table--estate .vh-col-cov   { width: 1%; white-space: nowrap; }
+.vh-table--estate .vh-col-ids   { width: 1%; white-space: nowrap; }
+
+/* Figures read as a column when they share a right edge. */
+.vh-table--estate td.vh-num,
+.vh-table--estate th.vh-num { text-align: right; width: 1%; white-space: nowrap; }
+
+/*
+ * Scroll rather than crush.
+ *
+ * The wrapper is `overflow: hidden` for its rounded corners, which left the
+ * table no way out of a narrow window except squeezing columns past the point
+ * of legibility. Scrolling on one axis keeps the corners and the words.
+ */
+.vh-tablewrap:has(.vh-table--estate) { overflow-x: auto; overflow-y: hidden; }
+
+/* ==========================================================
+   Widget chrome that the redesign layer would otherwise supply
+   ==========================================================
+   Elementor pages render dashboard widget markup but enqueue app.css only --
+   app-redesign.css is portal-only. Anything styled solely in that layer
+   arrives naked here. It is not a hypothetical: the widget export menu came
+   out as a browser-default disclosure triangle next to a download glyph
+   1102px square, because the only rule sizing that icon lived in the layer
+   this page does not load.
+
+   The icons now carry width/height attributes, which fixes the size wherever
+   they render. This block restores the rest of the control's appearance.
+   Rules mirror app-redesign.css, so where both load they agree.
+   ---------------------------------------------------------- */
+
+.vh-w__menu { position: relative; flex: 0 0 auto; }
+.vh-w__menu > summary {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 7px; cursor: pointer;
+  list-style: none; color: var(--vh-muted); border: 1px solid transparent;
+}
+.vh-w__menu > summary::-webkit-details-marker { display: none; }
+.vh-w__menu > summary::marker { content: ''; }
+.vh-w__menu > summary:hover { background: var(--vh-neutral-bg); color: var(--vh-ink); border-color: var(--vh-line); }
+.vh-w__menu > summary svg { width: 15px; height: 15px; }
+.vh-w__menu-body {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 25;
+  min-width: 168px; padding: 6px;
+  background: var(--vh-raised-solid, var(--vh-surface)); border: 1px solid var(--vh-line);
+  border-radius: 9px; box-shadow: var(--vh-shadow);
+}
+.vh-w__export {
+  display: block; width: 100%; text-align: left;
+  padding: 7px 9px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--vh-ink-2);
+  font: inherit; font-size: 13px; cursor: pointer; text-decoration: none;
+}
+.vh-w__export:hover { background: var(--vh-neutral-bg); color: var(--vh-ink); text-decoration: none; }
+
+/*
+ * A floor, so an unsized icon can never take the page again.
+ *
+ * Belt to the markup's braces. Scoped to inline icons -- an <svg> that is a
+ * *chart* is identified by a class or a non-24 viewBox and is left alone, so
+ * this cannot shrink a graph.
+ */
+.vh-w svg[viewBox="0 0 24 24"]:not([width]),
+.vh-panel svg[viewBox="0 0 24 24"]:not([width]),
+.vh-card svg[viewBox="0 0 24 24"]:not([width]) { width: 16px; height: 16px; }
+
+/* ------------------------------------------------ the account menu's items */
+
+/*
+ * The panel had chrome; its contents never did.
+ *
+ * `.vh-account__menu` is styled in app.css (card, border, radius) and the kit
+ * re-homes it inside the rail, but no stylesheet has ever had a rule for the
+ * links inside it. They rendered as bare inline anchors with no padding, so
+ * "Administration" and "Sign out" ran together into one word --
+ * "AdministrationSign out" -- with the email crowded against them.
+ *
+ * These follow `.vh-w__export`, which is this app's existing menu-item
+ * language, so the two dropdowns read as the same control.
+ */
+
+.vh-account__menu { display: flex; flex-direction: column; gap: 1px; }
+
+.vh-account__menu .vh-account__name {
+  margin: 0; font-size: 13px; font-weight: 600; color: var(--vh-ink);
+}
+
+/* The address is a caption for the menu, not an item in it: it gets the rule
+   that separates the two, and may wrap rather than widen the panel. */
+.vh-account__menu .vh-account__email,
+.vh-account__menu .vh-account__mail {
+  margin: 0 0 6px; padding: 0 1px 8px;
+  font-size: 12px; line-height: 1.4; color: var(--vh-muted);
+  border-bottom: 1px solid var(--vh-line);
+  overflow-wrap: anywhere;
+}
+
+.vh-account__menu a {
+  display: block;
+  padding: 7px 9px; border-radius: 6px;
+  color: var(--vh-ink-2); font-size: 13px; line-height: 1.3;
+  text-decoration: none;
+  transition: background .15s ease, color .15s ease;
+}
+
+.vh-account__menu a:hover,
+.vh-account__menu a:focus-visible {
+  background: var(--vh-neutral-bg); color: var(--vh-ink); text-decoration: none;
+}
+
+/* Signing out is the one thing here you cannot undo with a click back. */
+.vh-account__menu a:last-child { color: var(--vh-muted); }
+.vh-account__menu a:last-child:hover,
+.vh-account__menu a:last-child:focus-visible {
+  background: var(--vh-bad-bg, rgba(255, 90, 102, .12));
+  color: var(--vh-pill-fg-critical, #ff8c94);
+}
+
+/* The trigger: avatar and name on one line, the whole row clickable. */
+.vh-account > summary {
+  list-style: none; cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px; border-radius: 8px;
+  transition: background .15s ease;
+}
+.vh-account > summary::-webkit-details-marker { display: none; }
+.vh-account > summary::marker { content: ''; }
+.vh-account > summary:hover { background: var(--vh-neutral-bg); }
+.vh-account__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -1,0 +1,35 @@
+/* Advisory alerts. Built on the app's own tokens so a restyle of app.css
+   carries this page with it rather than leaving it behind. */
+
+.vh-alerts__filters { flex-wrap: wrap; gap: 8px; }
+.vh-alerts__filters input[type="search"] { min-width: 260px; }
+.vh-alerts__kev { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--vh-ink-2); }
+
+.vh-alerts__table td { vertical-align: top; }
+.vh-alerts__table td .vh-chip { margin-left: 6px; }
+
+.vh-alerts__empty { text-align: center; padding: 32px 24px; }
+.vh-alerts__empty p { margin: 0 0 6px; }
+
+.vh-alerts__paging { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+
+.vh-alerts__detail { display: grid; gap: 16px; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); }
+@media (max-width: 900px) { .vh-alerts__detail { grid-template-columns: 1fr; } }
+
+.vh-alerts__facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 14px 0 0; }
+.vh-alerts__facts dt { color: var(--vh-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.vh-alerts__facts dd { margin: 0; font-size: 13px; }
+
+.vh-alerts__history { list-style: none; margin: 0; padding: 0; }
+.vh-alerts__history li { padding: 8px 0; border-bottom: 1px solid var(--vh-line); }
+.vh-alerts__history li:last-child { border-bottom: 0; }
+
+/* Feed management */
+.vh-alerts__pollall { margin: 0 0 14px; }
+.vh-alerts__inline { display: flex; flex-wrap: wrap; gap: 4px; }
+.vh-alerts__feed--off td { opacity: .55; }
+.vh-alerts__error { color: var(--vh-bad); }
+
+.vh-alerts__json { border: 1px solid var(--vh-line); border-radius: var(--vh-radius); padding: 12px 14px; margin: 6px 0 14px; }
+.vh-alerts__json legend { font-size: 12px; color: var(--vh-muted); text-transform: uppercase; letter-spacing: .04em; padding: 0 6px; }
+.vh-alerts__map { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 12px; }

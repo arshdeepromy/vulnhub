@@ -1,0 +1,45 @@
+# VulnHub MariaDB tuning
+#
+# Measured 2026-09-10. The stock defaults were costing whole seconds on a
+# database that comfortably fits in RAM:
+#
+#   innodb_buffer_pool_size   128M   (the MariaDB default, never tuned)
+#   vh_vulnhub_findings       491M   data + indexes
+#   whole database            540M
+#
+# So the hot table was roughly four times the cache in front of it. Every
+# table scan evicted the pool and went back to disk: 20.3 million disk reads,
+# about 325GB, in the first three days of uptime, for a buffer pool hit rate
+# of 97.56% -- a number that reads fine and is actually poor, because InnoDB
+# wants 99.9%+. The mariadbd process was also found with 55MB swapped out,
+# because the container was capped at 1g.
+#
+# 1536M holds the entire database with room to grow. The container limit is
+# 3g to leave space for connections, sort buffers and the log.
+
+[mysqld]
+
+innodb_buffer_pool_size = 1536M
+innodb_log_file_size    = 384M
+
+# The data lives on SSD-backed ext4, not spinning rust, so the defaults that
+# assume a slow seek are wrong: do not bother writing neighbouring pages, and
+# allow far more concurrent I/O than the stock 200.
+innodb_flush_neighbors  = 0
+innodb_io_capacity      = 2000
+innodb_io_capacity_max  = 4000
+innodb_read_io_threads  = 8
+innodb_write_io_threads = 4
+
+# Persist the pool across restarts so a deploy does not start cold and hand
+# the first person through the door a ten-second page.
+innodb_buffer_pool_dump_at_shutdown = 1
+innodb_buffer_pool_load_at_startup  = 1
+
+# Visibility. There was none: the slow log was off, so nothing that took
+# seconds was ever recorded. One second is deliberately aggressive for an
+# application whose pages should answer in ~250ms.
+slow_query_log      = 1
+slow_query_log_file = /var/lib/mysql/slow.log
+long_query_time     = 1
+
