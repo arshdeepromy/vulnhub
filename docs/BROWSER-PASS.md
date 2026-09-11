@@ -10,7 +10,7 @@ Node at the copy that ships with `@playwright/mcp`; there is nothing to install.
 
 ```bash
 cd /srv/vulnhub
-export NODE_PATH=/usr/local/lib/node_modules/@playwright/mcp/node_modules
+export NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules
 
 node dev/browserpass.js                 # 17 screens x desktop + phone
 node dev/browserpass.js --theme=dark    # the same, in dark
