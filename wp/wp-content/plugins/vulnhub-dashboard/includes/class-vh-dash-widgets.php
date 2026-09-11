@@ -2553,6 +2553,19 @@ final class VulnHub_Dash_Widgets {
 		 * and the libraries it carries are gathered for the caption. Everything
 		 * else keeps its own product grouping.
 		 */
+		/*
+		 * Informational findings are excluded. Tenable ships a large family of
+		 * enumeration plugins -- "Ethernet MAC Addresses", "OS Fingerprints
+		 * Detected", "Device Hostname", "Inventory Scan", "Common Platform
+		 * Enumeration" -- that carry a plugin name but describe no vulnerable
+		 * software. VH_Product::classify() works off that plugin name, so each
+		 * one became a "product", and they dominated the widget: on this estate
+		 * they took 14 of the top 25 rows, every one severity 'info', pushing
+		 * real exposure (Chrome, libcurl, Windows updates) down the list.
+		 * Exposure means actual vulnerabilities, so the severity filter is the
+		 * honest cut -- and it reads the finding's own severity, since a real
+		 * product legitimately carries both info and non-info detections.
+		 */
 		$is_bundled = "v.product_kind = 'library' AND f.bundle_app <> ''";
 
 		/*
@@ -2587,6 +2600,7 @@ final class VulnHub_Dash_Widgets {
 				WHERE f.state IN ('open','reopened') AND f.exception_id = 0
 				  AND a.lifecycle_status IN (" . vh_reportable_sql() . ")
 				  AND v.product <> ''
+				  AND f.severity <> 'info'
 				  {$scope_sql}
 			 ) t
 			 GROUP BY product, product_slug, product_kind, component_class

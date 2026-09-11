@@ -712,7 +712,10 @@ a.vh-stack__seg:hover, a.vh-stack__seg:focus-visible { outline: 2px solid var(--
   overflow: visible; z-index: 40;
 }
 .admin-bar .vh-topbar { top: 32px; height: calc(100vh - 32px); }
-.vh-main, .vh-footer, footer.vh-footer { margin-left: 64px; }
+/* Only when the portal actually drew the rail -- see body_class(). */
+.vh-chrome-rail .vh-main,
+.vh-chrome-rail .vh-footer,
+.vh-chrome-rail footer.vh-footer { margin-left: 64px; }
 
 /* brand: just the 36px tile, no org text in the rail */
 .vh-topbar .vh-brand { gap: 0; margin-bottom: 16px; }
