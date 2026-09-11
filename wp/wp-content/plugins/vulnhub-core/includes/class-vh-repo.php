@@ -2722,8 +2722,8 @@ final class Repo {
 		$table = vh_table( 'findings' );
 		$now   = vh_now();
 		$out   = mb_substr( $output, 0, 8000 );
-		$app   = VH_Product::app_from_output( $out );
-		$aslug = VH_Product::slug( $app );
+		$app   = \VH_Product::app_from_output( $out );
+		$aslug = \VH_Product::slug( $app );
 
 		/*
 		 * Match on (asset, vuln) first, not the fingerprint.
@@ -2821,7 +2821,7 @@ final class Repo {
 			'protocol'    => $protocol,
 			'service'     => (string) ( $data['service'] ?? '' ),
 			'output'      => (string) ( $data['output'] ?? '' ),
-			'bundle_app'  => VH_Product::app_from_output( (string) ( $data['output'] ?? '' ) ),
+			'bundle_app'  => \VH_Product::app_from_output( (string) ( $data['output'] ?? '' ) ),
 			'risk_score'  => (float) ( $data['risk_score'] ?? 0 ),
 			'scan_uuid'   => (string) ( $data['scan_uuid'] ?? '' ),
 			'last_synced_at' => vh_now(),
@@ -2833,7 +2833,7 @@ final class Repo {
 			}
 		}
 
-		$row['bundle_app_slug'] = VH_Product::slug( (string) $row['bundle_app'] );
+		$row['bundle_app_slug'] = \VH_Product::slug( (string) $row['bundle_app'] );
 
 		if ( $existing ) {
 			$wpdb->update( $table, $row, array( 'id' => (int) $existing['id'] ) );

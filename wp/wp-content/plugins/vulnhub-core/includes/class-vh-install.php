@@ -218,7 +218,12 @@ final class Install {
 			KEY defender_id (defender_id),
 			KEY defender_last_seen (defender_last_seen),
 			KEY defender_onboarding (defender_onboarding),
-			KEY defender_coverage_state (defender_coverage_state,asset_type)
+			KEY defender_coverage_state (defender_coverage_state,asset_type),
+			KEY criticality (criticality),
+			KEY primary_source (primary_source),
+			KEY operating_system (operating_system),
+			KEY environment (environment),
+			KEY compliance_state (compliance_state)
 		) {$charset};";
 
 		/* ---------------------------------------------------------------
