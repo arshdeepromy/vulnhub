@@ -1,5 +1,49 @@
 name: vulnhub
 
+# Shared with the wordpress, wpcli and cron services alike -- wp-cli and the
+# cron loop both bootstrap the same plugins (encrypted secrets, Redis object
+# cache, dynamic host) and silently ran without any of it for a while: no
+# service but `wordpress` had this block, so `wp eval`/`wp cron event run`
+# always saw an undefined VULNHUB_ENCRYPTION_KEY, fell back to a DB-stored
+# key, and could never decrypt a secret encrypted through the web process.
+x-wordpress-config-extra: &wp_config_extra |
+  /* --- VulnHub runtime configuration --- */
+  define( 'WP_DEBUG_LOG', '/var/www/html/wp-content/debug.log' );
+  define( 'WP_DEBUG_DISPLAY', false );
+  @ini_set( 'display_errors', 0 );
+  define( 'SCRIPT_DEBUG', true );
+
+  /* Behind the Cloudflare tunnel / reverse proxy */
+  if ( isset( $$_SERVER['HTTP_X_FORWARDED_PROTO'] ) && 'https' === $$_SERVER['HTTP_X_FORWARDED_PROTO'] ) {
+      $$_SERVER['HTTPS'] = 'on';
+  }
+  if ( isset( $$_SERVER['HTTP_CF_CONNECTING_IP'] ) ) {
+      $$_SERVER['REMOTE_ADDR'] = $$_SERVER['HTTP_CF_CONNECTING_IP'];
+  } elseif ( isset( $$_SERVER['HTTP_X_FORWARDED_FOR'] ) ) {
+      $$_SERVER['REMOTE_ADDR'] = trim( explode( ',', $$_SERVER['HTTP_X_FORWARDED_FOR'] )[0] );
+  }
+
+  /* Dynamic host: works both on localhost:8093 and behind a reverse proxy/tunnel at any public hostname */
+  if ( ! empty( $$_SERVER['HTTP_HOST'] ) ) {
+      $$vh_scheme = ( isset( $$_SERVER['HTTPS'] ) && 'on' === $$_SERVER['HTTPS'] ) ? 'https' : 'http';
+      $$vh_host   = preg_replace( '/[^a-zA-Z0-9\\.\\-:]/', '', $$_SERVER['HTTP_HOST'] );
+      define( 'WP_HOME',    $$vh_scheme . '://' . $$vh_host );
+      define( 'WP_SITEURL', $$vh_scheme . '://' . $$vh_host );
+  }
+
+  /* Secret at rest for connector credentials (sodium secretbox) */
+  define( 'VULNHUB_ENCRYPTION_KEY', '${VH_ENC_KEY}' );
+
+  /* Redis object cache */
+  define( 'WP_REDIS_HOST', 'redis' );
+  define( 'WP_REDIS_PORT', 6379 );
+
+  define( 'DISALLOW_FILE_EDIT', true );
+  define( 'WP_MEMORY_LIMIT', '512M' );
+  define( 'WP_MAX_MEMORY_LIMIT', '768M' );
+  define( 'DISABLE_WP_CRON', true );
+  define( 'AUTOMATIC_UPDATER_DISABLED', false );
+
 services:
   db:
     image: mariadb:11
@@ -39,7 +83,10 @@ services:
     networks: [vulnhub]
 
   wordpress:
-    image: wordpress:php8.3-apache
+    build:
+      context: ./docker/wp-redis
+      args:
+        BASE_IMAGE: wordpress:php8.3-apache
     container_name: vulnhub-wp
     mem_limit: 2g
     memswap_limit: 2g
@@ -56,43 +103,7 @@ services:
       WORDPRESS_DB_PASSWORD: ${DB_PASS}
       WORDPRESS_TABLE_PREFIX: vh_
       WORDPRESS_DEBUG: 1
-      WORDPRESS_CONFIG_EXTRA: |
-        /* --- VulnHub runtime configuration --- */
-        define( 'WP_DEBUG_LOG', '/var/www/html/wp-content/debug.log' );
-        define( 'WP_DEBUG_DISPLAY', false );
-        @ini_set( 'display_errors', 0 );
-        define( 'SCRIPT_DEBUG', true );
-
-        /* Behind the Cloudflare tunnel / reverse proxy */
-        if ( isset( $$_SERVER['HTTP_X_FORWARDED_PROTO'] ) && 'https' === $$_SERVER['HTTP_X_FORWARDED_PROTO'] ) {
-            $$_SERVER['HTTPS'] = 'on';
-        }
-        if ( isset( $$_SERVER['HTTP_CF_CONNECTING_IP'] ) ) {
-            $$_SERVER['REMOTE_ADDR'] = $$_SERVER['HTTP_CF_CONNECTING_IP'];
-        } elseif ( isset( $$_SERVER['HTTP_X_FORWARDED_FOR'] ) ) {
-            $$_SERVER['REMOTE_ADDR'] = trim( explode( ',', $$_SERVER['HTTP_X_FORWARDED_FOR'] )[0] );
-        }
-
-        /* Dynamic host: works both on localhost:8093 and behind a reverse proxy/tunnel at any public hostname */
-        if ( ! empty( $$_SERVER['HTTP_HOST'] ) ) {
-            $$vh_scheme = ( isset( $$_SERVER['HTTPS'] ) && 'on' === $$_SERVER['HTTPS'] ) ? 'https' : 'http';
-            $$vh_host   = preg_replace( '/[^a-zA-Z0-9\\.\\-:]/', '', $$_SERVER['HTTP_HOST'] );
-            define( 'WP_HOME',    $$vh_scheme . '://' . $$vh_host );
-            define( 'WP_SITEURL', $$vh_scheme . '://' . $$vh_host );
-        }
-
-        /* Secret at rest for connector credentials (sodium secretbox) */
-        define( 'VULNHUB_ENCRYPTION_KEY', '${VH_ENC_KEY}' );
-
-        /* Redis object cache */
-        define( 'WP_REDIS_HOST', 'redis' );
-        define( 'WP_REDIS_PORT', 6379 );
-
-        define( 'DISALLOW_FILE_EDIT', true );
-        define( 'WP_MEMORY_LIMIT', '512M' );
-        define( 'WP_MAX_MEMORY_LIMIT', '768M' );
-        define( 'DISABLE_WP_CRON', true );
-        define( 'AUTOMATIC_UPDATER_DISABLED', false );
+      WORDPRESS_CONFIG_EXTRA: *wp_config_extra
     volumes:
       - ./wp:/var/www/html
       - ./php.ini:/usr/local/etc/php/conf.d/zz-vulnhub.ini:ro
@@ -102,10 +113,21 @@ services:
     networks: [vulnhub]
 
   wpcli:
-    image: wordpress:cli-php8.3
+    build:
+      context: ./docker/wp-redis
+      args:
+        BASE_IMAGE: wordpress:cli-php8.3
     container_name: vulnhub-wpcli
-    mem_limit: 2g
-    memswap_limit: 2g
+    # 4g, not 2g: a live Tenable sync on a real account processed 255k+
+    # findings across 12k+ vulnerability definitions in one unbounded
+    # synchronous PHP process and was OOM-killed by the container's own
+    # cgroup at 2g (PHP CLI's own memory_limit is unbounded by default, so
+    # it grows until the container's hard ceiling kills it, not a graceful
+    # PHP fatal). The real fix is batching the sync so memory stays bounded
+    # regardless of account size; this buys headroom for the account's
+    # current scale in the meantime.
+    mem_limit: 4g
+    memswap_limit: 4g
     depends_on:
       db:
         condition: service_healthy
@@ -117,15 +139,20 @@ services:
       WORDPRESS_DB_USER: vulnhub
       WORDPRESS_DB_PASSWORD: ${DB_PASS}
       WORDPRESS_TABLE_PREFIX: vh_
+      WORDPRESS_CONFIG_EXTRA: *wp_config_extra
     volumes:
       - ./wp:/var/www/html
     networks: [vulnhub]
 
   cron:
-    image: wordpress:cli-php8.3
+    build:
+      context: ./docker/wp-redis
+      args:
+        BASE_IMAGE: wordpress:cli-php8.3
     container_name: vulnhub-cron
-    mem_limit: 2g
-    memswap_limit: 2g
+    # See wpcli's identical note: scheduled syncs run through this container.
+    mem_limit: 4g
+    memswap_limit: 4g
     restart: unless-stopped
     depends_on:
       wordpress:
@@ -142,6 +169,7 @@ services:
       WORDPRESS_DB_USER: vulnhub
       WORDPRESS_DB_PASSWORD: ${DB_PASS}
       WORDPRESS_TABLE_PREFIX: vh_
+      WORDPRESS_CONFIG_EXTRA: *wp_config_extra
     volumes:
       - ./wp:/var/www/html
     networks: [vulnhub]
