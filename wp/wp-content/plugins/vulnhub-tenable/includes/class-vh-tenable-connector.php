@@ -199,9 +199,9 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 				'key'            => 'include_plugin_output',
 				'label'          => __( 'Plugin diagnostic output', 'vulnhub' ),
 				'type'           => 'checkbox',
-				'default'        => 0,
+				'default'        => 1,
 				'checkbox_label' => __( 'Include full plugin output text on every finding', 'vulnhub' ),
-				'help'           => __( "Off by default per Tenable's own export guidance: this can massively increase export size and processing time on accounts with meaningful finding volume \u2014 confirmed here, a live vulnerability export never produced a single chunk in 25 minutes with this on. Turn it on only if you specifically need raw scan diagnostic text per finding.", 'vulnhub' ),
+				'help'           => __( 'The install path of the vulnerable file, the installed version and the fixed version all live in this text and are parsed back out of it, so with this off the Install path and App columns are empty on every finding. It does make the export substantially larger and slower, which is why it is a switch at all - leave it on unless an export is failing to produce chunks.', 'vulnhub' ),
 			),
 		);
 	}
@@ -528,7 +528,7 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 				array(
 					'num_assets'          => $this->vuln_num_assets(),
 					'include_unlicensed'  => false,
-					'include_plugin_output' => $this->settings->get_bool( $this->id(), 'include_plugin_output', false ),
+					'include_plugin_output' => $this->settings->get_bool( $this->id(), 'include_plugin_output', true ),
 					'filters'             => array(
 						/*
 						 * `severity` takes the lowercase slugs; `state` takes
