@@ -1,0 +1,6 @@
+.vh-card { background: #fff; border: 1px solid #dcdcde; border-radius: 4px; padding: 16px 20px; margin: 16px 0; }
+.vh-last-run { padding: 8px 12px; border-left: 4px solid #72aee6; background: #f6f7f7; margin-bottom: 12px; }
+.vh-last-run--failed { border-left-color: #d63638; }
+.vh-last-run__message { margin-top: 4px; color: #646970; }
+#vh-restore-progress { margin: 8px 0; }
+
