@@ -195,6 +195,14 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 				'checkbox_label' => __( 'Import informational findings as well', 'vulnhub' ),
 				'help'           => __( 'Informational plugins (scan metadata, service detection) are useful context but add a lot of rows.', 'vulnhub' ),
 			),
+			array(
+				'key'            => 'include_plugin_output',
+				'label'          => __( 'Plugin diagnostic output', 'vulnhub' ),
+				'type'           => 'checkbox',
+				'default'        => 0,
+				'checkbox_label' => __( 'Include full plugin output text on every finding', 'vulnhub' ),
+				'help'           => __( "Off by default per Tenable's own export guidance: this can massively increase export size and processing time on accounts with meaningful finding volume \u2014 confirmed here, a live vulnerability export never produced a single chunk in 25 minutes with this on. Turn it on only if you specifically need raw scan diagnostic text per finding.", 'vulnhub' ),
+			),
 		);
 	}
 
@@ -236,9 +244,32 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 
 	/**
 	 * Vulnerability export `num_assets`, clamped to Tenable's 50–5000 range.
+	 *
+	 * Deliberately NOT the same setting as asset_chunk_size() any more.
+	 * Confirmed in production: with num_assets=1000 on a 643-asset account,
+	 * Tenable computed the whole vuln export as a SINGLE chunk
+	 * (total_chunks=1) and it sat in PROCESSING with zero chunks_available
+	 * for 25+ minutes straight -- there is nothing to "produce in parallel"
+	 * (see run_export()'s own doc comment) when there is only one chunk to
+	 * produce in the first place. A smaller, independent default forces
+	 * multiple chunks even on modest accounts, so Tenable can stream
+	 * results back incrementally instead of blocking on one monolithic
+	 * chunk. This is intentionally decoupled from the 'chunk_size' setting
+	 * (which legitimately wants to be larger for the asset export, and
+	 * inflating it was silently inflating this too).
 	 */
 	private function vuln_num_assets(): int {
-		return max( 50, min( 5000, $this->settings->get_int( $this->id(), 'chunk_size', 1000 ) ) );
+		/*
+		 * 50 (Tenable's documented floor), not 100. This sizes the *decode*,
+		 * not just the export: a chunk arrives as one JSON document that has
+		 * to be json_decode()'d whole, and at 100 assets/chunk this account
+		 * produced chunks of 22k-45k nested records costing ~1.3GB each to
+		 * decode. Measured curve at 100: 1.06GB -> 2.11GB -> 3.40GB -> OOM,
+		 * with the baseline ratcheting up as PHP's allocator held freed
+		 * blocks. Halving assets per chunk halves both the per-chunk spike
+		 * and the ratchet it leaves behind.
+		 */
+		return max( 50, min( 5000, $this->settings->get_int( $this->id(), 'vuln_chunk_size', 50 ) ) );
 	}
 
 	/**
@@ -329,6 +360,18 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 	protected function do_sync( array $args = array() ): array {
 		unset( $args );
 
+		// A live vulnerability export can legitimately run well past PHP's
+		// default 300s web request ceiling (the client's own poll ceiling is
+		// now 1500s). Without this, an interactive "Sync now" click gets
+		// killed by PHP mid-poll with no response ever reaching the browser
+		// -- the button spins and then nothing, because the request that
+		// was supposed to resolve it is simply gone. A WP-Cron-driven
+		// scheduled run already has no such ceiling (WP-CLI), so this only
+		// matters for the interactive path, but is harmless either way.
+		if ( function_exists( 'set_time_limit' ) ) {
+			@set_time_limit( 1800 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		}
+
 		$this->asset_cache = array();
 		$this->vuln_cache  = array();
 		$this->sla_cache   = array();
@@ -384,6 +427,36 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 			$this->counts['findings_fixed'],
 			$this->counts['findings_reopened']
 		);
+
+		// An export that never reached FINISHED (TIMEOUT, ERROR, CANCELLED,
+		// or the empty status left behind when a poll request itself failed)
+		// must not be reported as a clean success -- that is exactly how a
+		// live vuln export timing out silently imported zero findings while
+		// every dashboard kept showing a green "success" for the sync.
+		$incomplete = array_values( array_filter(
+			$this->jobs,
+			static fn( array $job ): bool => 'FINISHED' !== (string) ( $job['status'] ?? '' )
+		) );
+
+		if ( $incomplete ) {
+			$bad = implode(
+				', ',
+				array_map(
+					static fn( array $job ): string => sprintf( '%s export: %s', $job['kind'], $job['status'] ?: 'no response' ),
+					$incomplete
+				)
+			);
+
+			return array(
+				'ok'      => false,
+				'message' => sprintf(
+					/* translators: 1: partial import summary, 2: which export(s) did not finish. */
+					__( '%1$s This sync did not fully complete (%2$s) -- the counts above are partial. Try again; a live vulnerability export can take a long time on a first run.', 'vulnhub' ),
+					$message,
+					$bad
+				),
+			);
+		}
 
 		return array(
 			'ok'      => true,
@@ -455,7 +528,7 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 				array(
 					'num_assets'          => $this->vuln_num_assets(),
 					'include_unlicensed'  => false,
-					'include_plugin_output' => true,
+					'include_plugin_output' => $this->settings->get_bool( $this->id(), 'include_plugin_output', false ),
 					'filters'             => array(
 						/*
 						 * `severity` takes the lowercase slugs; `state` takes
