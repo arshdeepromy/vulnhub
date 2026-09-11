@@ -220,6 +220,91 @@ add_action(
 			)
 		);
 
+		/*
+		 * Infinite scroll for the findings table: a real GET request, so
+		 * $_GET is populated identically to a normal page load and
+		 * VulnHub_Dash_App::findings_base_args() reads the exact same
+		 * filters the visible first page was rendered with -- there is no
+		 * separate filter-parsing path to drift out of sync.
+		 */
+		register_rest_route(
+			'vulnhub-dashboard/v1',
+			'/findings-more',
+			array(
+				'methods'             => 'GET',
+				'callback'            => static function ( WP_REST_Request $request ) {
+					$per    = 25;
+					$offset = max( 0, (int) $request->get_param( 'offset' ) );
+
+					$scope = VulnHub_Dash_App::findings_validated_scope();
+					$args  = array_merge(
+						VulnHub_Dash_App::findings_base_args( $scope['orderby'], $scope['order'], $scope['lifecycle'] ),
+						array( 'limit' => $per, 'offset' => $offset )
+					);
+
+					$q     = \VulnHub\Core\Repo::findings( array_filter( $args, static fn( $v ): bool => '' !== $v && 0 !== $v ) );
+					$total = (int) $q['total'];
+
+					$html = '';
+					foreach ( $q['rows'] as $row ) {
+						$html .= VulnHub_Dash_App::finding_row_html( $row );
+					}
+
+					return rest_ensure_response(
+						array(
+							'html'   => $html,
+							'count'  => count( $q['rows'] ),
+							'offset' => $offset + count( $q['rows'] ),
+							'total'  => $total,
+						)
+					);
+				},
+				'permission_callback' => static function (): bool {
+					return is_user_logged_in() && current_user_can( \VulnHub\Core\Caps::VIEW );
+				},
+			)
+		);
+
+		register_rest_route(
+			'vulnhub-dashboard/v1',
+			'/assets-more',
+			array(
+				'methods'             => 'GET',
+				'callback'            => static function ( WP_REST_Request $request ) {
+					$per    = 25;
+					$offset = max( 0, (int) $request->get_param( 'offset' ) );
+
+					$scope       = VulnHub_Dash_App::assets_validated_scope();
+					$vh_can_edit = current_user_can( \VulnHub\Core\Caps::TRIAGE );
+
+					$args = array_merge(
+						VulnHub_Dash_App::assets_base_args( $scope['scope'], $scope['source'], $scope['orderby'], $scope['order'] ),
+						array( 'limit' => $per, 'offset' => $offset )
+					);
+
+					$q     = \VulnHub\Core\Repo::assets( array_filter( $args, static fn( $v ): bool => '' !== $v && 0 !== $v ) );
+					$total = (int) $q['total'];
+
+					$html = '';
+					foreach ( $q['rows'] as $row ) {
+						$html .= VulnHub_Dash_App::asset_row_html( $row, $vh_can_edit );
+					}
+
+					return rest_ensure_response(
+						array(
+							'html'   => $html,
+							'count'  => count( $q['rows'] ),
+							'offset' => $offset + count( $q['rows'] ),
+							'total'  => $total,
+						)
+					);
+				},
+				'permission_callback' => static function (): bool {
+					return is_user_logged_in() && current_user_can( \VulnHub\Core\Caps::VIEW );
+				},
+			)
+		);
+
 		register_rest_route(
 			'vulnhub-dashboard/v1',
 			'/layout/reset',

@@ -1545,3 +1545,99 @@ document.addEventListener( 'click', function ( e ) {
 		open( a );
 	} );
 }() );
+
+/**
+ * Infinite scroll for the findings and assets tables: a sentinel <tr
+ * hidden> row at the end of tbody, observed via IntersectionObserver.
+ * Fetches the next page from the matching REST fragment endpoint
+ * (findings-more / assets-more) using the CURRENT page's own filters
+ * (read straight from window.location.search -- exactly the params
+ * $_GET already carries in a real page load, forwarded unchanged so the
+ * server-side filter parsing can never disagree with what is on screen),
+ * and appends the returned row HTML right before the sentinel.
+ *
+ * Progressive enhancement: the first page is always server-rendered, and
+ * the classic Prev/Next pager stays in the DOM as a no-JS/no-REST
+ * fallback -- it is only hidden once a first successful fetch proves the
+ * REST path actually works here.
+ */
+( function () {
+	'use strict';
+
+	var ENDPOINTS = { findings: 'findings-more', assets: 'assets-more' };
+
+	function hidePagerFallback( sentinel ) {
+		var wrap = sentinel.closest( '.vh-tablewrap' ) || sentinel.parentElement;
+		var container = wrap ? wrap.parentElement : null;
+		if ( ! container ) { return; }
+		var pager = container.querySelector( '.vh-pager' );
+		if ( pager ) { pager.setAttribute( 'hidden', '' ); }
+	}
+
+	function attach( sentinel ) {
+		var kind = sentinel.getAttribute( 'data-vh-infinite' );
+		if ( ! ENDPOINTS[ kind ] ) { return; }
+
+		var loading = false;
+		var done    = false;
+
+		function loadMore() {
+			if ( loading || done ) { return; }
+
+			var offset = parseInt( sentinel.getAttribute( 'data-offset' ), 10 ) || 0;
+			var total  = parseInt( sentinel.getAttribute( 'data-total' ), 10 ) || 0;
+
+			if ( offset >= total ) { done = true; observer.disconnect(); return; }
+
+			loading = true;
+			sentinel.hidden = false;
+			sentinel.textContent = '';
+
+			var params = new URLSearchParams( window.location.search );
+			params.delete( 'vp' );
+			params.delete( 'ap' );
+			params.delete( 'page_id' );
+			params.set( 'offset', String( offset ) );
+			var relPath = '/vulnhub-dashboard/v1/' + ENDPOINTS[ kind ] + '?' + params.toString();
+
+			wp.apiFetch( { path: relPath } ).then( function ( d ) {
+				if ( d.html ) {
+					sentinel.insertAdjacentHTML( 'beforebegin', d.html );
+					hidePagerFallback( sentinel );
+				}
+				sentinel.setAttribute( 'data-offset', String( d.offset ) );
+				sentinel.setAttribute( 'data-total', String( d.total ) );
+				sentinel.hidden = true;
+				loading = false;
+				if ( d.offset >= d.total || ! d.count ) {
+					done = true;
+					observer.disconnect();
+				}
+			} ).catch( function () {
+				// Leave the classic pager visible/functional; just stop
+				// trying to auto-load further pages.
+				loading = false;
+				done = true;
+				observer.disconnect();
+			} );
+		}
+
+		var observer = new IntersectionObserver( function ( entries ) {
+			entries.forEach( function ( entry ) {
+				if ( entry.isIntersecting ) { loadMore(); }
+			} );
+		}, { rootMargin: '400px 0px' } );
+
+		observer.observe( sentinel );
+	}
+
+	function init() {
+		document.querySelectorAll( '[data-vh-infinite]' ).forEach( attach );
+	}
+
+	if ( 'loading' === document.readyState ) {
+		document.addEventListener( 'DOMContentLoaded', init );
+	} else {
+		init();
+	}
+}() );
