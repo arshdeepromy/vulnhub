@@ -1142,3 +1142,80 @@ body.vh-modal-open { overflow: hidden; }
 /* Product tiles that carry a real bundled brand logo (assets/products). */
 .vh-prodico--logo { background: #fff; padding: 4px; }
 .vh-prodico--logo img { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+/* ============================================================
+   Rail hover-expand.
+
+   The rail is icon-only at 64px, and the labels are visually hidden, so
+   the icons have to carry meanings they cannot ("Lifecycle" and
+   "Exposure" are not shapes anyone recognises). Hovering the rail -- or
+   tabbing into it -- widens it to 224px and reveals the labels; moving
+   away collapses it back.
+
+   It expands as an OVERLAY: the 64px margin on .vh-main stays exactly
+   where it is, so nothing in the page reflows and no chart re-lays-out
+   on a mouse move. That is also why the expanded rail needs an opaque
+   fill and a shadow -- it is sitting on top of content now, and the
+   collapsed rail's 80%-alpha background would let the page read through
+   its own labels.
+
+   :focus-within is not decoration here. Without it, tabbing through the
+   nav moves focus into buttons whose labels are still clipped to 1px,
+   so a keyboard user gets no idea what they are on.
+   ============================================================ */
+@media (min-width: 768px) {
+  .vh-chrome-rail .vh-topbar {
+    transition: width .18s var(--vh-ease), background-color .18s var(--vh-ease),
+                box-shadow .18s var(--vh-ease);
+  }
+
+  .vh-chrome-rail .vh-topbar:hover,
+  .vh-chrome-rail .vh-topbar:focus-within {
+    width: 224px;
+    background: var(--vh-raised-solid);
+    box-shadow: 0 18px 48px rgba(0,0,0,.45);
+  }
+
+  /* Undo the icon-only visually-hidden treatment on the labels. */
+  .vh-chrome-rail .vh-topbar:hover .vh-nav__txt,
+  .vh-chrome-rail .vh-topbar:focus-within .vh-nav__txt {
+    position: static; width: auto; height: auto;
+    overflow: visible; clip: auto; clip-path: none;
+    white-space: nowrap;
+  }
+
+  /* Each button goes from a 44px square to a full-width row. The icon is
+     pinned so the labels all start at the same x. */
+  .vh-chrome-rail .vh-topbar:hover .vh-nav__link,
+  .vh-chrome-rail .vh-topbar:focus-within .vh-nav__link {
+    width: 100%; justify-content: flex-start; gap: 10px; padding: 0 12px;
+  }
+  .vh-chrome-rail .vh-topbar:hover .vh-nav__link svg,
+  .vh-chrome-rail .vh-topbar:focus-within .vh-nav__link svg { flex: 0 0 20px; }
+
+  /* Give the rows somewhere to breathe now that they span the rail. */
+  .vh-chrome-rail .vh-topbar:hover .vh-nav,
+  .vh-chrome-rail .vh-topbar:focus-within .vh-nav,
+  .vh-chrome-rail .vh-topbar:hover .vh-topbar__end,
+  .vh-chrome-rail .vh-topbar:focus-within .vh-topbar__end { padding: 0 8px; }
+
+  /* The brand picks its org name back up, truncated rather than wrapped
+     -- a long legal name must not push the rail taller. */
+  .vh-chrome-rail .vh-topbar:hover .vh-brand,
+  .vh-chrome-rail .vh-topbar:focus-within .vh-brand {
+    width: 100%; gap: 10px; padding: 0 12px;
+  }
+  .vh-chrome-rail .vh-topbar:hover .vh-brand svg,
+  .vh-chrome-rail .vh-topbar:focus-within .vh-brand svg { flex: 0 0 36px; }
+  .vh-chrome-rail .vh-topbar:hover .vh-brand span,
+  .vh-chrome-rail .vh-topbar:focus-within .vh-brand span {
+    display: block; min-width: 0;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  }
+}
+
+/* Honour a reduced-motion preference: still expands, just without the
+   width animation, which is the part that moves. */
+@media (prefers-reduced-motion: reduce) {
+  .vh-chrome-rail .vh-topbar { transition: none; }
+}
