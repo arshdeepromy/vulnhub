@@ -2776,6 +2776,74 @@ final class Repo {
 		);
 	}
 
+	/**
+	 * The existing finding an incoming scanner record belongs to, or null.
+	 *
+	 * The fingerprint folds port and protocol in, but two exports of the same
+	 * estate routinely disagree about both: one leaves protocol blank and
+	 * reports port 0, the next fills in "tcp" and the SMB port it scanned
+	 * over. Keying the write path on the fingerprint alone therefore inserts a
+	 * second row for a finding that already exists, and the new row carries
+	 * none of the detail the old one had -- on this estate that produced
+	 * 196,849 duplicated (asset, vuln) pairs across 393,706 rows in a single
+	 * sync, every one of them losing the install path the original had
+	 * captured. enrich_finding_output() already resolves a record to a finding
+	 * the right way; this is the same rule applied to the path that creates
+	 * the rows in the first place.
+	 *
+	 * A genuinely distinct network service is still a distinct finding, so two
+	 * different non-zero ports never collapse into one another. Only port 0 --
+	 * "there is no service behind this check", which is what a local or
+	 * credentialed plugin reports -- is treated as interchangeable with a real
+	 * port, and then only when exactly one row is in question. Anything
+	 * ambiguous falls through to an insert rather than guessing, which also
+	 * means this can never pick a row whose fingerprint is already taken.
+	 *
+	 * @return array{id:int|string,state:string}|null
+	 */
+	private static function resolve_finding( int $asset_id, int $vuln_id, int $port, string $protocol, string $fingerprint ): ?array {
+		global $wpdb;
+
+		$table = vh_table( 'findings' );
+
+		// Same asset, vuln, port and protocol as last time.
+		$row = $wpdb->get_row(
+			$wpdb->prepare( "SELECT id, state FROM {$table} WHERE fingerprint = %s", $fingerprint ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			ARRAY_A
+		);
+		if ( $row ) {
+			return $row;
+		}
+
+		$candidates = $wpdb->get_results(
+			$wpdb->prepare( "SELECT id, state, port FROM {$table} WHERE asset_id = %d AND vuln_id = %d ORDER BY id", $asset_id, $vuln_id ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			ARRAY_A
+		);
+		if ( ! $candidates ) {
+			return null;
+		}
+
+		// Same port, protocol drifted ('' -> 'tcp').
+		foreach ( $candidates as $candidate ) {
+			if ( (int) $candidate['port'] === $port ) {
+				return $candidate;
+			}
+		}
+
+		// Port drifted between "no service" and a real one. Either direction
+		// is the same finding, but only while there is exactly one row it
+		// could mean.
+		if ( 0 === $port ) {
+			return 1 === count( $candidates ) ? $candidates[0] : null;
+		}
+
+		$portless = array_values(
+			array_filter( $candidates, static fn( array $candidate ): bool => 0 === (int) $candidate['port'] )
+		);
+
+		return 1 === count( $portless ) ? $portless[0] : null;
+	}
+
 	public static function upsert_finding( array $data ): array {
 		global $wpdb;
 
@@ -2795,10 +2863,7 @@ final class Repo {
 		$protocol    = (string) ( $data['protocol'] ?? '' );
 		$fingerprint = vh_fingerprint( (string) $asset_id, (string) $vuln_id, (string) $port, $protocol );
 
-		$existing = $wpdb->get_row(
-			$wpdb->prepare( "SELECT id, state FROM {$table} WHERE fingerprint = %s", $fingerprint ),
-			ARRAY_A
-		);
+		$existing = self::resolve_finding( $asset_id, $vuln_id, $port, $protocol, $fingerprint );
 
 		$severity = (string) ( $data['severity'] ?? 'info' );
 		$state    = (string) ( $data['state'] ?? 'open' );
@@ -2810,6 +2875,8 @@ final class Repo {
 			$reopened = true;
 		}
 
+		$incoming_output = (string) ( $data['output'] ?? '' );
+
 		$row = array(
 			'fingerprint' => $fingerprint,
 			'asset_id'    => $asset_id,
@@ -2820,8 +2887,8 @@ final class Repo {
 			'port'        => $port,
 			'protocol'    => $protocol,
 			'service'     => (string) ( $data['service'] ?? '' ),
-			'output'      => (string) ( $data['output'] ?? '' ),
-			'bundle_app'  => \VH_Product::app_from_output( (string) ( $data['output'] ?? '' ) ),
+			'output'      => $incoming_output,
+			'bundle_app'  => \VH_Product::app_from_output( $incoming_output ),
 			'risk_score'  => (float) ( $data['risk_score'] ?? 0 ),
 			'scan_uuid'   => (string) ( $data['scan_uuid'] ?? '' ),
 			'last_synced_at' => vh_now(),
@@ -2836,6 +2903,19 @@ final class Repo {
 		$row['bundle_app_slug'] = \VH_Product::slug( (string) $row['bundle_app'] );
 
 		if ( $existing ) {
+			/*
+			 * An export run with include_plugin_output off carries no output
+			 * at all, and writing that empty string over a path this finding
+			 * already had would throw away the one line a patch engineer
+			 * needs -- silently, on every finding, on any sync where the
+			 * switch happened to be off. Detail is only ever added here;
+			 * enrich_finding_output() is the path that deliberately rewrites
+			 * it.
+			 */
+			if ( '' === $incoming_output ) {
+				unset( $row['output'], $row['bundle_app'], $row['bundle_app_slug'] );
+			}
+
 			$wpdb->update( $table, $row, array( 'id' => (int) $existing['id'] ) );
 			return array(
 				'id'       => (int) $existing['id'],
