@@ -20,7 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 define( 'VULNHUB_VERSION', '1.0.0' );
-define( 'VULNHUB_DB_VERSION', '25' );
+define( 'VULNHUB_DB_VERSION', '26' );
 define( 'VULNHUB_FILE', __FILE__ );
 define( 'VULNHUB_DIR', plugin_dir_path( __FILE__ ) );
 define( 'VULNHUB_URL', plugin_dir_url( __FILE__ ) );
