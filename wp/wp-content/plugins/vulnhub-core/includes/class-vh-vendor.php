@@ -541,7 +541,18 @@ final class VH_Vendor {
 			array( 'key' => 'product', 'label' => __( 'Product', 'vulnhub' ) ),
 			array( 'key' => 'severity', 'label' => __( 'Severity', 'vulnhub' ) ),
 			array( 'key' => 'title', 'label' => __( 'Vulnerability', 'vulnhub' ) ),
-			array( 'key' => 'plugin_id', 'label' => __( 'Plugin', 'vulnhub' ) ),
+			/*
+			 * Owner, not the Tenable plugin id. The id identifies the check
+			 * that fired, which the vulnerability title already says in
+			 * words; what this list is missing is who has to act on the row.
+			 * The estate's ownership rule -- a workstation or mobile device
+			 * resolves to a person, everything else to a team -- means the
+			 * useful answer is the person when there is one and the owning
+			 * team otherwise. plugin_id is still selected and still carried
+			 * in the row, so the CSV can offer it and search still matches
+			 * on it.
+			 */
+			array( 'key' => 'owner', 'label' => __( 'Owner', 'vulnhub' ) ),
 			array( 'key' => 'cvss3', 'label' => __( 'CVSS v3', 'vulnhub' ) ),
 			array( 'key' => 'first_found', 'label' => __( 'First found', 'vulnhub' ) ),
 		);
@@ -561,17 +572,22 @@ final class VH_Vendor {
 		}
 		if ( '' !== $q ) {
 			$like     = '%' . $wpdb->esc_like( $q ) . '%';
-			$where   .= " AND ( a.hostname LIKE %s OR a.ipv4 LIKE %s OR v.product LIKE %s OR v.title LIKE %s OR v.plugin_id LIKE %s )";
-			$params[] = $like; $params[] = $like; $params[] = $like; $params[] = $like; $params[] = $like;
+			$where   .= " AND ( a.hostname LIKE %s OR a.ipv4 LIKE %s OR v.product LIKE %s OR v.title LIKE %s
+				OR v.plugin_id LIKE %s OR p.display_name LIKE %s OR t.name LIKE %s )";
+			$params[] = $like; $params[] = $like; $params[] = $like; $params[] = $like;
+			$params[] = $like; $params[] = $like; $params[] = $like;
 		}
 		$base = " FROM " . vh_table( 'findings' ) . " f
 			INNER JOIN " . vh_table( 'vulns' ) . " v ON v.id = f.vuln_id
 			INNER JOIN " . vh_table( 'assets' ) . " a ON a.id = f.asset_id
+			LEFT JOIN " . vh_table( 'people' ) . " p ON p.id = a.owner_person_id
+			LEFT JOIN " . vh_table( 'teams' ) . " t ON t.id = a.team_id
 			WHERE $where";
 
 		$total = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*)" . $base, ...$params ) ); // phpcs:ignore
 
-		$sql = "SELECT a.hostname, a.fqdn, a.ipv4, v.product, f.severity, v.title, v.plugin_id, v.cvss3_base, f.first_found"
+		$sql = "SELECT a.hostname, a.fqdn, a.ipv4, v.product, f.severity, v.title, v.plugin_id, v.cvss3_base, f.first_found,
+			p.display_name AS owner_name, t.name AS team_name"
 			. $base . " ORDER BY FIELD(f.severity,'critical','high','medium','low','info'), f.first_found DESC";
 		$qp  = $params;
 		if ( $per > 0 ) {
@@ -590,6 +606,9 @@ final class VH_Vendor {
 				'severity'    => (string) $r['severity'],
 				'title'       => (string) $r['title'],
 				'plugin_id'   => (string) $r['plugin_id'],
+				'owner'       => (string) ( $r['owner_name'] ?: $r['team_name'] ?: '' ),
+				'owner_name'  => (string) $r['owner_name'],
+				'team_name'   => (string) $r['team_name'],
 				'cvss3'       => (string) $r['cvss3_base'],
 				'first_found' => (string) $r['first_found'],
 			);
