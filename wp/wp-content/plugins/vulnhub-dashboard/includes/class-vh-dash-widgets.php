@@ -181,8 +181,17 @@ final class VulnHub_Dash_Widgets {
 		);
 
 		$w['eol_software'] = array(
-			'label'   => __( 'Software past end of life', 'vulnhub' ),
-			'summary' => __( 'Installed software whose vendor has stopped shipping fixes, counted once per machine.', 'vulnhub' ),
+			'label'   => __( 'Software on unsupported releases', 'vulnhub' ),
+			/*
+			 * Not "past end of life". The lifecycle table tracks release
+			 * branches, so an expired row means the vendor has stopped
+			 * patching that branch -- which for OpenSSL 3.0 is true of the
+			 * branch and wrong about the product, since 3.5 LTS runs to 2030.
+			 * Every one of the 404 installations this first reported was an
+			 * upgrade within a living product, and calling them end-of-life
+			 * both overstated it and pointed at the wrong remediation.
+			 */
+			'summary' => __( 'Installed software on a release the vendor no longer patches, with the supported release to move to. Counted once per machine.', 'vulnhub' ),
 			'group'   => 'lifecycle',
 			'depends' => array( 'findings', 'assets' ),
 			'width'   => 6,
