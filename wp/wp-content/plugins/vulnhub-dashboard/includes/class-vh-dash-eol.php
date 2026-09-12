@@ -118,7 +118,14 @@ final class VulnHub_Dash_Eol {
 			$counts[ $row['status'] ] += (int) $row['assets'];
 		}
 
-		self::headline( $counts, __( 'installations', 'vulnhub' ) );
+		self::headline(
+			$counts,
+			__( 'installations', 'vulnhub' ),
+			array(
+				'past' => __( 'On an unsupported release', 'vulnhub' ),
+				'soon' => __( 'Support ends within 6 months', 'vulnhub' ),
+			)
+		);
 
 		echo VulnHub_Dash_Charts::segment_bars( // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			self::bars( array_slice( $rows, 0, self::SHOWN ), false ),
@@ -128,9 +135,23 @@ final class VulnHub_Dash_Eol {
 			)
 		);
 
+		$vh_retired = 0;
+		foreach ( $rows as $vh_row ) {
+			if ( 'past' === $vh_row['status'] && ! empty( $vh_row['retired'] ) ) {
+				$vh_retired += (int) $vh_row['assets'];
+			}
+		}
+
 		printf(
 			'<p class="vh-w__note">%s</p>',
-			esc_html__( 'Counted once per machine, so the number is how many machines to visit rather than how many copies are installed. Only products in the lifecycle table are counted.', 'vulnhub' )
+			esc_html(
+				sprintf(
+					/* translators: 1: installations needing only a version upgrade, 2: installations whose product has no supported release. */
+					__( 'These are release branches the vendor no longer patches, not dead products: %1$s of these installations move to a supported release of the same software, and %2$s are on a product with no supported release left. Counted once per machine, so the number is how many machines to visit. Only products in the lifecycle table are counted.', 'vulnhub' ),
+					number_format_i18n( max( 0, $counts['past'] - $vh_retired ) ),
+					number_format_i18n( $vh_retired )
+				)
+			)
 		);
 
 		echo VulnHub_Dash_Charts::table_view( // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
@@ -213,13 +234,25 @@ final class VulnHub_Dash_Eol {
 	 *
 	 * @param array<string,int> $counts Assets per status.
 	 */
-	private static function headline( array $counts, string $unit = '' ): void {
+	private static function headline( array $counts, string $unit = '', array $labels = array() ): void {
+		/*
+		 * Hardware keeps "past end of life", because a model really does end:
+		 * there is no newer release of the same laptop to move to. Software is
+		 * release branches, so the software view passes its own wording -- see
+		 * render_software().
+		 */
 		$defs = array(
 			'past'      => array( __( 'Past end of life', 'vulnhub' ), 'critical' ),
 			'soon'      => array( __( 'Ends within 6 months', 'vulnhub' ), 'warn' ),
 			'supported' => array( __( 'Supported', 'vulnhub' ), 'good' ),
 			'unknown'   => array( __( 'Release unknown', 'vulnhub' ), 'muted' ),
 		);
+
+		foreach ( $labels as $key => $label ) {
+			if ( isset( $defs[ $key ] ) ) {
+				$defs[ $key ][0] = (string) $label;
+			}
+		}
 
 		echo '<div class="vh-tiles">';
 
@@ -255,6 +288,25 @@ final class VulnHub_Dash_Eol {
 
 			if ( '' !== (string) $row['eol'] ) {
 				$sub = trim( $sub . ' · ' . self::when( $row ) );
+			}
+
+			/*
+			 * Name the remediation on the row. "OpenSSL 3.0 LTS, ended 5 days
+			 * ago" reads as though OpenSSL is finished; it is not, and 3.5 LTS
+			 * runs to 2030. Without the target, every expired branch of a
+			 * living product looks like a migration rather than an upgrade,
+			 * which is both alarming and the wrong instruction.
+			 */
+			if ( '' !== (string) ( $row['upgrade_to'] ?? '' ) ) {
+				$sub = trim(
+					$sub . ' · ' . sprintf(
+						/* translators: %s: the supported release to move to. */
+						__( 'upgrade to %s', 'vulnhub' ),
+						(string) $row['upgrade_to']
+					)
+				);
+			} elseif ( ! empty( $row['retired'] ) ) {
+				$sub = trim( $sub . ' · ' . __( 'no supported release', 'vulnhub' ) );
 			}
 
 			$out[] = array(

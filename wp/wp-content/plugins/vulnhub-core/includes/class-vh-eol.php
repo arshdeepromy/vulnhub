@@ -288,11 +288,17 @@ final class Eol {
 	public static function statuses(): array {
 		return array(
 			'past'      => array(
-				'label' => __( 'Past end of life', 'vulnhub' ),
+				/*
+				 * "Out of support", not "past end of life". These are release
+				 * branches: the vendor has stopped patching this one, which
+				 * usually means upgrade rather than migrate. Rows carry
+				 * `upgrade_to` so the display can say which.
+				 */
+				'label' => __( 'Out of support', 'vulnhub' ),
 				'tone'  => 'critical',
 			),
 			'soon'      => array(
-				'label' => __( 'Ends within six months', 'vulnhub' ),
+				'label' => __( 'Support ends within six months', 'vulnhub' ),
 				'tone'  => 'high',
 			),
 			'supported' => array(
@@ -623,6 +629,84 @@ final class Eol {
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
+	/**
+	 * The newest still-supported release of each product, keyed by CPE.
+	 *
+	 * The lifecycle table tracks release branches, not products: OpenSSL has
+	 * eight rows in it, six of them expired and two current. Without this,
+	 * every expired branch reads as "the vendor has stopped shipping fixes",
+	 * which for OpenSSL 3.0 is true of the branch and badly wrong about the
+	 * product -- 3.5 LTS is supported until 2030 and the remediation is an
+	 * upgrade, not a migration.
+	 *
+	 * A product with no supported release left is the genuinely retired case,
+	 * and the two want different words and different urgency.
+	 *
+	 * @return array<string,array<string,mixed>> cpe => the newest supported row.
+	 */
+	public static function supported_releases(): array {
+		$best = array();
+
+		foreach ( self::table() as $row ) {
+			$cpe = (string) ( $row['cpe'] ?? '' );
+
+			if ( '' === $cpe ) {
+				continue;
+			}
+
+			$eol = trim( (string) ( $row['eol'] ?? '' ) );
+
+			// No date means "no announced end", which counts as supported.
+			if ( '' !== $eol && strtotime( $eol ) <= time() ) {
+				continue;
+			}
+
+			$ends = '' === $eol ? PHP_INT_MAX : (int) strtotime( $eol );
+
+			if ( ! isset( $best[ $cpe ] ) || $ends > (int) $best[ $cpe ]['_ends'] ) {
+				$row['_ends']  = $ends;
+				$best[ $cpe ] = $row;
+			}
+		}
+
+		return $best;
+	}
+
+	/**
+	 * What to upgrade a lifecycle row to, if anything.
+	 *
+	 * @return array{release:string,eol:string,retired:bool}
+	 */
+	public static function upgrade_target( string $key ): array {
+		$cpe = '';
+
+		foreach ( self::table() as $row ) {
+			if ( (string) ( $row['key'] ?? '' ) === $key ) {
+				$cpe = (string) ( $row['cpe'] ?? '' );
+				break;
+			}
+		}
+
+		$supported = self::supported_releases();
+
+		if ( '' === $cpe || ! isset( $supported[ $cpe ] ) ) {
+			return array( 'release' => '', 'eol' => '', 'retired' => true );
+		}
+
+		$target = $supported[ $cpe ];
+
+		// The row itself is the supported one: nothing to upgrade to.
+		if ( (string) ( $target['key'] ?? '' ) === $key ) {
+			return array( 'release' => '', 'eol' => '', 'retired' => false );
+		}
+
+		return array(
+			'release' => (string) ( $target['release'] ?? '' ),
+			'eol'     => (string) ( $target['eol'] ?? '' ),
+			'retired' => false,
+		);
+	}
+
 	public static function software(): array {
 		global $wpdb;
 
@@ -791,8 +875,19 @@ final class Eol {
 	private static function finish( array $groups ): array {
 		$out = array();
 
+		$supported = self::supported_releases();
+
 		foreach ( $groups as $group ) {
 			$state = self::status( (string) $group['eol'] );
+
+			/*
+			 * Where this row's product still has a supported release, say so.
+			 * An expired branch of a living product is an upgrade; a product
+			 * with nothing supported left is a migration. Reporting both as
+			 * "past end of life" overstates the first and buries the second.
+			 */
+			$target  = self::upgrade_target( (string) ( $group['key'] ?? '' ) );
+			$retired = (bool) $target['retired'];
 
 			// Not array_merge: status() carries its own `label`, and the
 			// group's label is the product name. Merging blindly renamed
@@ -804,6 +899,9 @@ final class Eol {
 					'status_label' => $state['label'],
 					'tone'         => $state['tone'],
 					'days'         => $state['days'],
+					'upgrade_to'   => (string) $target['release'],
+					'upgrade_eol'  => (string) $target['eol'],
+					'retired'      => $retired,
 				)
 			);
 		}
