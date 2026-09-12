@@ -70,6 +70,13 @@ foreach ( array( 'vulnhub_sync_complete', 'vulnhub_import_complete', 'vulnhub_co
 }
 
 /**
+ * Re-render one widget in the background, queued by a stale cache read.
+ *
+ * Two arguments: the widget id and the host its links must be built for.
+ */
+add_action( VulnHub_Dash_Widgets::HOOK_REFRESH, array( 'VulnHub_Dash_Widgets', 'refresh' ), 10, 2 );
+
+/**
  * Save a person's dashboard arrangement.
  *
  * Posted to admin-post.php like every other form in the product, so the
