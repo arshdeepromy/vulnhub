@@ -551,6 +551,155 @@ final class Os {
 	}
 
 	/**
+	 * The broad platforms a family belongs to.
+	 *
+	 * Families are specific ("ubuntu", "rocky"); a platform is the question a
+	 * dashboard actually asks ("how much of this is Linux"). Keyed by platform
+	 * so the membership is readable in one place and a new distro only has to
+	 * be added to the family list and to one line here.
+	 *
+	 * @return array<string,array<int,string>>
+	 */
+	public static function platforms(): array {
+		return array(
+			'windows' => array( 'windows', 'windows_server' ),
+			'linux'   => array( 'rhel', 'rocky', 'alma', 'centos', 'amazon', 'ubuntu', 'debian', 'suse', 'linux' ),
+			'macos'   => array( 'macos' ),
+			'mobile'  => array( 'ios', 'ipados', 'android' ),
+			'other'   => array( 'esxi', 'ios_xe', 'unknown' ),
+		);
+	}
+
+	/** Human label for a platform slug. */
+	public static function platform_label( string $platform ): string {
+		$labels = array(
+			'windows' => __( 'Windows', 'vulnhub' ),
+			'linux'   => __( 'Linux', 'vulnhub' ),
+			'macos'   => __( 'macOS', 'vulnhub' ),
+			'mobile'  => __( 'Mobile', 'vulnhub' ),
+			'other'   => __( 'Other', 'vulnhub' ),
+		);
+		return $labels[ $platform ] ?? $platform;
+	}
+
+	/** The platform an operating-system string belongs to. */
+	public static function platform( string $raw ): string {
+		$family = self::parse( $raw )['family'];
+		foreach ( self::platforms() as $platform => $families ) {
+			if ( in_array( $family, $families, true ) ) {
+				return $platform;
+			}
+		}
+		return 'other';
+	}
+
+	/**
+	 * A SQL condition selecting one platform, for `$col`.
+	 *
+	 * Built from the same `match` strings parse() uses, so the list of things
+	 * that count as Linux lives in exactly one place. Filtering in SQL is not
+	 * optional for a paginated list -- classifying in PHP after the fact would
+	 * make LIMIT/OFFSET return the wrong rows -- but duplicating the family
+	 * table into hand-written SQL would guarantee the two drift apart.
+	 *
+	 * Returns '' for an unknown platform, which callers should read as
+	 * "no filter".
+	 */
+	public static function platform_sql( string $platform, string $col = 'a.operating_system' ): string {
+		$families = self::platforms()[ $platform ] ?? array();
+		if ( ! $families ) {
+			return '';
+		}
+
+		$all = self::families();
+		$needles = array();
+		foreach ( $families as $family ) {
+			foreach ( (array) ( $all[ $family ]['match'] ?? array() ) as $needle ) {
+				$needles[ strtolower( (string) $needle ) ] = true;
+			}
+		}
+		if ( ! $needles ) {
+			return '';
+		}
+
+		$parts = array();
+		foreach ( array_keys( $needles ) as $needle ) {
+			$parts[] = sprintf( "%s LIKE '%%%s%%'", $col, esc_sql( $needle ) );
+		}
+
+		$sql = '( ' . implode( ' OR ', $parts ) . ' )';
+
+		/*
+		 * "Windows" also matches inside other vendors' strings, but the real
+		 * problem is the other direction: a Linux box whose OS string mentions
+		 * Windows (a Samba banner, say) would count as both. Platforms are
+		 * meant to partition the estate, so everything after the first listed
+		 * platform excludes the ones before it.
+		 */
+		$order = array_keys( self::platforms() );
+		$mine  = array_search( $platform, $order, true );
+		if ( false !== $mine && $mine > 0 ) {
+			foreach ( array_slice( $order, 0, (int) $mine ) as $earlier ) {
+				$prior = self::platform_sql_needles( $earlier, $col );
+				if ( '' !== $prior ) {
+					$sql .= ' AND NOT ' . $prior;
+				}
+			}
+		}
+
+		return $sql;
+	}
+
+	/** The bare OR-list for a platform, without the exclusions. */
+	private static function platform_sql_needles( string $platform, string $col ): string {
+		$families = self::platforms()[ $platform ] ?? array();
+		$all      = self::families();
+		$needles  = array();
+		foreach ( $families as $family ) {
+			foreach ( (array) ( $all[ $family ]['match'] ?? array() ) as $needle ) {
+				$needles[ strtolower( (string) $needle ) ] = true;
+			}
+		}
+		if ( ! $needles ) {
+			return '';
+		}
+		$parts = array();
+		foreach ( array_keys( $needles ) as $needle ) {
+			$parts[] = sprintf( "%s LIKE '%%%s%%'", $col, esc_sql( $needle ) );
+		}
+		return '( ' . implode( ' OR ', $parts ) . ' )';
+	}
+
+	/**
+	 * How many assets the estate holds per platform.
+	 *
+	 * Lets a dashboard tell "0 because nothing was found" from "0 because
+	 * there is nothing of that kind here". Linux showing zero download-folder
+	 * findings is a real answer worth drawing; a macOS tile on an estate with
+	 * no Macs is just noise.
+	 *
+	 * @return array<string,int>
+	 */
+	public static function estate_platforms(): array {
+		$out = array();
+		foreach ( array_keys( self::platforms() ) as $platform ) {
+			$out[ $platform ] = 0;
+		}
+
+		foreach ( self::estate() as $row ) {
+			$family = (string) ( $row['family'] ?? '' );
+			foreach ( self::platforms() as $platform => $families ) {
+				if ( in_array( $family, $families, true ) ) {
+					$out[ $platform ] += (int) ( $row['assets'] ?? 0 );
+					break;
+				}
+			}
+		}
+
+		return $out;
+	}
+
+	/**
 	 * Group the estate by operating-system family.
 	 *
 	 * @return array<int,array{family:string,label:string,mono:string,tone:string,assets:int}>
