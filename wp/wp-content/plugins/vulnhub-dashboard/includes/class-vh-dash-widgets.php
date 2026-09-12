@@ -671,7 +671,100 @@ final class VulnHub_Dash_Widgets {
 	 * about 1.7 s cold, and nothing about that is worth paying twice.
 	 */
 	public static function ttl(): int {
-		return (int) apply_filters( 'vulnhub_widget_cache_ttl', 5 * MINUTE_IN_SECONDS );
+		return (int) apply_filters( 'vulnhub_widget_cache_ttl', 15 * MINUTE_IN_SECONDS );
+	}
+
+	/**
+	 * How long a *stale* copy may still be served while a refresh is queued.
+	 *
+	 * Deliberately much longer than ttl(). These two numbers do different
+	 * jobs: ttl() decides when markup stops being trusted, this decides how
+	 * long it stays better than nothing. Serving numbers a few minutes old
+	 * beats making somebody wait 3.5 seconds for numbers a few seconds old,
+	 * and a dashboard nobody has opened for six hours can afford to render
+	 * once.
+	 */
+	public static function stale_ttl(): int {
+		return (int) apply_filters( 'vulnhub_widget_stale_ttl', 6 * HOUR_IN_SECONDS );
+	}
+
+	/** Hook that renders one widget in the background. */
+	public const HOOK_REFRESH = 'vulnhub_widget_refresh';
+
+	/**
+	 * Queue a background re-render, at most one in flight per widget.
+	 *
+	 * The host travels with the job. Widget markup contains absolute links
+	 * built from home_url(), and wp-config derives that from the request --
+	 * so a cron process, which has no request host and falls back to the
+	 * siteurl row, would otherwise re-render the localhost copy full of
+	 * public-hostname links. That is the same trap the cache key documents
+	 * above; this is the write side of it.
+	 */
+	private static function queue_refresh( string $id ): void {
+		$lock = 'vh_wref_' . md5( $id . '|' . home_url() );
+
+		// A dashboard draws 28 widgets at once. Without the lock, one stale
+		// board would queue 28 jobs, and a reload before cron runs would
+		// queue 28 more.
+		if ( false !== get_transient( $lock ) ) {
+			return;
+		}
+
+		set_transient( $lock, 1, 5 * MINUTE_IN_SECONDS );
+		wp_schedule_single_event( time(), self::HOOK_REFRESH, array( $id, home_url() ) );
+	}
+
+	/**
+	 * Re-render one widget into the cache, for the given host.
+	 *
+	 * Runs on cron, so it has to put the host back before rendering: see
+	 * queue_refresh().
+	 */
+	public static function refresh( string $id, string $host = '' ): void {
+		$all = self::all();
+
+		if ( ! isset( $all[ $id ] ) || ! is_callable( $all[ $id ]['render'] ) ) {
+			return;
+		}
+
+		$filter = static fn(): string => $host;
+
+		if ( '' !== $host ) {
+			add_filter( 'pre_option_home', $filter );
+			add_filter( 'pre_option_siteurl', $filter );
+		}
+
+		ob_start();
+		call_user_func( $all[ $id ]['render'] );
+		$html = (string) ob_get_clean();
+
+		self::store( $id, $html );
+
+		if ( '' !== $host ) {
+			remove_filter( 'pre_option_home', $filter );
+			remove_filter( 'pre_option_siteurl', $filter );
+		}
+
+		delete_transient( 'vh_wref_' . md5( $id . '|' . ( '' !== $host ? $host : home_url() ) ) );
+	}
+
+	/** The cache key for one widget. See the host note above. */
+	private static function cache_key( string $id ): string {
+		return 'vh_w_' . md5( $id . '|' . get_locale() . '|' . home_url() );
+	}
+
+	/** Write rendered markup, stamped with the epoch it was true for. */
+	private static function store( string $id, string $html ): void {
+		set_transient(
+			self::cache_key( $id ),
+			array(
+				'html'        => $html,
+				'epoch'       => self::epoch(),
+				'fresh_until' => time() + self::ttl(),
+			),
+			self::stale_ttl()
+		);
 	}
 
 	/**
@@ -712,17 +805,50 @@ final class VulnHub_Dash_Widgets {
 		 * buttons were offered and both did nothing when pressed. A widget
 		 * can only offer what it actually contains.
 		 */
-		$ttl  = self::ttl();
-		$key  = 'vh_w_' . md5( $id . '|' . self::epoch() . '|' . get_locale() . '|' . home_url() );
-		$html = $ttl > 0 ? get_transient( $key ) : false;
+		/*
+		 * Serve what we have, then refresh behind the reader.
+		 *
+		 * The epoch used to be part of the key, which meant every bust() was
+		 * a hard miss: a connector sync finishes, the keys all change, and
+		 * the next person to open the dashboard rebuilds 28 widgets and
+		 * waits 3.5 seconds for the privilege. Since syncs run on a
+		 * schedule, that was happening several times a day to whoever
+		 * happened to be first.
+		 *
+		 * The epoch now travels inside the entry instead. A bust no longer
+		 * hides the markup -- it marks it stale, so the reader still gets an
+		 * answer immediately and cron re-renders it within the minute. The
+		 * only person who ever renders a widget on the request path is the
+		 * first one after a deploy.
+		 */
+		$ttl   = self::ttl();
+		$key   = self::cache_key( $id );
+		$entry = $ttl > 0 ? get_transient( $key ) : false;
+		$html  = null;
 
-		if ( false === $html ) {
+		if ( is_array( $entry ) && isset( $entry['html'] ) ) {
+			$html = (string) $entry['html'];
+
+			$stale = (string) ( $entry['epoch'] ?? '' ) !== self::epoch()
+				|| (int) ( $entry['fresh_until'] ?? 0 ) < time();
+
+			if ( $stale ) {
+				self::queue_refresh( $id );
+			}
+		} elseif ( is_string( $entry ) && '' !== $entry ) {
+			// An entry written before the payload gained its epoch. Usable
+			// once, then replaced by the refresh.
+			$html = $entry;
+			self::queue_refresh( $id );
+		}
+
+		if ( null === $html ) {
 			ob_start();
 			call_user_func( $def['render'] );
 			$html = (string) ob_get_clean();
 
 			if ( $ttl > 0 ) {
-				set_transient( $key, $html, $ttl );
+				self::store( $id, $html );
 			}
 		}
 
@@ -862,22 +988,27 @@ final class VulnHub_Dash_Widgets {
 	public static function render_downloads_zone(): void {
 		$counts = Repo::path_zone_platforms( 'downloads' );
 		$reach  = Repo::path_zone_reach( 'downloads' );
+		$enum   = Repo::path_zone_enumeration( 'downloads' );
 		$total  = array_sum( $counts );
 
-		if ( 0 === $total ) {
+		if ( 0 === $total && 0 === $enum['findings'] ) {
 			echo '<p class="vh-sub">' . esc_html__( 'No open finding has a vulnerable file in a user download folder.', 'vulnhub' ) . '</p>';
 			return;
 		}
 
-		echo '<p class="vh-sub">';
-		printf(
-			/* translators: 1: number of findings, 2: number of assets, 3: number of owners. */
-			esc_html__( '%1$s open findings across %2$s machines, traced to %3$s named owners.', 'vulnhub' ),
-			'<strong>' . esc_html( number_format_i18n( $total ) ) . '</strong>',
-			esc_html( number_format_i18n( $reach['assets'] ) ),
-			esc_html( number_format_i18n( $reach['owners'] ) )
-		);
-		echo '</p>';
+		if ( 0 === $total ) {
+			echo '<p class="vh-sub">' . esc_html__( 'No vulnerable software is running from a user download folder.', 'vulnhub' ) . '</p>';
+		} else {
+			echo '<p class="vh-sub">';
+			printf(
+				/* translators: 1: number of findings, 2: number of assets, 3: number of owners. */
+				esc_html__( '%1$s open findings across %2$s machines, traced to %3$s named owners.', 'vulnhub' ),
+				'<strong>' . esc_html( number_format_i18n( $total ) ) . '</strong>',
+				esc_html( number_format_i18n( $reach['assets'] ) ),
+				esc_html( number_format_i18n( $reach['owners'] ) )
+			);
+			echo '</p>';
+		}
 
 		echo '<div class="vh-tiles">';
 
@@ -909,13 +1040,40 @@ final class VulnHub_Dash_Widgets {
 						: __( 'nothing running from a download folder', 'vulnhub' ),
 					'href'  => VulnHub_Dash_Portal::portal_url(
 						'vulnerabilities',
-						array( 'zone' => 'downloads', 'platform' => $platform )
+						array( 'zone' => 'downloads', 'platform' => $platform, 'sev_not' => 'info' )
 					),
 				)
 			);
 		}
 
 		echo '</div>';
+
+		/*
+		 * Below the tiles and deliberately not in them. Tenable's forensic
+		 * plugins catalogue what sits in a download folder -- "User Download
+		 * Folder Files" exists to list it -- and those findings quote a
+		 * download path without describing any vulnerability. They are worth
+		 * showing, because a machine with hundreds of files parked in
+		 * Downloads is worth knowing about; they are not worth adding to an
+		 * exposure count, which is what made this widget read 1,819 instead
+		 * of 158.
+		 */
+		if ( $enum['findings'] > 0 ) {
+			echo '<p class="vh-sub vh-muted">';
+			printf(
+				/* translators: 1: number of catalogued files, 2: number of machines. */
+				esc_html__( 'Separately, Tenable has catalogued %1$s files in user download folders on %2$s machines. Those are informational listings, not vulnerabilities.', 'vulnhub' ),
+				'<strong>' . esc_html( number_format_i18n( $enum['findings'] ) ) . '</strong>',
+				esc_html( number_format_i18n( $enum['assets'] ) )
+			);
+			echo ' <a href="' . esc_url(
+				VulnHub_Dash_Portal::portal_url(
+					'vulnerabilities',
+					array( 'zone' => 'downloads', 'severity' => 'info' )
+				)
+			) . '">' . esc_html__( 'See the listings', 'vulnhub' ) . '</a>';
+			echo '</p>';
+		}
 	}
 
 	/**
@@ -2646,6 +2804,25 @@ final class VulnHub_Dash_Widgets {
 	public static function product_rows( int $limit = 14, string $scope = '' ): array {
 		global $wpdb;
 
+		/*
+		 * Cached per (limit, scope) and keyed off the widget epoch, so an
+		 * import replaces it rather than it going stale on a timer.
+		 *
+		 * This is the most expensive aggregate in the product: one query that
+		 * reads every row of `vulns`, fans out to roughly 34 findings each,
+		 * and finishes in a temporary table with a filesort -- 1.07s
+		 * measured, and no index removes it, because counting distinct assets
+		 * per product has to visit every open finding. The widget's rendered
+		 * markup was already cached, but /products/ calls this with limit 0
+		 * and was not, which is why that page cost 1.2s on every single load.
+		 */
+		$ck  = 'vh_prod_' . md5( $limit . '|' . $scope . '|' . self::epoch() );
+		$hit = get_transient( $ck );
+
+		if ( is_array( $hit ) ) {
+			return $hit;
+		}
+
 		$f = vh_table( 'findings' );
 		$v = vh_table( 'vulns' );
 		$a = vh_table( 'assets' );
@@ -2688,7 +2865,7 @@ final class VulnHub_Dash_Widgets {
 		// (limit 0). Only the bounded case needs prepare().
 		$limit_sql = $limit > 0 ? $wpdb->prepare( ' LIMIT %d', $limit ) : '';
 
-		return (array) $wpdb->get_results(
+		$rows = (array) $wpdb->get_results(
 			"SELECT product, product_slug, product_kind, component_class,
 				COUNT(DISTINCT asset_id) AS assets,
 				COUNT(*) AS findings,
@@ -2713,6 +2890,10 @@ final class VulnHub_Dash_Widgets {
 			 ORDER BY assets DESC, findings DESC{$limit_sql}", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			ARRAY_A
 		);
+
+		set_transient( $ck, $rows, self::stale_ttl() );
+
+		return $rows;
 	}
 
 	/**

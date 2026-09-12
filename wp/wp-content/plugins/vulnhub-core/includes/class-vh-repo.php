@@ -2607,6 +2607,24 @@ final class Repo {
 	public static function patch_matrix(): array {
 		global $wpdb;
 
+		/*
+		 * Memoised for the request, because the dashboard asks twice.
+		 * VulnHub_Dash_Patching::render() calls by_severity() on its first
+		 * line and self::matrix() again a hundred lines later, and this is a
+		 * single query examining 1.26 million rows -- two slow-log entries,
+		 * ~500ms each, on every cold board. The widget's own doc comment
+		 * already claimed the result was cached; now it is.
+		 *
+		 * Request-scoped on purpose. A longer-lived cache here would have to
+		 * be invalidated on import, which is what the widget transient above
+		 * it already does.
+		 */
+		static $memo = null;
+
+		if ( null !== $memo ) {
+			return $memo;
+		}
+
 		$f     = vh_table( 'findings' );
 		$v     = vh_table( 'vulns' );
 		$patch = self::patch_sql( 'v' );
@@ -2674,7 +2692,9 @@ final class Repo {
 			}
 		}
 
-		return $out;
+		$memo = $out;
+
+		return $memo;
 	}
 
 	/**
@@ -2962,6 +2982,19 @@ final class Repo {
 	 * classification into SQL, and this way the meaning of "Linux" is not
 	 * written down twice.
 	 *
+	 * Informational findings are excluded, and that exclusion is the point of
+	 * the method rather than a detail of it. Tenable ships a family of
+	 * forensic enumeration plugins -- "User Download Folder Files", "Adobe
+	 * Recent Files", "MUICache Program Execution History" -- whose job is to
+	 * list what sits in a folder. Every one of their findings therefore quotes
+	 * a download path, and counting them made this widget read 1,819 when the
+	 * real exposure was 158: 93% of the number was Tenable correctly
+	 * reporting, at severity info, that somebody has PDFs in Downloads.
+	 *
+	 * path_zone stays a factual statement about the path, so the severity cut
+	 * belongs here in the exposure question -- which also leaves
+	 * path_zone_enumeration() free to count those listings on purpose.
+	 *
 	 * @return array<string,int> Platform slug => count, including zeroes, in
 	 *                           Os::platforms() order so the display is stable.
 	 */
@@ -2983,6 +3016,7 @@ final class Repo {
 				   FROM ' . vh_table( 'findings' ) . ' f
 				   INNER JOIN ' . vh_table( 'assets' ) . ' a ON a.id = f.asset_id
 				  WHERE f.path_zone = %s
+				    AND f.severity <> \'info\'
 				    AND f.state IN (\'open\',\'reopened\')
 				    AND f.exception_id = 0
 				    AND a.lifecycle_status IN (' . vh_reportable_sql() . ')
@@ -3019,6 +3053,7 @@ final class Repo {
 				   FROM ' . vh_table( 'findings' ) . ' f
 				   INNER JOIN ' . vh_table( 'assets' ) . ' a ON a.id = f.asset_id
 				  WHERE f.path_zone = %s
+				    AND f.severity <> \'info\'
 				    AND f.state IN (\'open\',\'reopened\')
 				    AND f.exception_id = 0
 				    AND a.lifecycle_status IN (' . vh_reportable_sql() . ')', // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
@@ -3030,6 +3065,45 @@ final class Repo {
 		return array(
 			'assets' => (int) ( $row['assets'] ?? 0 ),
 			'owners' => (int) ( $row['owners'] ?? 0 ),
+		);
+	}
+
+	/**
+	 * The informational file listings in a path zone, counted on purpose.
+	 *
+	 * The other side of the cut path_zone_platforms() makes. These are not
+	 * vulnerabilities and must never be added to an exposure number, but
+	 * "Tenable has catalogued 1,695 files sitting in users' download folders"
+	 * is a real data-hygiene signal, and deleting it to fix the exposure count
+	 * would throw away something worth knowing.
+	 *
+	 * @return array{findings:int,assets:int}
+	 */
+	public static function path_zone_enumeration( string $zone ): array {
+		global $wpdb;
+
+		if ( '' === $zone ) {
+			return array( 'findings' => 0, 'assets' => 0 );
+		}
+
+		$row = $wpdb->get_row(
+			$wpdb->prepare(
+				'SELECT COUNT(*) AS findings, COUNT(DISTINCT f.asset_id) AS assets
+				   FROM ' . vh_table( 'findings' ) . ' f
+				   INNER JOIN ' . vh_table( 'assets' ) . ' a ON a.id = f.asset_id
+				  WHERE f.path_zone = %s
+				    AND f.severity = \'info\'
+				    AND f.state IN (\'open\',\'reopened\')
+				    AND f.exception_id = 0
+				    AND a.lifecycle_status IN (' . vh_reportable_sql() . ')', // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$zone
+			),
+			ARRAY_A
+		);
+
+		return array(
+			'findings' => (int) ( $row['findings'] ?? 0 ),
+			'assets'   => (int) ( $row['assets'] ?? 0 ),
 		);
 	}
 
@@ -3084,6 +3158,23 @@ final class Repo {
 			$sevs = array_values( array_filter( array_map( 'sanitize_key', $sevs ) ) );
 			if ( $sevs ) {
 				$where[] = "f.severity IN ('" . implode( "','", array_map( 'esc_sql', $sevs ) ) . "')";
+			}
+		}
+
+		/*
+		 * The inverse of the filter above, because the question the dashboard
+		 * actually asks is "everything except informational" and an inclusive
+		 * list cannot say that without naming every severity at every call
+		 * site -- and then silently going wrong the day a new one is added.
+		 * Accepts a comma-separated string or an array.
+		 */
+		if ( ! empty( $args['severity_not'] ) ) {
+			$not = is_array( $args['severity_not'] )
+				? $args['severity_not']
+				: explode( ',', (string) $args['severity_not'] );
+			$not = array_values( array_filter( array_map( 'sanitize_key', $not ) ) );
+			if ( $not ) {
+				$where[] = "f.severity NOT IN ('" . implode( "','", array_map( 'esc_sql', $not ) ) . "')";
 			}
 		}
 		foreach ( array( 'asset_id' => 'f.asset_id', 'vuln_id' => 'f.vuln_id', 'ticket_id' => 'f.ticket_id', 'exception_id' => 'f.exception_id' ) as $arg => $col ) {
