@@ -620,11 +620,44 @@ function vh_split_person( ?string $raw ): array {
  */
 function vh_finding_states(): array {
 	return array(
-		'open'     => __( 'Open', 'vulnhub' ),
-		'reopened' => __( 'Reopened', 'vulnhub' ),
-		'fixed'    => __( 'Fixed', 'vulnhub' ),
-		'archived' => __( 'Archived', 'vulnhub' ),
+		'open'       => __( 'Open', 'vulnhub' ),
+		'reopened'   => __( 'Reopened', 'vulnhub' ),
+		'fixed'      => __( 'Fixed', 'vulnhub' ),
+		'archived'   => __( 'Archived', 'vulnhub' ),
+		'suppressed' => __( 'Suppressed', 'vulnhub' ),
 	);
+}
+
+/**
+ * Severities the product does not report on.
+ *
+ * Informational findings are not vulnerabilities. Tenable's enumeration
+ * plugins -- "User Download Folder Files", "Adobe Recent Files", "MUICache
+ * Program Execution History" -- describe what is on a machine, not what is
+ * wrong with it, and they are numerous enough to dominate any aggregate they
+ * are allowed into: 82,383 of 323,595 findings here, and 93% of what the
+ * download-folder widget first reported.
+ *
+ * Suppression is a reporting decision, not a deletion. Findings at these
+ * severities are parked in the `suppressed` state, which is outside
+ * vh_live_finding_states() and therefore outside every count in the product,
+ * and `prev_state` keeps the way back. Empty this filter and re-run
+ * `wp vulnhub suppress-severities --restore` to reverse it.
+ *
+ * @return string[]
+ */
+function vh_suppressed_severities(): array {
+	return (array) apply_filters( 'vulnhub_suppressed_severities', array( 'info' ) );
+}
+
+/** Whether a severity is one the product currently declines to report on. */
+function vh_severity_suppressed( string $severity ): bool {
+	return in_array( strtolower( $severity ), vh_suppressed_severities(), true );
+}
+
+/** vh_live_finding_states() as a quoted SQL list. */
+function vh_live_finding_sql(): string {
+	return "'" . implode( "','", array_map( 'esc_sql', vh_live_finding_states() ) ) . "'";
 }
 
 /**

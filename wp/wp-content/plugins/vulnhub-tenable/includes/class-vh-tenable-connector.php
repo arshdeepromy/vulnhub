@@ -191,9 +191,9 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 				'key'            => 'import_info',
 				'label'          => __( 'Informational findings', 'vulnhub' ),
 				'type'           => 'checkbox',
-				'default'        => 1,
+				'default'        => 0,
 				'checkbox_label' => __( 'Import informational findings as well', 'vulnhub' ),
-				'help'           => __( 'Informational plugins (scan metadata, service detection) are useful context but add a lot of rows.', 'vulnhub' ),
+				'help'           => __( 'Off. Informational plugins describe what is on a machine rather than what is wrong with it -- file listings, execution history, service detection -- and they arrive in enough volume to dominate any total they enter: 82,383 of 323,595 findings before this was turned off. Turning it back on imports them, but they still land suppressed and stay outside every count until vulnhub_suppressed_severities is emptied too.', 'vulnhub' ),
 			),
 			array(
 				'key'            => 'include_plugin_output',
@@ -217,7 +217,7 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 		$index = array_search( $floor, self::LADDER, true );
 		$slugs = array_slice( self::LADDER, false === $index ? 1 : (int) $index );
 
-		if ( $this->settings->get_bool( $this->id(), 'import_info', true ) ) {
+		if ( $this->settings->get_bool( $this->id(), 'import_info', false ) ) {
 			if ( ! in_array( 'info', $slugs, true ) ) {
 				array_unshift( $slugs, 'info' );
 			}
