@@ -79,7 +79,11 @@ services:
     mem_limit: 512m
     memswap_limit: 512m
     restart: unless-stopped
-    command: redis-server --save 60 1 --loglevel warning
+    # maxmemory + an eviction policy, not the defaults. Out of the box redis
+    # runs maxmemory 0 with noeviction, so inside this 512m container a cache
+    # that grows past the limit gets the process OOM-killed rather than
+    # dropping a key -- and the widget cache is meant to grow.
+    command: redis-server --save 60 1 --loglevel warning --maxmemory 384mb --maxmemory-policy allkeys-lru
     networks: [vulnhub]
 
   wordpress:
