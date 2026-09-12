@@ -1053,7 +1053,13 @@ final class VulnHub_Dash_Widgets {
 		call_user_func( $all[ $id ]['render'] );
 		$html = (string) ob_get_clean();
 
-		self::store( $id, $html );
+		/*
+		 * Stored while the filters are still on: store() builds the key from
+		 * home_url(), so dropping them first writes the entry under the
+		 * rendering process's own host instead of the one it was rendered
+		 * for -- which looks exactly like the warm doing nothing.
+		 */
+		self::store( $id, self::rehost( $html, $host ) );
 
 		if ( '' !== $host ) {
 			remove_filter( 'pre_option_home', $filter );
@@ -1061,6 +1067,45 @@ final class VulnHub_Dash_Widgets {
 		}
 
 		delete_transient( 'vh_wref_' . md5( $id . '|' . ( '' !== $host ? $host : home_url() ) ) );
+	}
+
+	/**
+	 * Point every absolute URL in rendered markup at the host it is for.
+	 *
+	 * The option filters in refresh() fix anything built from home_url() --
+	 * which is the links -- and cannot fix asset URLs at all, because
+	 * VULNHUB_DASH_URL is a constant assigned from plugin_dir_url() when the
+	 * plugin file loads, long before any filter exists. In a cron process that
+	 * resolves to the siteurl row, so a localhost board came back with its
+	 * product icons pointed at the public hostname and every one of them
+	 * failed to load.
+	 *
+	 * So the origin is rewritten in the finished string. It catches the
+	 * constant, anything else baked at load, and the links as well. Both
+	 * schemes are matched because plugin_dir_url() runs set_url_scheme() and
+	 * a CLI process is never is_ssl(), so the constant can hold http:// for a
+	 * site whose stored URL is https://.
+	 */
+	private static function rehost( string $html, string $host ): string {
+		if ( '' === $host || '' === $html ) {
+			return $html;
+		}
+
+		$target = untrailingslashit( $host );
+		$from   = wp_parse_url( VULNHUB_DASH_URL, PHP_URL_HOST );
+
+		if ( ! $from || $from === wp_parse_url( $target, PHP_URL_HOST ) ) {
+			return $html;
+		}
+
+		$port = wp_parse_url( VULNHUB_DASH_URL, PHP_URL_PORT );
+		$from = $from . ( $port ? ':' . $port : '' );
+
+		return str_replace(
+			array( 'https://' . $from, 'http://' . $from ),
+			array( $target, $target ),
+			$html
+		);
 	}
 
 	/** The cache key for one widget. See the host note above. */
