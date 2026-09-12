@@ -1089,6 +1089,19 @@ final class VulnHub_Dash_App {
 				} else {
 					esc_html_e( 'Only findings whose vulnerable files sit in a user download folder.', 'vulnhub' );
 				}
+				/*
+				 * Spell the severity cut out. Tenable's forensic plugins list
+				 * the contents of a download folder at severity info, so
+				 * without this the reader cannot tell whether a much larger
+				 * number is missing or was never exposure in the first place.
+				 */
+				if ( 'info' === self::q( 'sev_not' ) ) {
+					echo ' ';
+					esc_html_e( 'Informational file listings are excluded.', 'vulnhub' );
+				} elseif ( 'info' === self::q( 'severity' ) ) {
+					echo ' ';
+					esc_html_e( 'These are Tenable\'s informational file listings, not vulnerabilities.', 'vulnhub' );
+				}
 				?>
 				<a href="<?php echo esc_url( self::page_url( 'vulnerabilities', self::current_filters( array( 'search', 'severity', 'asset_type', 'team_id', 'age', 'overdue', 'life' ) ) ) ); ?>">
 					<?php esc_html_e( 'Clear this filter', 'vulnhub' ); ?>
@@ -1472,6 +1485,7 @@ final class VulnHub_Dash_App {
 			'patch_available' => self::q( 'patch_available' ),
 			'path_zone'  => self::q( 'zone' ),
 			'os_platform' => self::q( 'platform' ),
+			'severity_not' => self::q( 'sev_not' ),
 			'orderby'    => $orderby,
 			'order'      => $order,
 		);
@@ -1523,6 +1537,52 @@ final class VulnHub_Dash_App {
 					<?php if ( $cves ) : ?>· <?php echo esc_html( implode( ', ', array_slice( $cves, 0, 2 ) ) ); ?><?php endif; ?>
 					<?php if ( ! empty( $f['exploit_available'] ) ) : ?>· <span class="vh-flag"><?php esc_html_e( 'exploit available', 'vulnhub' ); ?></span><?php endif; ?>
 				</span>
+				<?php
+				/*
+				 * What the scanner actually says, in the row rather than a
+				 * click away on the vulnerability page. Without it a reader
+				 * cannot tell a real finding from one of Tenable's
+				 * informational enumeration plugins -- "Nessus was able to
+				 * generate a report of all files listed in the default user
+				 * download folder" is the whole answer to why a .docx is
+				 * being reported, and it was only visible after two clicks.
+				 *
+				 * A <details> rather than always-on text: this is a dense
+				 * table and most rows are skimmed, so the prose stays folded
+				 * until somebody asks a question of a specific row.
+				 */
+				$vh_desc = trim( (string) ( $f['description'] ?? '' ) );
+				$vh_fix  = trim( (string) ( $f['solution'] ?? '' ) );
+				?>
+				<?php if ( '' !== $vh_desc || '' !== $vh_fix ) : ?>
+					<details class="vh-vdetail">
+						<summary><?php esc_html_e( 'What the scanner reports', 'vulnhub' ); ?></summary>
+						<?php if ( '' !== $vh_desc ) : ?>
+							<p class="vh-vdetail__body"><?php echo esc_html( vh_trim( $vh_desc, 420 ) ); ?></p>
+						<?php endif; ?>
+						<?php if ( '' !== $vh_fix ) : ?>
+							<p class="vh-vdetail__fix">
+								<span class="vh-vdetail__k"><?php esc_html_e( 'Fix', 'vulnhub' ); ?></span>
+								<?php echo esc_html( vh_trim( $vh_fix, 200 ) ); ?>
+							</p>
+						<?php endif; ?>
+						<p class="vh-vdetail__meta">
+							<?php
+							$vh_bits = array();
+							if ( '' !== trim( (string) ( $f['cvss3_base'] ?? '' ) ) ) {
+								$vh_bits[] = 'CVSS v3 ' . (string) $f['cvss3_base'];
+							}
+							if ( '' !== trim( (string) ( $f['vpr_score'] ?? '' ) ) ) {
+								$vh_bits[] = 'VPR ' . (string) $f['vpr_score'];
+							}
+							$vh_bits[] = 'severity ' . vh_severity_label( (string) $f['severity'] );
+							$vh_bits[] = 'Tenable plugin ' . (string) $f['plugin_id'];
+							echo esc_html( implode( ' · ', $vh_bits ) );
+							?>
+							<a href="<?php echo esc_url( self::page_url( 'vulnerabilities', array( 'vuln' => (int) $f['vuln_id'] ) ) ); ?>"><?php esc_html_e( 'Full detail', 'vulnhub' ); ?></a>
+						</p>
+					</details>
+				<?php endif; ?>
 			</td>
 			<td data-th="<?php esc_attr_e( 'Asset', 'vulnhub' ); ?>">
 				<a class="vh-mono" href="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $f['asset_id'] ) ) ); ?>"><?php echo esc_html( (string) $f['hostname'] ); ?></a>
