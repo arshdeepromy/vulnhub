@@ -2895,6 +2895,26 @@ final class Repo {
 			$reopened = true;
 		}
 
+		/*
+		 * A severity the product does not report on lands suppressed, whatever
+		 * the scanner called the state.
+		 *
+		 * The connector setting stops Tenable sending informational findings
+		 * in the first place, but that is one switch in one integration, and a
+		 * sync runs unattended every hour. This is the backstop: turn the
+		 * setting back on, add a second scanner, replay an old export, and the
+		 * rows still arrive outside every count rather than quietly rejoining
+		 * the totals. prev_state keeps the way back.
+		 */
+		if ( vh_severity_suppressed( $severity ) ) {
+			$reopened = false;
+			if ( $existing && ! in_array( (string) $existing['state'], array( 'suppressed' ), true ) ) {
+				$row_prev = (string) $existing['state'];
+			}
+			$state = 'suppressed';
+		}
+
+		$row_prev        = '';
 		$incoming_output = (string) ( $data['output'] ?? '' );
 
 		/*
@@ -2931,6 +2951,10 @@ final class Repo {
 		}
 
 		$row['bundle_app_slug'] = \VH_Product::slug( (string) $row['bundle_app'] );
+
+		if ( '' !== $row_prev ) {
+			$row['prev_state'] = $row_prev;
+		}
 
 		if ( $existing ) {
 			/*
