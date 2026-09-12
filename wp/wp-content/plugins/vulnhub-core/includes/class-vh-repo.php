@@ -2877,6 +2877,14 @@ final class Repo {
 
 		$incoming_output = (string) ( $data['output'] ?? '' );
 
+		/*
+		 * Derived at write time, like bundle_app above it, because the
+		 * alternative is scanning a 600MB text column on every dashboard
+		 * load -- a LIKE over the findings table measured 1.8 seconds here,
+		 * for a number a widget wants on every render.
+		 */
+		$incoming_zone = \VH_Product::path_zone( $incoming_output );
+
 		$row = array(
 			'fingerprint' => $fingerprint,
 			'asset_id'    => $asset_id,
@@ -2889,6 +2897,8 @@ final class Repo {
 			'service'     => (string) ( $data['service'] ?? '' ),
 			'output'      => $incoming_output,
 			'bundle_app'  => \VH_Product::app_from_output( $incoming_output ),
+			'path_zone'   => $incoming_zone['zone'],
+			'zone_path'   => mb_substr( $incoming_zone['path'], 0, 512 ),
 			'risk_score'  => (float) ( $data['risk_score'] ?? 0 ),
 			'scan_uuid'   => (string) ( $data['scan_uuid'] ?? '' ),
 			'last_synced_at' => vh_now(),
@@ -2913,7 +2923,13 @@ final class Repo {
 			 * it.
 			 */
 			if ( '' === $incoming_output ) {
-				unset( $row['output'], $row['bundle_app'], $row['bundle_app_slug'] );
+				unset(
+					$row['output'],
+					$row['bundle_app'],
+					$row['bundle_app_slug'],
+					$row['path_zone'],
+					$row['zone_path']
+				);
 			}
 
 			$wpdb->update( $table, $row, array( 'id' => (int) $existing['id'] ) );
@@ -2931,6 +2947,89 @@ final class Repo {
 			'id'       => (int) $wpdb->insert_id,
 			'created'  => true,
 			'reopened' => false,
+		);
+	}
+
+	/**
+	 * Open findings in a path zone, counted per operating-system platform.
+	 *
+	 * Reads the indexed path_zone column, so this is a ~1ms lookup instead of
+	 * the 1.8 second LIKE over the 600MB output column it replaced.
+	 *
+	 * Grouping happens on the raw OS string in SQL and the platform is decided
+	 * in PHP by Os::platform(). The zone filter has already cut the set to a
+	 * couple of thousand rows, so there is nothing to gain from pushing the
+	 * classification into SQL, and this way the meaning of "Linux" is not
+	 * written down twice.
+	 *
+	 * @return array<string,int> Platform slug => count, including zeroes, in
+	 *                           Os::platforms() order so the display is stable.
+	 */
+	public static function path_zone_platforms( string $zone ): array {
+		global $wpdb;
+
+		$out = array();
+		foreach ( array_keys( Os::platforms() ) as $platform ) {
+			$out[ $platform ] = 0;
+		}
+
+		if ( '' === $zone ) {
+			return $out;
+		}
+
+		$rows = (array) $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT a.operating_system AS os, COUNT(*) AS n
+				   FROM ' . vh_table( 'findings' ) . ' f
+				   INNER JOIN ' . vh_table( 'assets' ) . ' a ON a.id = f.asset_id
+				  WHERE f.path_zone = %s
+				    AND f.state IN (\'open\',\'reopened\')
+				    AND f.exception_id = 0
+				    AND a.lifecycle_status IN (' . vh_reportable_sql() . ')
+				  GROUP BY a.operating_system', // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$zone
+			),
+			ARRAY_A
+		);
+
+		foreach ( $rows as $row ) {
+			$platform = Os::platform( (string) $row['os'] );
+			$out[ $platform ] = ( $out[ $platform ] ?? 0 ) + (int) $row['n'];
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Distinct assets and people behind a path zone, for a widget's caption.
+	 *
+	 * @return array{assets:int,owners:int}
+	 */
+	public static function path_zone_reach( string $zone ): array {
+		global $wpdb;
+
+		if ( '' === $zone ) {
+			return array( 'assets' => 0, 'owners' => 0 );
+		}
+
+		$row = $wpdb->get_row(
+			$wpdb->prepare(
+				'SELECT COUNT(DISTINCT f.asset_id) AS assets,
+				        COUNT(DISTINCT NULLIF(a.owner_person_id, 0)) AS owners
+				   FROM ' . vh_table( 'findings' ) . ' f
+				   INNER JOIN ' . vh_table( 'assets' ) . ' a ON a.id = f.asset_id
+				  WHERE f.path_zone = %s
+				    AND f.state IN (\'open\',\'reopened\')
+				    AND f.exception_id = 0
+				    AND a.lifecycle_status IN (' . vh_reportable_sql() . ')', // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$zone
+			),
+			ARRAY_A
+		);
+
+		return array(
+			'assets' => (int) ( $row['assets'] ?? 0 ),
+			'owners' => (int) ( $row['owners'] ?? 0 ),
 		);
 	}
 
@@ -2961,6 +3060,7 @@ final class Repo {
 		$p = vh_table( 'people' );
 		$tm = vh_table( 'teams' );
 		$tk = vh_table( 'tickets' );
+		$lo = vh_table( 'locations' );
 
 		$where  = array( '1=1' );
 		$params = array();
@@ -3006,6 +3106,30 @@ final class Repo {
 			$where[]  = 'a.asset_type = %s';
 			$params[] = (string) $args['asset_type'];
 			$need_a   = true;
+		}
+
+		/*
+		 * Where the vulnerable files sit -- currently only 'downloads'. Reads
+		 * the column upsert_finding() derives, so this is an indexed equality
+		 * rather than a LIKE across the output blob.
+		 */
+		if ( ! empty( $args['path_zone'] ) ) {
+			$where[]  = 'f.path_zone = %s';
+			$params[] = (string) $args['path_zone'];
+		}
+
+		/*
+		 * Windows / Linux / macOS. The condition comes from Os::platform_sql()
+		 * so the definition of "Linux" stays in the OS class instead of being
+		 * retyped here, and it has to be SQL rather than a PHP pass because a
+		 * paginated list cannot filter after LIMIT.
+		 */
+		if ( ! empty( $args['os_platform'] ) ) {
+			$platform_sql = Os::platform_sql( (string) $args['os_platform'], 'a.operating_system' );
+			if ( '' !== $platform_sql ) {
+				$where[] = $platform_sql;
+				$need_a  = true;
+			}
 		}
 
 		/*
@@ -3302,6 +3426,7 @@ final class Repo {
 			v.solution, v.description, v.exploit_available, v.patch_publication_date,
 			p.display_name AS owner_name, p.upn AS owner_upn, p.department AS owner_department,
 			t.name AS team_name,
+			l.name AS location_name,
 			k.external_key AS ticket_key, k.url AS ticket_url, k.status AS ticket_status,
 			k.status_category AS ticket_status_category
 			FROM {$f} f
@@ -3309,6 +3434,7 @@ final class Repo {
 			INNER JOIN {$v} v ON v.id = f.vuln_id
 			LEFT JOIN {$p} p  ON p.id = a.owner_person_id
 			LEFT JOIN {$tm} t ON t.id = a.team_id
+			LEFT JOIN {$lo} l ON l.id = a.location_id
 			LEFT JOIN {$tk} k ON k.id = f.ticket_id
 			WHERE f.id IN ({$in})
 			ORDER BY {$orderby} {$order}, f.id DESC", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
