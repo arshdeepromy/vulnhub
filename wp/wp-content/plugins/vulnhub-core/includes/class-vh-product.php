@@ -436,22 +436,147 @@ final class VH_Product {
 	}
 
 	/**
+	 * A user's Downloads folder, in every notation this scanner emits.
+	 *
+	 *   C:\Users\<u>\Downloads\...    canonical Windows
+	 *   C:\\Users\<u>\Downloads\...   doubled separators
+	 *   /C/Users/<u>/Downloads/...    a Windows drive written with slashes
+	 *   /home/<u>/Downloads/...       Linux
+	 *   /root/Downloads/...           Linux, root's own
+	 *   /Users/<u>/Downloads/...      macOS
+	 *
+	 * Anchored on a user profile deliberately. A file share that happens to
+	 * contain a directory called "Downloads" several levels down is not
+	 * somebody's download folder, and counting it would inflate the number
+	 * that is supposed to mean "software someone downloaded and ran from
+	 * where it landed".
+	 */
+	private const DOWNLOADS_RE = '#(?:[A-Za-z]:[\\\\/]+Users[\\\\/]+[^\\\\/\r\n]+[\\\\/]+Downloads(?:[\\\\/][^\r\n]*)?)
+		|(?:/[A-Za-z]/Users/[^/\r\n]+/Downloads(?:/[^\r\n]*)?)
+		|(?:/home/[^/\r\n]+/Downloads(?:/[^\r\n]*)?)
+		|(?:/root/Downloads(?:/[^\r\n]*)?)
+		|(?:/Users/[^/\r\n]+/Downloads(?:/[^\r\n]*)?)#xi';
+
+	/**
+	 * Any absolute path, labelled "Path :" or standing on its own.
+	 *
+	 * The lookbehind matters: a drive letter is one letter, and without it
+	 * "https://host/x" matches at "s://host/x" and every URL in the output
+	 * gets reported as an install path.
+	 */
+	private const ANY_PATH_RE = '#(?:(?<![A-Za-z])[A-Za-z]:[\\\\/]+[^\r\n]+)|(?:/(?:home|root|Users|opt|usr|var|srv|etc)/[^\r\n]+)#i';
+
+	/**
+	 * Trim a path captured to end-of-line back to just the path.
+	 *
+	 * Scanner output packs several labelled fields onto one line -- "Name :
+	 * Apache Log4j Path : C:\... Version : unknown" -- so a match that ran to
+	 * the line end can have the next label glued onto it. Two or more spaces
+	 * is how the padded multi-line format separates its columns, and
+	 * " Word : " is how the single-line format does.
+	 */
+	private static function trim_path( string $path ): string {
+		$path = trim( $path );
+		$path = (string) preg_split( '/\s{2,}/', $path )[0];
+		/*
+		 * Drop a following "Label : value" field first. The single-line format
+		 * runs them together with one space -- "...\jdk\ Installed version :
+		 * 17.0.13" -- so this has to happen before the spaced-colon split
+		 * below, which would otherwise consume the colon this anchors on and
+		 * leave "\jdk\ Installed version" behind.
+		 */
+		$path = (string) preg_replace( '/\s+[A-Z][A-Za-z ]{2,24}\s*:.*$/', '', $path );
+		/*
+		 * Then any remaining spaced colon. A path never contains one: the only
+		 * colon in a Windows path is the drive's, which has no space either
+		 * side, and Unix paths have none at all. So " : " is always a field
+		 * separator, whichever side the label sits on -- "Path : c2wts :
+		 * C:\..." puts it before, the registry listings
+		 * ("...\mpasdesc.dll,-242 : Helps guard against...") after.
+		 */
+		$path = (string) preg_split( '/\s+:\s+/', $path )[0];
+		return trim( $path );
+	}
+
+	/** Collapse doubled separators so C:\\Users reads like C:\Users. */
+	private static function normalise_output( string $output ): string {
+		return (string) preg_replace( '#\\\\{2,}#', '\\', $output );
+	}
+
+	/**
 	 * The install path out of a finding's plugin output, Windows or Unix.
 	 *
 	 * The one line a patch engineer needs to find the vulnerable copy on the
 	 * box. Empty when the scan gave no path.
+	 *
+	 * This used to require the path to end in .dll/.jar/.exe/.so/.node, which
+	 * silently dropped the majority of them: a directory install like
+	 * "C:\Users\x\Downloads\sqldeveloper-24.3.1\sqldeveloper\jdk\" has no
+	 * extension to match, and on this estate that rejected 2,008 of 2,132
+	 * paths -- the Install path column was empty for almost every row that
+	 * actually had one. It now takes the path as the line gives it.
 	 */
 	public static function install_path( string $output ): string {
 		if ( '' === $output ) {
 			return '';
 		}
-		if ( preg_match( '/Path\s*:?\s*([A-Za-z]:\\\\.+?\.(?:dll|jar|exe|so|node))/i', $output, $m ) ) {
-			return trim( $m[1] );
+
+		$text = self::normalise_output( $output );
+
+		/*
+		 * A labelled path is the most reliable, so try that first -- but take
+		 * the absolute path from inside the label's value, not the value
+		 * itself. Tenable's "Unquoted Service Path" plugin writes
+		 * "Path : c2wts : C:\Program Files\...", so a naive capture of
+		 * everything after "Path :" returns the service name glued to the
+		 * path.
+		 */
+		if ( preg_match( '/Path\s*:\s*([^\r\n]+)/i', $text, $m ) ) {
+			if ( preg_match( self::ANY_PATH_RE, self::trim_path( $m[1] ), $p ) ) {
+				return self::trim_path( $p[0] );
+			}
 		}
-		if ( preg_match( '#Path\s*:?\s*(/[^\s]+)#', $output, $m ) ) {
-			return trim( $m[1] );
+
+		// Otherwise take the first thing in the blob that looks absolute.
+		if ( preg_match( self::ANY_PATH_RE, $text, $m ) ) {
+			return self::trim_path( $m[0] );
 		}
+
 		return '';
+	}
+
+	/**
+	 * The first user-Downloads path in a finding's output, or ''.
+	 *
+	 * Separate from install_path() on purpose: a finding can report several
+	 * paths and only some of them sit in a download folder, so "is any of
+	 * this running out of Downloads" is its own question and has to search
+	 * the whole blob rather than trust whichever path happened to come first.
+	 */
+	public static function downloads_path( string $output ): string {
+		if ( '' === $output || ! preg_match( self::DOWNLOADS_RE, self::normalise_output( $output ), $m ) ) {
+			return '';
+		}
+		return self::trim_path( $m[0] );
+	}
+
+	/**
+	 * Which notable directory a finding's files sit in, with the path.
+	 *
+	 * Stored on the finding at write time rather than parsed per render, so a
+	 * dashboard can count and filter on it without scanning a 600MB text
+	 * column. Returns a zone slug ('' when nothing notable) and the path that
+	 * earned it. Kept as a slug rather than a boolean so later zones -- temp
+	 * directories, removable drives -- need no migration.
+	 *
+	 * @return array{zone:string,path:string}
+	 */
+	public static function path_zone( string $output ): array {
+		$downloads = self::downloads_path( $output );
+		if ( '' !== $downloads ) {
+			return array( 'zone' => 'downloads', 'path' => $downloads );
+		}
+		return array( 'zone' => '', 'path' => '' );
 	}
 
 	/** Stable slug for filters and icon lookup. */
