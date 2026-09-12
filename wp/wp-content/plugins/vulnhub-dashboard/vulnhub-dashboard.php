@@ -65,8 +65,30 @@ add_action(
 /**
  * Anything that can move the numbers invalidates every cached widget.
  */
-foreach ( array( 'vulnhub_sync_complete', 'vulnhub_import_complete', 'vulnhub_coverage_recalculated' ) as $vulnhub_dash_bust ) {
+/**
+ * A finished sync invalidates only the widgets fed by what it moved.
+ *
+ * The action passes the connector id, and connector_sources() maps it to the
+ * data a sync of that connector can change -- so a Defender run no longer
+ * throws away the Tenable widgets. An unknown connector still invalidates
+ * everything, because an unmapped blast radius is an unbounded one.
+ */
+add_action( 'vulnhub_sync_complete', array( 'VulnHub_Dash_Widgets', 'bust_for_connector' ), 99, 1 );
+
+/*
+ * These two have no connector to map, so they mean "anything may have moved".
+ */
+foreach ( array( 'vulnhub_import_complete', 'vulnhub_coverage_recalculated' ) as $vulnhub_dash_bust ) {
 	add_action( $vulnhub_dash_bust, array( 'VulnHub_Dash_Widgets', 'bust' ), 99 );
+}
+
+/*
+ * ...and then rebuild the board on cron rather than in front of whoever opens
+ * the dashboard next. Serve-stale already means nobody waits; this means
+ * nobody looks at stale numbers for long either.
+ */
+foreach ( array( 'vulnhub_sync_complete', 'vulnhub_import_complete', 'vulnhub_coverage_recalculated' ) as $vulnhub_dash_warm ) {
+	add_action( $vulnhub_dash_warm, array( 'VulnHub_Dash_Widgets', 'queue_warm' ), 100 );
 }
 
 /**
@@ -75,6 +97,28 @@ foreach ( array( 'vulnhub_sync_complete', 'vulnhub_import_complete', 'vulnhub_co
  * Two arguments: the widget id and the host its links must be built for.
  */
 add_action( VulnHub_Dash_Widgets::HOOK_REFRESH, array( 'VulnHub_Dash_Widgets', 'refresh' ), 10, 2 );
+
+/**
+ * Re-render the whole board in the background, queued after a bust.
+ */
+add_action( VulnHub_Dash_Widgets::HOOK_WARM, array( 'VulnHub_Dash_Widgets', 'warm' ) );
+
+/**
+ * A safety net, in case a bust is ever missed or a warm dies half way.
+ *
+ * Hourly, and cheap when there is nothing to do: every widget it re-renders
+ * would have been re-rendered by the next reader anyway.
+ */
+add_action(
+	'vulnhub_loaded',
+	static function (): void {
+		if ( ! wp_next_scheduled( 'vulnhub_widget_warm_cron' ) ) {
+			wp_schedule_event( time() + wp_rand( 60, 600 ), 'hourly', 'vulnhub_widget_warm_cron' );
+		}
+	},
+	30
+);
+add_action( 'vulnhub_widget_warm_cron', array( 'VulnHub_Dash_Widgets', 'warm' ) );
 
 /**
  * Save a person's dashboard arrangement.

@@ -73,6 +73,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Open findings over time', 'vulnhub' ),
 			'summary' => __( 'Daily snapshot by severity for the last 30 days.', 'vulnhub' ),
 			'group'   => 'exposure',
+			'depends' => array( 'findings' ),
 			'width'   => 8,
 			'render'  => array( __CLASS__, 'render_trend' ),
 			'data'    => array( __CLASS__, 'data_trend' ),
@@ -82,6 +83,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Findings by severity', 'vulnhub' ),
 			'summary' => __( 'The shape of what is open right now.', 'vulnhub' ),
 			'group'   => 'exposure',
+			'depends' => array( 'findings', 'assets' ),
 			'width'   => 4,
 			'render'  => array( __CLASS__, 'render_severity_mix' ),
 			'data'    => array( __CLASS__, 'data_severity_mix' ),
@@ -91,6 +93,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Findings by age', 'vulnhub' ),
 			'summary' => __( 'How long open findings have been sitting there.', 'vulnhub' ),
 			'group'   => 'exposure',
+			'depends' => array( 'findings', 'assets' ),
 			'width'   => 6,
 			'render'  => array( __CLASS__, 'render_age_buckets' ),
 			'data'    => array( __CLASS__, 'data_age_buckets' ),
@@ -100,6 +103,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Vulnerabilities by severity and age', 'vulnhub' ),
 			'summary' => __( 'Each vulnerability counted once and aged by its oldest open instance, with the asset findings behind it.', 'vulnhub' ),
 			'group'   => 'exposure',
+			'depends' => array( 'findings', 'assets' ),
 			'width'   => 12,
 			'render'  => array( __CLASS__, 'render_severity_age' ),
 			'data'    => array( __CLASS__, 'data_severity_age' ),
@@ -118,6 +122,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Most widespread vulnerabilities', 'vulnhub' ),
 			'summary' => __( 'Fix these once and the number moves.', 'vulnhub' ),
 			'group'   => 'exposure',
+			'depends' => array( 'findings', 'assets' ),
 			'width'   => 6,
 			'render'  => array( __CLASS__, 'render_top_vulns' ),
 			'data'    => array( __CLASS__, 'data_top_vulns' ),
@@ -127,6 +132,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Most exposed assets', 'vulnhub' ),
 			'summary' => __( 'Highest risk score, with who to chase.', 'vulnhub' ),
 			'group'   => 'exposure',
+			'depends' => array( 'findings', 'assets' ),
 			'width'   => 6,
 			'render'  => array( __CLASS__, 'render_top_assets' ),
 			'data'    => array( __CLASS__, 'data_top_assets' ),
@@ -136,6 +142,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Impact by operating system', 'vulnhub' ),
 			'summary' => __( 'Which platforms carry the open findings.', 'vulnhub' ),
 			'group'   => 'exposure',
+			'depends' => array( 'assets' ),
 			'width'   => 4,
 			'render'  => array( __CLASS__, 'render_os_mix' ),
 			'data'    => array( __CLASS__, 'data_os_mix' ),
@@ -145,6 +152,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Impact by product family', 'vulnhub' ),
 			'summary' => __( 'Tenable plugin families, largest first.', 'vulnhub' ),
 			'group'   => 'exposure',
+			'depends' => array( 'findings', 'assets' ),
 			'width'   => 4,
 			'render'  => array( __CLASS__, 'render_family_mix' ),
 			'data'    => array( __CLASS__, 'data_family_mix' ),
@@ -154,6 +162,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Patch availability by severity', 'vulnhub' ),
 			'summary' => __( 'Every open finding split into the part a vendor has fixed and the part nobody has. Select either half for the list.', 'vulnhub' ),
 			'group'   => 'exposure',
+			'depends' => array( 'findings', 'assets' ),
 			'width'   => 6,
 			'render'  => array( 'VulnHub_Dash_Patching', 'render' ),
 			'data'    => array( 'VulnHub_Dash_Patching', 'data' ),
@@ -165,6 +174,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Platforms past end of life', 'vulnhub' ),
 			'summary' => __( 'Assets in the reporting scope, by the operating system release they run, matched on build number rather than on what the inventory calls it.', 'vulnhub' ),
 			'group'   => 'lifecycle',
+			'depends' => array( 'assets' ),
 			'width'   => 12,
 			'render'  => array( 'VulnHub_Dash_Eol', 'render' ),
 			'data'    => array( 'VulnHub_Dash_Eol', 'data' ),
@@ -174,6 +184,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Software past end of life', 'vulnhub' ),
 			'summary' => __( 'Installed software whose vendor has stopped shipping fixes, counted once per machine.', 'vulnhub' ),
 			'group'   => 'lifecycle',
+			'depends' => array( 'findings', 'assets' ),
 			'width'   => 6,
 			'render'  => array( 'VulnHub_Dash_Eol', 'render_software' ),
 			'data'    => array( 'VulnHub_Dash_Eol', 'data_software' ),
@@ -183,6 +194,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Hardware support', 'vulnhub' ),
 			'summary' => __( 'How much of the estate is still under a warranty somebody could call on.', 'vulnhub' ),
 			'group'   => 'lifecycle',
+			'depends' => array( 'assets' ),
 			'width'   => 6,
 			'render'  => array( 'VulnHub_Dash_Eol', 'render_hardware' ),
 		);
@@ -193,6 +205,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Tenable coverage', 'vulnhub' ),
 			'summary' => __( 'How much of the estate Tenable has actually scanned.', 'vulnhub' ),
 			'group'   => 'coverage',
+			'depends' => array( 'coverage', 'assets' ),
 			'width'   => 4,
 			'render'  => array( __CLASS__, 'render_coverage_summary' ),
 			'data'    => array( __CLASS__, 'data_coverage_summary' ),
@@ -202,6 +215,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Tenable coverage by device type', 'vulnhub' ),
 			'summary' => __( 'Where Tenable is not looking.', 'vulnhub' ),
 			'group'   => 'coverage',
+			'depends' => array( 'coverage', 'assets' ),
 			'width'   => 8,
 			'render'  => array( __CLASS__, 'render_coverage_by_type' ),
 			'data'    => array( __CLASS__, 'data_coverage_by_type' ),
@@ -211,6 +225,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Tenable coverage by site', 'vulnhub' ),
 			'summary' => __( 'Tenable coverage per location, worst first.', 'vulnhub' ),
 			'group'   => 'coverage',
+			'depends' => array( 'coverage', 'assets' ),
 			'width'   => 6,
 			'render'  => array( __CLASS__, 'render_coverage_by_site' ),
 			'data'    => array( __CLASS__, 'data_coverage_by_site' ),
@@ -227,6 +242,7 @@ final class VulnHub_Dash_Widgets {
 			 */
 			'summary' => __( 'Which systems say an asset exists, and whether Tenable has a record of it. Covered + gaps = total. An asset three systems know is counted three times.', 'vulnhub' ),
 			'group'   => 'coverage',
+			'depends' => array( 'coverage', 'assets' ),
 			'width'   => 6,
 			'render'  => array( __CLASS__, 'render_coverage_by_source' ),
 			'data'    => array( __CLASS__, 'data_coverage_by_source' ),
@@ -236,6 +252,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Tenable gap list', 'vulnhub' ),
 			'summary' => __( 'Assets the CMDB or Intune knows about that Tenable does not.', 'vulnhub' ),
 			'group'   => 'coverage',
+			'depends' => array( 'coverage', 'assets' ),
 			'width'   => 12,
 			'render'  => array( __CLASS__, 'render_coverage_gaps' ),
 			'data'    => array( __CLASS__, 'data_coverage_gaps' ),
@@ -245,6 +262,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Vulnerable software in Downloads folders', 'vulnhub' ),
 			'summary' => __( 'Open findings whose vulnerable files sit in a user download folder, split by platform.', 'vulnhub' ),
 			'group'   => 'exposure',
+			'depends' => array( 'findings', 'assets' ),
 			'width'   => 6,
 			'render'  => array( __CLASS__, 'render_downloads_zone' ),
 			'data'    => array( __CLASS__, 'data_downloads_zone' ),
@@ -256,6 +274,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Defender coverage', 'vulnhub' ),
 			'summary' => __( 'How much of the estate has a Defender sensor on it.', 'vulnhub' ),
 			'group'   => 'endpoint',
+			'depends' => array( 'defender', 'assets' ),
 			'width'   => 4,
 			'render'  => array( __CLASS__, 'render_defender_summary' ),
 			'data'    => array( __CLASS__, 'data_defender_summary' ),
@@ -265,6 +284,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Defender coverage by device type', 'vulnhub' ),
 			'summary' => __( 'Where the Defender sensor is not installed.', 'vulnhub' ),
 			'group'   => 'endpoint',
+			'depends' => array( 'defender', 'assets' ),
 			'width'   => 8,
 			'render'  => array( __CLASS__, 'render_defender_by_type' ),
 			'data'    => array( __CLASS__, 'data_defender_by_type' ),
@@ -274,6 +294,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Defender coverage by source system', 'vulnhub' ),
 			'summary' => __( 'Which systems say an asset exists, and whether Defender has onboarded it. Covered + gaps = total. An asset three systems know is counted three times.', 'vulnhub' ),
 			'group'   => 'endpoint',
+			'depends' => array( 'defender', 'assets' ),
 			'width'   => 6,
 			'render'  => array( __CLASS__, 'render_defender_by_source' ),
 			'data'    => array( __CLASS__, 'data_defender_by_source' ),
@@ -283,6 +304,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Defender coverage of the CMDB', 'vulnhub' ),
 			'summary' => __( 'Of the assets the CMDB says exist, how many have a Defender sensor.', 'vulnhub' ),
 			'group'   => 'endpoint',
+			'depends' => array( 'defender', 'assets' ),
 			'width'   => 4,
 			'render'  => array( __CLASS__, 'render_defender_cmdb' ),
 			'data'    => array( __CLASS__, 'data_defender_cmdb' ),
@@ -292,6 +314,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Defender gaps in the CMDB register', 'vulnhub' ),
 			'summary' => __( 'Assets the CMDB says exist that have no Defender sensor reporting.', 'vulnhub' ),
 			'group'   => 'endpoint',
+			'depends' => array( 'defender', 'assets' ),
 			'width'   => 12,
 			'render'  => array( __CLASS__, 'render_defender_gaps_cmdb' ),
 			'data'    => array( __CLASS__, 'data_defender_gaps_cmdb' ),
@@ -301,6 +324,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Defender gap list', 'vulnhub' ),
 			'summary' => __( 'In-scope assets with no Defender sensor reporting.', 'vulnhub' ),
 			'group'   => 'endpoint',
+			'depends' => array( 'defender', 'assets' ),
 			'width'   => 12,
 			'render'  => array( __CLASS__, 'render_defender_gaps' ),
 			'data'    => array( __CLASS__, 'data_defender_gaps' ),
@@ -310,6 +334,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Tenable coverage of the CMDB', 'vulnhub' ),
 			'summary' => __( 'Of the assets the CMDB says exist, how many Tenable has a record of.', 'vulnhub' ),
 			'group'   => 'coverage',
+			'depends' => array( 'coverage', 'assets' ),
 			'width'   => 4,
 			'render'  => array( __CLASS__, 'render_coverage_cmdb' ),
 			'data'    => array( __CLASS__, 'data_coverage_cmdb' ),
@@ -319,6 +344,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Tenable gaps in the CMDB register', 'vulnhub' ),
 			'summary' => __( 'Assets the CMDB says exist that Tenable has no record of.', 'vulnhub' ),
 			'group'   => 'coverage',
+			'depends' => array( 'coverage', 'assets' ),
 			'width'   => 12,
 			'render'  => array( __CLASS__, 'render_coverage_gaps_cmdb' ),
 			'data'    => array( __CLASS__, 'data_coverage_gaps_cmdb' ),
@@ -330,6 +356,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Exposure by team', 'vulnhub' ),
 			'summary' => __( 'Who currently carries the open findings.', 'vulnhub' ),
 			'group'   => 'ownership',
+			'depends' => array( 'findings', 'assets' ),
 			'width'   => 6,
 			'render'  => array( __CLASS__, 'render_team_exposure' ),
 			'data'    => array( __CLASS__, 'data_team_exposure' ),
@@ -339,6 +366,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Ownership gaps', 'vulnhub' ),
 			'summary' => __( 'Workstations and mobiles with nobody to chase.', 'vulnhub' ),
 			'group'   => 'ownership',
+			'depends' => array( 'assets' ),
 			'width'   => 6,
 			'render'  => array( __CLASS__, 'render_ownership_gaps' ),
 			'data'    => array( __CLASS__, 'data_ownership_gaps' ),
@@ -348,6 +376,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Estate by device type', 'vulnhub' ),
 			'summary' => __( 'What the fleet in the reporting scope is made of.', 'vulnhub' ),
 			'group'   => 'ownership',
+			'depends' => array( 'assets' ),
 			'width'   => 4,
 			'render'  => array( __CLASS__, 'render_assets_by_type' ),
 			'data'    => array( __CLASS__, 'data_assets_by_type' ),
@@ -357,6 +386,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Exposure by product', 'vulnhub' ),
 			'summary' => __( 'Which apps, libraries and OS updates put the most assets at risk. Fix the top rows and the number moves fastest.', 'vulnhub' ),
 			'group'   => 'exposure',
+			'depends' => array( 'findings', 'assets' ),
 			'width'   => 12,
 			'render'  => array( __CLASS__, 'render_product_exposure' ),
 			'data'    => array( __CLASS__, 'data_product_exposure' ),
@@ -386,6 +416,7 @@ final class VulnHub_Dash_Widgets {
 			'label'   => __( 'Ticket flow', 'vulnhub' ),
 			'summary' => __( 'Open versus done, by status category.', 'vulnhub' ),
 			'group'   => 'remediation',
+			'depends' => array( 'tickets' ),
 			'width'   => 4,
 			'render'  => array( __CLASS__, 'render_ticket_flow' ),
 			'data'    => array( __CLASS__, 'data_ticket_flow' ),
@@ -651,15 +682,147 @@ final class VulnHub_Dash_Widgets {
 		$epoch = get_option( 'vulnhub_widget_epoch', '' );
 
 		if ( ! $epoch ) {
-			$epoch = (string) time();
+			$epoch = '1';
 			update_option( 'vulnhub_widget_epoch', $epoch, false );
 		}
 
 		return (string) $epoch;
 	}
 
-	public static function bust(): void {
-		update_option( 'vulnhub_widget_epoch', (string) time(), false );
+	/**
+	 * The data a widget's numbers come from.
+	 *
+	 * One global epoch meant a Defender sync threw away the Tenable widgets
+	 * and the whole board had to be rebuilt -- 2.3s of cron time for a change
+	 * that moved four numbers. A widget keyed on its own sources is only
+	 * rebuilt when one of them actually moves.
+	 *
+	 * A widget that declares nothing depends on everything. That is the old
+	 * behaviour, and it is the safe default: under-declaring a dependency
+	 * produces a widget that silently stops updating, which is a worse bug
+	 * than rebuilding something that did not need it.
+	 *
+	 * @return array<int,string>
+	 */
+	public static function sources(): array {
+		return array( 'findings', 'assets', 'coverage', 'defender', 'tickets', 'threat' );
+	}
+
+	/**
+	 * Which sources each connector moves.
+	 *
+	 * @return array<string,array<int,string>>
+	 */
+	public static function connector_sources(): array {
+		return (array) apply_filters(
+			'vulnhub_widget_connector_sources',
+			array(
+				'tenable'  => array( 'findings', 'assets', 'coverage' ),
+				'intune'   => array( 'assets', 'coverage' ),
+				'defender' => array( 'defender', 'assets', 'coverage' ),
+				'cmdb'     => array( 'assets' ),
+				'jira'     => array( 'tickets' ),
+				'threat'   => array( 'threat', 'findings' ),
+				'alerts'   => array( 'threat' ),
+			)
+		);
+	}
+
+	/**
+	 * One source's stamp.
+	 *
+	 * A counter, not a timestamp, and it does not fall back to the global
+	 * stamp. Both of those were bugs: with second-resolution timestamps, two
+	 * busts inside the same second produced the same stamp and the second one
+	 * invalidated nothing -- and a sync finishing in the same second as
+	 * anything else is not a rare case, it is a Tuesday. Falling back to the
+	 * global stamp made it worse, because the global had just been set to the
+	 * same time() value.
+	 */
+	public static function source_epoch( string $source ): string {
+		$all = (array) get_option( 'vulnhub_widget_epochs', array() );
+
+		return (string) ( $all[ $source ] ?? '0' );
+	}
+
+	/**
+	 * The composite stamp for one widget: its own sources, in a fixed order.
+	 */
+	public static function widget_epoch( string $id ): string {
+		$all  = self::all();
+		$deps = (array) ( $all[ $id ]['depends'] ?? array() );
+
+		// Nothing declared: depends on everything, which is the global stamp.
+		if ( ! $deps ) {
+			return self::epoch();
+		}
+
+		sort( $deps );
+		$parts = array( self::epoch_floor() );
+
+		foreach ( $deps as $dep ) {
+			$parts[] = $dep . ':' . self::source_epoch( (string) $dep );
+		}
+
+		return md5( implode( '|', $parts ) );
+	}
+
+	/**
+	 * A stamp bumped only by things no per-source list covers.
+	 *
+	 * A deploy, a settings change, a manual bust from the admin screen: these
+	 * can change any widget's output and belong to no data source, so they
+	 * have to invalidate widgets that declare their dependencies too.
+	 */
+	public static function epoch_floor(): string {
+		return (string) get_option( 'vulnhub_widget_floor', '0' );
+	}
+
+	/** Bump a counter option and return the new value. */
+	private static function tick( string $option ): string {
+		$next = (string) ( (int) get_option( $option, '0' ) + 1 );
+		update_option( $option, $next, false );
+
+		return $next;
+	}
+
+	/**
+	 * Invalidate everything, or just the widgets fed by one source.
+	 *
+	 * Called with no argument from the admin screens and from anything whose
+	 * blast radius is not known, which is the safe reading.
+	 */
+	public static function bust( string $source = '' ): void {
+		self::tick( 'vulnhub_widget_epoch' );
+
+		if ( '' === $source ) {
+			// Nothing is trusted: move the floor, which is in every key.
+			self::tick( 'vulnhub_widget_floor' );
+			return;
+		}
+
+		$all            = (array) get_option( 'vulnhub_widget_epochs', array() );
+		$all[ $source ] = (string) ( (int) ( $all[ $source ] ?? '0' ) + 1 );
+		update_option( 'vulnhub_widget_epochs', $all, false );
+	}
+
+	/**
+	 * Invalidate the sources a finished connector sync actually moved.
+	 *
+	 * @param string $connector Connector id.
+	 */
+	public static function bust_for_connector( string $connector = '' ): void {
+		$map = self::connector_sources();
+
+		// An unknown connector could have moved anything.
+		if ( '' === $connector || ! isset( $map[ $connector ] ) ) {
+			self::bust();
+			return;
+		}
+
+		foreach ( (array) $map[ $connector ] as $source ) {
+			self::bust( (string) $source );
+		}
 	}
 
 	/**
@@ -690,6 +853,157 @@ final class VulnHub_Dash_Widgets {
 
 	/** Hook that renders one widget in the background. */
 	public const HOOK_REFRESH = 'vulnhub_widget_refresh';
+
+	/** Hook that re-renders the whole board in the background. */
+	public const HOOK_WARM = 'vulnhub_widget_warm';
+
+	/** Hosts a board has been rendered for, so a cron warm can target them. */
+	public const HOSTS_KEY = 'vulnhub_widget_hosts';
+
+	/** What the last warm did, so a stalled cron shows up as stale numbers. */
+	public const WARM_KEY = 'vulnhub_widget_warm_state';
+
+	/**
+	 * Remember a host we have served a board for.
+	 *
+	 * A cron process has no request host, so a warm has to be told which ones
+	 * to render for -- this stack answers on localhost and on whatever public
+	 * hostname it is published under, and widget markup carries absolute
+	 * links built from whichever one asked. Bounded to four so a spoofed Host
+	 * header cannot turn this into an unbounded list of render targets.
+	 */
+	private static function remember_host(): void {
+		$host  = home_url();
+		$hosts = (array) get_option( self::HOSTS_KEY, array() );
+
+		if ( in_array( $host, $hosts, true ) ) {
+			return;
+		}
+
+		$hosts[] = $host;
+		update_option( self::HOSTS_KEY, array_slice( $hosts, -4 ), false );
+	}
+
+	/**
+	 * Queue a whole-board warm, at most one in flight.
+	 *
+	 * Called after anything that busts the cache. The point is that the
+	 * re-render happens on cron rather than in front of whoever opens the
+	 * dashboard next -- serve-stale already means they do not wait, and this
+	 * means they do not get stale numbers for long either.
+	 */
+	public static function queue_warm(): void {
+		if ( false !== get_transient( 'vh_warm_lock' ) ) {
+			return;
+		}
+
+		set_transient( 'vh_warm_lock', 1, 2 * MINUTE_IN_SECONDS );
+		wp_schedule_single_event( time(), self::HOOK_WARM );
+	}
+
+	/**
+	 * Re-render every widget on the default board, for every host we serve.
+	 *
+	 * Renders the union of the default layout and whatever is actually on
+	 * people's boards, so a widget somebody added by hand is warmed too.
+	 * Measured at ~2.3s for 28 widgets, which is one cron tick.
+	 */
+	public static function warm(): void {
+		$started = microtime( true );
+		$hosts   = (array) get_option( self::HOSTS_KEY, array() );
+
+		if ( ! $hosts ) {
+			$hosts = array( home_url() );
+		}
+
+		$ids = array_column( self::default_layout(), 'id' );
+
+		/*
+		 * Anything anybody has on a board, not just the default set. A widget
+		 * that only one person added is exactly the one that would otherwise
+		 * always be rendered on the request path.
+		 */
+		foreach ( self::boards_in_use() as $extra ) {
+			if ( ! in_array( $extra, $ids, true ) ) {
+				$ids[] = $extra;
+			}
+		}
+
+		$done = 0;
+		foreach ( $hosts as $host ) {
+			foreach ( $ids as $id ) {
+				self::refresh( (string) $id, (string) $host );
+				++$done;
+			}
+		}
+
+		update_option(
+			self::WARM_KEY,
+			array(
+				'at'      => time(),
+				'widgets' => $done,
+				'hosts'   => count( $hosts ),
+				'seconds' => round( microtime( true ) - $started, 2 ),
+				'epoch'   => self::epoch(),
+			),
+			false
+		);
+
+		delete_transient( 'vh_warm_lock' );
+	}
+
+	/**
+	 * Every widget id anybody currently has on a board.
+	 *
+	 * @return array<int,string>
+	 */
+	private static function boards_in_use(): array {
+		global $wpdb;
+
+		$rows = (array) $wpdb->get_col(
+			$wpdb->prepare(
+				"SELECT meta_value FROM {$wpdb->usermeta} WHERE meta_key = %s LIMIT 200",
+				self::META_KEY
+			)
+		);
+
+		$ids = array();
+		foreach ( $rows as $raw ) {
+			$layout = maybe_unserialize( $raw );
+			if ( ! is_array( $layout ) ) {
+				continue;
+			}
+			foreach ( $layout as $item ) {
+				if ( isset( $item['id'] ) ) {
+					$ids[ (string) $item['id'] ] = true;
+				}
+			}
+		}
+
+		return array_keys( $ids );
+	}
+
+	/**
+	 * How stale the warmed cache is, for the admin portal.
+	 *
+	 * The whole plan makes cron responsible for dashboard latency rather than
+	 * only for scheduled syncs, so a cron loop that has quietly stopped has
+	 * to be visible as something other than nothing at all.
+	 *
+	 * @return array{at:int,age:int,widgets:int,seconds:float,current:bool}
+	 */
+	public static function warm_state(): array {
+		$state = (array) get_option( self::WARM_KEY, array() );
+		$at    = (int) ( $state['at'] ?? 0 );
+
+		return array(
+			'at'      => $at,
+			'age'     => $at ? time() - $at : 0,
+			'widgets' => (int) ( $state['widgets'] ?? 0 ),
+			'seconds' => (float) ( $state['seconds'] ?? 0 ),
+			'current' => (string) ( $state['epoch'] ?? '' ) === self::epoch(),
+		);
+	}
 
 	/**
 	 * Queue a background re-render, at most one in flight per widget.
@@ -760,7 +1074,7 @@ final class VulnHub_Dash_Widgets {
 			self::cache_key( $id ),
 			array(
 				'html'        => $html,
-				'epoch'       => self::epoch(),
+				'epoch'       => self::widget_epoch( $id ),
 				'fresh_until' => time() + self::ttl(),
 			),
 			self::stale_ttl()
@@ -821,6 +1135,8 @@ final class VulnHub_Dash_Widgets {
 		 * only person who ever renders a widget on the request path is the
 		 * first one after a deploy.
 		 */
+		self::remember_host();
+
 		$ttl   = self::ttl();
 		$key   = self::cache_key( $id );
 		$entry = $ttl > 0 ? get_transient( $key ) : false;
@@ -829,7 +1145,7 @@ final class VulnHub_Dash_Widgets {
 		if ( is_array( $entry ) && isset( $entry['html'] ) ) {
 			$html = (string) $entry['html'];
 
-			$stale = (string) ( $entry['epoch'] ?? '' ) !== self::epoch()
+			$stale = (string) ( $entry['epoch'] ?? '' ) !== self::widget_epoch( $id )
 				|| (int) ( $entry['fresh_until'] ?? 0 ) < time();
 
 			if ( $stale ) {
@@ -2801,27 +3117,167 @@ final class VulnHub_Dash_Widgets {
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
+	/**
+	 * Product exposure rows, from the materialised table where possible.
+	 *
+	 * Three layers, cheapest first:
+	 *
+	 *   1. `summary_products`, rebuilt by the warm job. An index range, and
+	 *      the only layer a filter can also read -- which is the reason it
+	 *      exists. Caching rendered markup makes the default view instant and
+	 *      does nothing at all for `?scope=linux`.
+	 *   2. A transient, for a scope the summary has not been built for yet.
+	 *   3. product_rows_live(), the aggregate itself.
+	 *
+	 * The live query stays the single definition of what a product row is;
+	 * the summary is a durable copy of its output, not a second
+	 * implementation that can drift from it.
+	 */
 	public static function product_rows( int $limit = 14, string $scope = '' ): array {
-		global $wpdb;
+		$from_summary = self::product_rows_summary( $limit, $scope );
 
-		/*
-		 * Cached per (limit, scope) and keyed off the widget epoch, so an
-		 * import replaces it rather than it going stale on a timer.
-		 *
-		 * This is the most expensive aggregate in the product: one query that
-		 * reads every row of `vulns`, fans out to roughly 34 findings each,
-		 * and finishes in a temporary table with a filesort -- 1.07s
-		 * measured, and no index removes it, because counting distinct assets
-		 * per product has to visit every open finding. The widget's rendered
-		 * markup was already cached, but /products/ calls this with limit 0
-		 * and was not, which is why that page cost 1.2s on every single load.
-		 */
+		if ( null !== $from_summary ) {
+			return $from_summary;
+		}
+
 		$ck  = 'vh_prod_' . md5( $limit . '|' . $scope . '|' . self::epoch() );
 		$hit = get_transient( $ck );
 
 		if ( is_array( $hit ) ) {
 			return $hit;
 		}
+
+		$rows = self::product_rows_live( $limit, $scope );
+		set_transient( $ck, $rows, self::stale_ttl() );
+
+		return $rows;
+	}
+
+	/**
+	 * Read product rows out of the materialised table, or null if it cannot
+	 * serve this request.
+	 *
+	 * Returns null rather than an empty array when the summary is missing,
+	 * stale or has no rows for the scope: an empty array is a legitimate
+	 * answer ("no products in this scope") and must not be confused with "the
+	 * summary has not been built".
+	 *
+	 * @return array<int,array<string,mixed>>|null
+	 */
+	private static function product_rows_summary( int $limit, string $scope ): ?array {
+		global $wpdb;
+
+		$table = vh_table( 'summary_products' );
+		$state = (array) get_option( self::SUMMARY_KEY, array() );
+
+		// Built against a different epoch means the findings moved under it.
+		if ( (string) ( $state['epoch'] ?? '' ) !== self::epoch() ) {
+			return null;
+		}
+		if ( ! in_array( $scope, (array) ( $state['scopes'] ?? array() ), true ) ) {
+			return null;
+		}
+
+		$sql = "SELECT product, product_slug, product_kind, component_class, assets, findings, bundles
+			      FROM {$table} WHERE scope = %s ORDER BY rank_in_scope ASC";
+		$args = array( $scope );
+
+		if ( $limit > 0 ) {
+			$sql   .= ' LIMIT %d';
+			$args[] = $limit;
+		}
+
+		$rows = (array) $wpdb->get_results( $wpdb->prepare( $sql, ...$args ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+
+		foreach ( $rows as $i => $row ) {
+			$rows[ $i ]['assets']   = (int) $row['assets'];
+			$rows[ $i ]['findings'] = (int) $row['findings'];
+		}
+
+		return $rows;
+	}
+
+	/** Where the summary's build state lives: which scopes, at which epoch. */
+	public const SUMMARY_KEY = 'vulnhub_summary_products_state';
+
+	/**
+	 * Rebuild the materialised product table for every scope.
+	 *
+	 * Runs inside the warm job, so it costs cron time rather than request
+	 * time. Five scopes at ~1.1s each is the price of making /products/ and
+	 * every scope filter on it an index read.
+	 *
+	 * Written scope by scope, each one deleted and reinserted in a single
+	 * statement pair, so a reader either sees the previous scope's rows or
+	 * the new ones and never half of a rebuild.
+	 */
+	public static function rebuild_product_summary(): array {
+		global $wpdb;
+
+		$table  = vh_table( 'summary_products' );
+		$now    = vh_now();
+		$built  = array();
+		$rows_w = 0;
+
+		foreach ( array_keys( self::product_scopes() ) as $scope ) {
+			$rows = self::product_rows_live( 0, (string) $scope );
+
+			$values = array();
+			$params = array();
+
+			foreach ( array_values( $rows ) as $rank => $row ) {
+				$values[] = '(%s,%s,%s,%s,%s,%d,%d,%s,%d,%s)';
+				array_push(
+					$params,
+					(string) $scope,
+					(string) $row['product'],
+					(string) $row['product_slug'],
+					(string) $row['product_kind'],
+					(string) $row['component_class'],
+					(int) $row['assets'],
+					(int) $row['findings'],
+					(string) ( $row['bundles'] ?? '' ),
+					$rank + 1,
+					$now
+				);
+			}
+
+			$wpdb->query( $wpdb->prepare( "DELETE FROM {$table} WHERE scope = %s", $scope ) ); // phpcs:ignore
+
+			if ( $values ) {
+				$wpdb->query(
+					$wpdb->prepare(
+						"INSERT INTO {$table}
+						 (scope,product,product_slug,product_kind,component_class,assets,findings,bundles,rank_in_scope,computed_at)
+						 VALUES " . implode( ',', $values ), // phpcs:ignore
+						...$params
+					)
+				);
+			}
+
+			$built[] = (string) $scope;
+			$rows_w += count( $rows );
+		}
+
+		update_option(
+			self::SUMMARY_KEY,
+			array(
+				'epoch'  => self::epoch(),
+				'scopes' => $built,
+				'rows'   => $rows_w,
+				'at'     => time(),
+			),
+			false
+		);
+
+		return array( 'scopes' => count( $built ), 'rows' => $rows_w );
+	}
+
+	/**
+	 * The product exposure aggregate itself. The expensive one.
+	 */
+	private static function product_rows_live( int $limit = 14, string $scope = '' ): array {
+		global $wpdb;
 
 		$f = vh_table( 'findings' );
 		$v = vh_table( 'vulns' );
@@ -2890,8 +3346,6 @@ final class VulnHub_Dash_Widgets {
 			 ORDER BY assets DESC, findings DESC{$limit_sql}", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			ARRAY_A
 		);
-
-		set_transient( $ck, $rows, self::stale_ttl() );
 
 		return $rows;
 	}

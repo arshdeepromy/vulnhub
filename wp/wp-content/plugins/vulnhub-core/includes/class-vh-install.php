@@ -34,6 +34,29 @@ final class Install {
 		$sql = array();
 
 		/* ---------------------------------------------------------------
+		 * Materialised product exposure, one row per product per scope.
+		 * Rebuilt by the dashboard's warm job; read instead of the 1.07s
+		 * aggregate it replaces. Rank is stored so a "top N" read is an
+		 * index range rather than a sort.
+		 * ------------------------------------------------------------- */
+		$sql[] = "CREATE TABLE {$p}summary_products (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			scope varchar(32) NOT NULL DEFAULT '',
+			product varchar(191) NOT NULL DEFAULT '',
+			product_slug varchar(191) NOT NULL DEFAULT '',
+			product_kind varchar(32) NOT NULL DEFAULT '',
+			component_class varchar(32) NOT NULL DEFAULT '',
+			assets int(10) unsigned NOT NULL DEFAULT 0,
+			findings int(10) unsigned NOT NULL DEFAULT 0,
+			bundles text NULL,
+			rank_in_scope int(10) unsigned NOT NULL DEFAULT 0,
+			computed_at datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
+			PRIMARY KEY  (id),
+			KEY scope_rank (scope,rank_in_scope),
+			KEY scope_slug (scope,product_slug)
+		) {$charset};";
+
+		/* ---------------------------------------------------------------
 		 * People (owners) — sourced from Intune/Entra, CMDB or manual.
 		 * ------------------------------------------------------------- */
 		$sql[] = "CREATE TABLE {$p}people (
