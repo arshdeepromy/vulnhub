@@ -323,6 +323,13 @@ final class VulnHub_Dash_Export {
 					'product'     => array( $g, __( 'Product', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['product'] ?? '' ) ),
 					'severity'    => array( $g, __( 'Severity', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['severity'] ?? '' ) ),
 					'title'       => array( $g, __( 'Vulnerability', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['title'] ?? '' ) ),
+					// Owner leads, matching the popup. Person and team are also
+					// offered separately: the popup has one cell to spend and
+					// collapses them, but a spreadsheet can sort or pivot on
+					// either, and "who" and "which team" are different questions.
+					'owner'       => array( $g, __( 'Owner', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['owner'] ?? '' ) ),
+					'owner_name'  => array( $g, __( 'Owner (person)', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['owner_name'] ?? '' ) ),
+					'team_name'   => array( $g, __( 'Owner (team)', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['team_name'] ?? '' ) ),
 					'plugin_id'   => array( $g, __( 'Plugin', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['plugin_id'] ?? '' ) ),
 					'cvss3'       => array( $g, __( 'CVSS v3', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['cvss3'] ?? '' ) ),
 					'first_found' => array( $g, __( 'First found', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['first_found'] ?? '' ) ),
