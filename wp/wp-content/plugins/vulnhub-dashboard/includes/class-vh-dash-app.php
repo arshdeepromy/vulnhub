@@ -1068,6 +1068,33 @@ final class VulnHub_Dash_App {
 				</a>
 			<?php endif; ?>
 		</p>
+		<?php
+		/*
+		 * A zone filter came from a widget tile, so say so. A list quietly
+		 * holding a filter nobody can see is how people end up reporting that
+		 * the numbers are wrong.
+		 */
+		$vh_zone     = self::q( 'zone' );
+		$vh_platform = self::q( 'platform' );
+		?>
+		<?php if ( 'downloads' === $vh_zone ) : ?>
+			<div class="vh-notice vh-notice--info">
+				<?php
+				if ( '' !== $vh_platform ) {
+					printf(
+						/* translators: %s: platform name, e.g. Windows. */
+						esc_html__( 'Only findings whose vulnerable files sit in a user download folder, on %s machines.', 'vulnhub' ),
+						esc_html( \VulnHub\Core\Os::platform_label( $vh_platform ) )
+					);
+				} else {
+					esc_html_e( 'Only findings whose vulnerable files sit in a user download folder.', 'vulnhub' );
+				}
+				?>
+				<a href="<?php echo esc_url( self::page_url( 'vulnerabilities', self::current_filters( array( 'search', 'severity', 'asset_type', 'team_id', 'age', 'overdue', 'life' ) ) ) ); ?>">
+					<?php esc_html_e( 'Clear this filter', 'vulnhub' ); ?>
+				</a>
+			</div>
+		<?php endif; ?>
 		<?php $vh_prod = self::q( 'product' ); ?>
 		<?php if ( '' !== $vh_prod ) : ?>
 			<div class="vh-notice vh-notice--info">
@@ -1187,6 +1214,8 @@ final class VulnHub_Dash_App {
 							self::sort_th( 'title', __( 'Vulnerability', 'vulnhub' ), $orderby, $order );
 							self::sort_th( 'hostname', __( 'Asset', 'vulnhub' ), $orderby, $order );
 							?>
+							<th><?php esc_html_e( 'Location', 'vulnhub' ); ?></th>
+							<th><?php esc_html_e( 'File path', 'vulnhub' ); ?></th>
 							<th><?php esc_html_e( 'Owner', 'vulnhub' ); ?></th>
 							<?php self::sort_th( 'due_at', __( 'Due', 'vulnhub' ), $orderby, $order ); ?>
 							<th><?php esc_html_e( 'Ticket', 'vulnhub' ); ?></th>
@@ -1441,6 +1470,8 @@ final class VulnHub_Dash_App {
 			'search'     => self::q( 'search' ),
 			'overdue'    => self::q( 'overdue' ),
 			'patch_available' => self::q( 'patch_available' ),
+			'path_zone'  => self::q( 'zone' ),
+			'os_platform' => self::q( 'platform' ),
 			'orderby'    => $orderby,
 			'order'      => $order,
 		);
@@ -1496,6 +1527,24 @@ final class VulnHub_Dash_App {
 			<td data-th="<?php esc_attr_e( 'Asset', 'vulnhub' ); ?>">
 				<a class="vh-mono" href="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $f['asset_id'] ) ) ); ?>"><?php echo esc_html( (string) $f['hostname'] ); ?></a>
 				<span class="vh-meta"><?php echo esc_html( (string) $f['ipv4'] ); ?></span>
+			</td>
+			<td data-th="<?php esc_attr_e( 'Location', 'vulnhub' ); ?>"><?php echo esc_html( (string) ( $f['location_name'] ?: '—' ) ); ?></td>
+			<td data-th="<?php esc_attr_e( 'File path', 'vulnhub' ); ?>">
+				<?php
+				/*
+				 * zone_path first: on a finding that reports several paths it
+				 * is the one that put the row in its zone, which is the whole
+				 * reason the reader filtered by zone. install_path() is the
+				 * fallback for everything else, parsed from the output the
+				 * same way it always was.
+				 */
+				$vh_path = (string) ( $f['zone_path'] ?: VH_Product::install_path( (string) ( $f['output'] ?? '' ) ) );
+				?>
+				<?php if ( '' !== $vh_path ) : ?>
+					<code class="vh-path" title="<?php echo esc_attr( $vh_path ); ?>"><?php echo esc_html( vh_trim( $vh_path, 54 ) ); ?></code>
+				<?php else : ?>
+					<span class="vh-meta">—</span>
+				<?php endif; ?>
 			</td>
 			<td data-th="<?php esc_attr_e( 'Owner', 'vulnhub' ); ?>">
 				<?php if ( ! empty( $f['owner_name'] ) ) : ?>

@@ -241,6 +241,15 @@ final class VulnHub_Dash_Widgets {
 			'data'    => array( __CLASS__, 'data_coverage_gaps' ),
 		);
 
+		$w['downloads_zone'] = array(
+			'label'   => __( 'Vulnerable software in Downloads folders', 'vulnhub' ),
+			'summary' => __( 'Open findings whose vulnerable files sit in a user download folder, split by platform.', 'vulnhub' ),
+			'group'   => 'exposure',
+			'width'   => 6,
+			'render'  => array( __CLASS__, 'render_downloads_zone' ),
+			'data'    => array( __CLASS__, 'data_downloads_zone' ),
+		);
+
 		/* ---------------------------------------------- endpoint coverage. */
 
 		$w['defender_summary'] = array(
@@ -445,6 +454,13 @@ final class VulnHub_Dash_Widgets {
 			 * actually do something about?
 			 */
 			array( 'id' => 'patch_availability', 'width' => 6 ),
+			/*
+			 * Next to patch availability, because it is the same question from
+			 * the other end: software in a download folder has no patch route
+			 * at all -- no packaging system knows it is there, so nothing will
+			 * ever update it.
+			 */
+			array( 'id' => 'downloads_zone', 'width' => 6 ),
 			array( 'id' => 'eol_platforms', 'width' => 12 ),
 			array( 'id' => 'coverage_summary', 'width' => 4 ),
 			array( 'id' => 'coverage_cmdb', 'width' => 4 ),
@@ -830,6 +846,96 @@ final class VulnHub_Dash_Widgets {
 	/* =================================================================
 	 * Widgets: exposure
 	 * ============================================================== */
+
+	/**
+	 * Open findings whose vulnerable files live in a user's Downloads folder.
+	 *
+	 * Software run out of a download folder is its own risk: nobody patches
+	 * it, no packaging system knows it is there, and it usually got there
+	 * because somebody needed it once. The split is by platform because the
+	 * remediation differs -- a Windows workstation is a conversation with the
+	 * person whose profile it is, a Linux host with whoever owns the box.
+	 *
+	 * A platform with nothing in it is still drawn. "Linux: 0" is a finding;
+	 * a missing tile just looks like the widget forgot.
+	 */
+	public static function render_downloads_zone(): void {
+		$counts = Repo::path_zone_platforms( 'downloads' );
+		$reach  = Repo::path_zone_reach( 'downloads' );
+		$total  = array_sum( $counts );
+
+		if ( 0 === $total ) {
+			echo '<p class="vh-sub">' . esc_html__( 'No open finding has a vulnerable file in a user download folder.', 'vulnhub' ) . '</p>';
+			return;
+		}
+
+		echo '<p class="vh-sub">';
+		printf(
+			/* translators: 1: number of findings, 2: number of assets, 3: number of owners. */
+			esc_html__( '%1$s open findings across %2$s machines, traced to %3$s named owners.', 'vulnhub' ),
+			'<strong>' . esc_html( number_format_i18n( $total ) ) . '</strong>',
+			esc_html( number_format_i18n( $reach['assets'] ) ),
+			esc_html( number_format_i18n( $reach['owners'] ) )
+		);
+		echo '</p>';
+
+		echo '<div class="vh-tiles">';
+
+		$estate = \VulnHub\Core\Os::estate_platforms();
+
+		foreach ( $counts as $platform => $count ) {
+			// Only the platforms a person runs software on.
+			if ( ! in_array( $platform, array( 'windows', 'linux', 'macos' ), true ) ) {
+				continue;
+			}
+
+			/*
+			 * A zero is worth drawing when the estate actually has machines of
+			 * that kind -- "Linux: 0" across 251 Linux hosts is the answer to
+			 * the question. A platform with no assets at all is not an answer,
+			 * it is a tile about nothing, so it is left out.
+			 */
+			if ( 0 === $count && 0 === (int) ( $estate[ $platform ] ?? 0 ) ) {
+				continue;
+			}
+
+			echo VulnHub_Dash_Charts::stat_tile( // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+				array(
+					'label' => \VulnHub\Core\Os::platform_label( $platform ),
+					'value' => $count,
+					'tone'  => $count > 0 ? 'warning' : 'good',
+					'meta'  => $count > 0
+						? __( 'running from a download folder', 'vulnhub' )
+						: __( 'nothing running from a download folder', 'vulnhub' ),
+					'href'  => VulnHub_Dash_Portal::portal_url(
+						'vulnerabilities',
+						array( 'zone' => 'downloads', 'platform' => $platform )
+					),
+				)
+			);
+		}
+
+		echo '</div>';
+	}
+
+	/**
+	 * CSV behind the widget.
+	 *
+	 * @return array<int,array<string,string|int>>
+	 */
+	public static function data_downloads_zone(): array {
+		$rows = array();
+		foreach ( Repo::path_zone_platforms( 'downloads' ) as $platform => $count ) {
+			if ( ! in_array( $platform, array( 'windows', 'linux', 'macos' ), true ) ) {
+				continue;
+			}
+			$rows[] = array(
+				'platform' => \VulnHub\Core\Os::platform_label( $platform ),
+				'findings' => $count,
+			);
+		}
+		return $rows;
+	}
 
 	public static function render_headline(): void {
 		$s     = Repo::summary();

@@ -187,7 +187,9 @@ final class VulnHub_Dash_Export {
 					'family'      => array( $vuln, __( 'Family', 'vulnhub' ), static fn( array $r ): string => (string) $r['family'] ),
 					'product'     => array( $vuln, __( 'Product / library', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['product'] ?? '' ) ),
 					'bundle_app'  => array( $vuln, __( 'Bundled in app', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['bundle_app'] ?? '' ) ),
-					'install_path'=> array( $vuln, __( 'Install path', 'vulnhub' ), static fn( array $r ): string => self::install_path( (string) ( $r['output'] ?? '' ) ) ),
+					'location'    => array( $asset, __( 'Location', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['location_name'] ?? '' ) ),
+					'install_path'=> array( $vuln, __( 'Install path', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['zone_path'] ?: self::install_path( (string) ( $r['output'] ?? '' ) ) ) ),
+					'path_zone'   => array( $vuln, __( 'Path zone', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['path_zone'] ?? '' ) ),
 					'cve'         => array( $vuln, __( 'CVE', 'vulnhub' ), static fn( array $r ): string => self::cve_list( $r ) ),
 					'severity'    => array( $sev, __( 'Severity', 'vulnhub' ), static fn( array $r ): string => (string) $r['severity'] ),
 					'cvss3'       => array( $sev, __( 'CVSS v3', 'vulnhub' ), static fn( array $r ): string => (string) $r['cvss3_base'] ),
@@ -385,14 +387,14 @@ final class VulnHub_Dash_Export {
 	/**
 	 * The install path out of a finding's plugin output, for the patch list.
 	 *
-	 * Just the "Path : ..." token -- the one column a patch engineer needs to
-	 * find the vulnerable copy on the box. Empty when the scan gave no path.
+	 * Delegates to VH_Product, which the popup and the vulnerability table
+	 * already use. This was a second, stricter copy of the same regex, so the
+	 * CSV and the screen disagreed about whether a finding had a path at all:
+	 * it required the path to end in .dll/.jar/.exe/.so/.node and so dropped
+	 * every directory install.
 	 */
 	private static function install_path( string $output ): string {
-		if ( '' !== $output && preg_match( '/Path\s*:?\s*([A-Za-z]:\\[^\r\n]+?\.(?:dll|jar|exe|so|node)|\/[^\r\n]+?\.(?:so|jar))/i', $output, $m ) ) {
-			return trim( $m[1] );
-		}
-		return '';
+		return \VH_Product::install_path( $output );
 	}
 
 	private static function cve_list( array $r ): string {
@@ -869,6 +871,16 @@ final class VulnHub_Dash_Export {
 				'vuln_id'         => self::get_int( 'vuln' ),
 				'asset_id'        => self::get_int( 'asset' ),
 				'patch_available' => self::get( 'patch_available' ),
+				/*
+				 * Same trap again, one filter later: carried() forwards every
+				 * arg the list held into the form, but this list is what gets
+				 * read back, so a filter missing from here is silently dropped
+				 * and the export hands back the whole table. Exporting from
+				 * "vulnerable files in Downloads, Windows" returned 52,381
+				 * rows instead of 1,819 until these two were added.
+				 */
+				'path_zone'       => self::get( 'path_zone' ),
+				'os_platform'     => self::get( 'os_platform' ),
 				'orderby'         => self::get( 'orderby', 'risk_score' ),
 				'order'           => self::get( 'order', 'DESC' ),
 			),
