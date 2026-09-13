@@ -1227,6 +1227,9 @@ final class VulnHub_Dash_App {
 							self::sort_th( 'title', __( 'Vulnerability', 'vulnhub' ), $orderby, $order );
 							self::sort_th( 'hostname', __( 'Asset', 'vulnhub' ), $orderby, $order );
 							?>
+							<?php if ( self::show_reach() ) : ?>
+								<th><?php esc_html_e( 'Reachable via', 'vulnhub' ); ?></th>
+							<?php endif; ?>
 							<th><?php esc_html_e( 'Location', 'vulnhub' ); ?></th>
 							<th><?php esc_html_e( 'File path', 'vulnhub' ); ?></th>
 							<th><?php esc_html_e( 'Owner', 'vulnhub' ); ?></th>
@@ -1239,10 +1242,26 @@ final class VulnHub_Dash_App {
 					<?php foreach ( $q['rows'] as $f ) : ?>
 						<?php echo self::finding_row_html( $f ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 					<?php endforeach; ?>
+					<?php
+					/*
+					 * Inside the tbody, not after the closing </div>.
+					 *
+					 * A <tr> outside a table is not invalid markup that
+					 * degrades -- the HTML parser throws it away, so the
+					 * sentinel never reached the DOM, the observer never
+					 * attached, and infinite scroll on this table had simply
+					 * never run. Nothing looked broken because the classic
+					 * pager is still rendered underneath and quietly did the
+					 * job. It also has to sit in the tbody rather than merely
+					 * inside the table, because the loader inserts each new
+					 * page with insertAdjacentHTML('beforebegin') and those
+					 * rows have to land among the others.
+					 */
+					?>
+					<tr class="vh-sentinel" id="vh-findings-sentinel" data-vh-infinite="findings" data-offset="<?php echo esc_attr( (string) ( $paged * $per ) ); ?>" data-total="<?php echo esc_attr( (string) $total ); ?>" data-per="<?php echo esc_attr( (string) $per ); ?>" aria-hidden="true"><td colspan="<?php echo esc_attr( (string) ( self::show_reach() ? 11 : 10 ) ); ?>"></td></tr>
 					</tbody>
 				</table>
 			</div>
-			<tr id="vh-findings-sentinel" data-vh-infinite="findings" data-offset="<?php echo esc_attr( (string) ( $paged * $per ) ); ?>" data-total="<?php echo esc_attr( (string) $total ); ?>" data-per="<?php echo esc_attr( (string) $per ); ?>" hidden></tr>
 			<?php self::pager( $paged, $pages, 'vp' ); ?>
 		<?php endif; ?>
 		<?php
@@ -1519,6 +1538,37 @@ final class VulnHub_Dash_App {
 		);
 	}
 
+	/**
+	 * Is this list filtered to the route where reachability is the reason?
+	 *
+	 * The edge lane claims a finding can be reached from the internet with no
+	 * account and no click. Clicking through to a list that shows no sign of
+	 * what is listening leaves the reader with an assertion and no way to
+	 * check it, so the column appears exactly where that claim was made -- and
+	 * nowhere else, because on every other route it would be a column of
+	 * dashes.
+	 *
+	 * Read from the query string so the header, the first page and the
+	 * infinite-scroll rows all agree; a flag set in one render path and not
+	 * the other would put the cells out of step with the header on scroll.
+	 */
+	public static function show_reach(): bool {
+		return 'edge' === self::q( 'route' ) && class_exists( 'VulnHub_Threat_Ports' );
+	}
+
+	/**
+	 * What is listening on one asset, or why else it is considered reachable.
+	 *
+	 * @return array<int,string>
+	 */
+	public static function reach_evidence( int $asset_id ): array {
+		if ( ! class_exists( 'VulnHub_Threat_Ports' ) ) {
+			return array();
+		}
+
+		return (array) ( VulnHub_Threat_Ports::evidence_map()[ $asset_id ] ?? array() );
+	}
+
 	public static function finding_row_html( array $f ): string {
 		$cves    = vh_json( (string) $f['cve_json'] );
 		$overdue = ! empty( $f['due_at'] ) && strtotime( (string) $f['due_at'] . ' UTC' ) < time();
@@ -1588,6 +1638,28 @@ final class VulnHub_Dash_App {
 				<a class="vh-mono" href="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $f['asset_id'] ) ) ); ?>"><?php echo esc_html( (string) $f['hostname'] ); ?></a>
 				<span class="vh-meta"><?php echo esc_html( (string) $f['ipv4'] ); ?></span>
 			</td>
+			<?php if ( self::show_reach() ) : ?>
+				<td data-th="<?php esc_attr_e( 'Reachable via', 'vulnhub' ); ?>">
+					<?php
+					/*
+					 * One service per line, each unbreakable. Joined into a
+					 * single run they wrapped mid-token in this column's width
+					 * -- "http-alt 8080/tcp" split across two lines reads as
+					 * two different things.
+					 */
+					$vh_reach = self::reach_evidence( (int) $f['asset_id'] );
+					?>
+					<?php if ( $vh_reach ) : ?>
+						<ul class="vh-reach">
+							<?php foreach ( $vh_reach as $vh_svc ) : ?>
+								<li><?php echo esc_html( (string) $vh_svc ); ?></li>
+							<?php endforeach; ?>
+						</ul>
+					<?php else : ?>
+						<span class="vh-meta"><?php esc_html_e( 'no listening service recorded', 'vulnhub' ); ?></span>
+					<?php endif; ?>
+				</td>
+			<?php endif; ?>
 			<td data-th="<?php esc_attr_e( 'Location', 'vulnhub' ); ?>"><?php echo esc_html( (string) ( $f['location_name'] ?: '—' ) ); ?></td>
 			<td data-th="<?php esc_attr_e( 'File path', 'vulnhub' ); ?>">
 				<?php
@@ -2710,8 +2782,8 @@ final class VulnHub_Dash_App {
 				<?php foreach ( $q['rows'] as $a ) : ?>
 					<?php echo self::asset_row_html( $a, $vh_can_edit ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 				<?php endforeach; ?>
+				<tr class="vh-sentinel" id="vh-assets-sentinel" data-vh-infinite="assets" data-offset="<?php echo esc_attr( (string) ( $paged * $per ) ); ?>" data-total="<?php echo esc_attr( (string) $q['total'] ); ?>" data-per="<?php echo esc_attr( (string) $per ); ?>" data-can-edit="<?php echo esc_attr( $vh_can_edit ? '1' : '0' ); ?>" aria-hidden="true"><td colspan="99"></td></tr>
 				</tbody>
-				<tr id="vh-assets-sentinel" data-vh-infinite="assets" data-offset="<?php echo esc_attr( (string) ( $paged * $per ) ); ?>" data-total="<?php echo esc_attr( (string) $q['total'] ); ?>" data-per="<?php echo esc_attr( (string) $per ); ?>" data-can-edit="<?php echo esc_attr( $vh_can_edit ? '1' : '0' ); ?>" hidden></tr>
 			</table>
 		</div>
 

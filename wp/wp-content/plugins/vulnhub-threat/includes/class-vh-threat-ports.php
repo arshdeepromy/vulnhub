@@ -408,6 +408,77 @@ final class VulnHub_Threat_Ports {
 	}
 
 	/**
+	 * Why each reachable asset is considered reachable, ready to print.
+	 *
+	 * Loaded for the whole internet-facing set in one query rather than per
+	 * row. The set is the 23 assets the exposure rule confirmed, so this is a
+	 * couple of dozen rows however many findings the reader is paging through
+	 * -- and a findings list filtered to the edge route cannot contain an
+	 * asset that is not in it.
+	 *
+	 * A verdict with no port behind it still gets an entry: exposure can be
+	 * decided by a tag or a public address, and a blank cell on those rows
+	 * would read as "no evidence" when the real answer is "evidence of a
+	 * different kind".
+	 *
+	 * @return array<int,array<int,string>> Asset id => the listening services,
+	 *         or a single-entry list carrying the reason it is reachable.
+	 */
+	public static function evidence_map(): array {
+		global $wpdb;
+
+		static $map = null;
+
+		if ( null !== $map ) {
+			return $map;
+		}
+
+		$map  = array();
+		$expo = VulnHub_Threat_Install::table( 'asset_exposure' );
+
+		$facing = (array) $wpdb->get_results( // phpcs:ignore
+			"SELECT asset_id, reason FROM {$expo} WHERE internet_facing = 1", // phpcs:ignore
+			ARRAY_A
+		);
+
+		if ( ! $facing ) {
+			return $map;
+		}
+
+		$ids = array_map( static fn( array $r ): int => (int) $r['asset_id'], $facing );
+
+		$ports = (array) $wpdb->get_results( // phpcs:ignore
+			'SELECT asset_id, port, protocol, service, kind FROM ' . self::table() // phpcs:ignore
+			. ' WHERE remote = 1 AND asset_id IN (' . implode( ',', $ids ) . ')'
+			. ' ORDER BY FIELD(kind,' . "'web','mail','shell','file','db','dir'" . '), port',
+			ARRAY_A
+		);
+
+		$by_asset = array();
+
+		foreach ( $ports as $row ) {
+			$id = (int) $row['asset_id'];
+
+			$by_asset[ $id ][] = sprintf(
+				'%s %d/%s',
+				(string) $row['service'] ?: __( 'service', 'vulnhub' ),
+				(int) $row['port'],
+				(string) $row['protocol']
+			);
+		}
+
+		foreach ( $facing as $row ) {
+			$id = (int) $row['asset_id'];
+
+			$map[ $id ] = isset( $by_asset[ $id ] )
+				? array_slice( $by_asset[ $id ], 0, 4 )
+				: array( (string) $row['reason'] );
+		}
+
+		return $map;
+	}
+
+	/**
 	 * Which remote services are listening across the estate, and on how many.
 	 *
 	 * @return array<int,array{port:int,service:string,assets:int}>
