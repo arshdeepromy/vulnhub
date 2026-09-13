@@ -3359,7 +3359,17 @@ final class VulnHub_Dash_Widgets {
 		 * honest cut -- and it reads the finding's own severity, since a real
 		 * product legitimately carries both info and non-info detections.
 		 */
-		$is_bundled = "v.product_kind = 'library' AND f.bundle_app <> ''";
+		/*
+		 * os_package joins library here. A distro CVE plugin reports no path
+		 * and no product of its own, so every one of them fell into a single
+		 * row called "Linux: unpatched CVEs (no vendor fix)" -- 202,216
+		 * findings across 39 hosts, the largest row in the Linux view and
+		 * not a product anybody can go and patch. bundle_app now carries the
+		 * source package derived from the plugin's own package list, so those
+		 * findings group as kernel, openssl, curl, grafana and so on: the
+		 * same question the Windows side answers from the install path.
+		 */
+		$is_bundled = "v.product_kind IN ( 'library', 'os_package' ) AND f.bundle_app <> ''";
 
 		/*
 		 * The CASE is resolved in an inner query and grouped in the outer one.
@@ -3384,8 +3394,12 @@ final class VulnHub_Dash_Widgets {
 				SELECT f.asset_id,
 					CASE WHEN {$is_bundled} THEN f.bundle_app      ELSE v.product END        AS product,
 					CASE WHEN {$is_bundled} THEN f.bundle_app_slug ELSE v.product_slug END   AS product_slug,
-					CASE WHEN {$is_bundled} THEN 'application'      ELSE v.product_kind END   AS product_kind,
-					CASE WHEN {$is_bundled} THEN 'third_party'      ELSE v.component_class END AS component_class,
+					CASE WHEN {$is_bundled} AND v.product_kind = 'os_package' THEN 'os_package'
+					     WHEN {$is_bundled} THEN 'application'
+					     ELSE v.product_kind END   AS product_kind,
+					CASE WHEN {$is_bundled} AND v.product_kind = 'os_package' THEN 'os_package'
+					     WHEN {$is_bundled} THEN 'third_party'
+					     ELSE v.component_class END AS component_class,
 					CASE WHEN {$is_bundled} THEN v.product END AS bundled_lib
 				FROM {$f} f
 				INNER JOIN {$v} v ON v.id = f.vuln_id
