@@ -1305,3 +1305,41 @@ body.vh-modal-open { overflow: hidden; }
   font-size: 12px;
 }
 .vh-sentinel.is-loading > td::after { content: "Loading more…"; }
+
+/* Cloud connector setup: two routes, one of which most people cannot run.
+   They are given equal visual weight on purpose -- burying the short-term
+   route as a fallback is what sends somebody into an AccessDenied they then
+   have to interpret. */
+.vh-aws-setup { margin: 4px 0 8px; }
+
+.vh-aws-h {
+  margin: 18px 0 4px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--vh-ink);
+}
+.vh-aws-setup > .vh-aws-h:first-child { margin-top: 0; }
+
+.vh-aws-lede {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--vh-ink-2);
+}
+
+.vh-aws-steps {
+  margin: 0 0 4px;
+  padding-left: 20px;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.vh-aws-steps > li { margin-bottom: 3px; }
+
+.vh-aws-note {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--vh-muted);
+}
+
+.vh-field-note > td { padding-top: 4px; padding-bottom: 14px; }

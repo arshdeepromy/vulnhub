@@ -80,7 +80,7 @@ final class VulnHub_AWS_Connector extends Connector {
 				'type'        => 'text',
 				'required'    => true,
 				'placeholder' => '123456789012',
-				'help'        => __( 'From the stack’s Outputs tab — the AccountId row.', 'vulnhub' ),
+				'help'        => __( 'The 12-digit account number. Shown in the AWS access portal beside the account name, or as the AccountId output of the stack.', 'vulnhub' ),
 			),
 			array(
 				'key'         => 'access_key_id',
@@ -88,7 +88,7 @@ final class VulnHub_AWS_Connector extends Connector {
 				'type'        => 'text',
 				'required'    => true,
 				'placeholder' => 'AKIA…',
-				'help'        => __( 'From the stack’s Outputs tab — the AccessKeyId row.', 'vulnhub' ),
+				'help'        => __( 'Starts AKIA for a permanent key, ASIA for a short-term one from the access portal.', 'vulnhub' ),
 			),
 			array(
 				'key'      => 'secret_access_key',
@@ -96,7 +96,15 @@ final class VulnHub_AWS_Connector extends Connector {
 				'type'     => 'text',
 				'secret'   => true,
 				'required' => true,
-				'help'     => __( 'The SecretAccessKey row. Encrypted at rest; leave blank to keep the stored one.', 'vulnhub' ),
+				'help'     => __( 'Encrypted at rest. Leave blank to keep the stored one.', 'vulnhub' ),
+			),
+			array(
+				'key'      => 'session_token',
+				'label'    => __( 'Session token', 'vulnhub' ),
+				'type'     => 'text',
+				'secret'   => true,
+				'required' => false,
+				'help'     => __( 'Only for short-term credentials copied from the AWS access portal. Leave blank for a permanent access key. Short-term credentials expire within hours, so a connector using them can run on demand but will fail on a schedule.', 'vulnhub' ),
 			),
 			array(
 				'key'         => 'regions',
@@ -132,7 +140,21 @@ final class VulnHub_AWS_Connector extends Connector {
 			return null;
 		}
 
-		return new VulnHub_AWS_Client( $key, $secret );
+		// Present only for short-term credentials from the AWS access portal.
+		// Signed like any other header when it is there, absent when it is not.
+		return new VulnHub_AWS_Client( $key, $secret, trim( (string) $this->secret( 'session_token' ) ) );
+	}
+
+	/**
+	 * Are we running on credentials that will expire?
+	 *
+	 * Worth knowing because it changes what the connector can promise. A
+	 * short-term key is fine for a sync somebody presses; it cannot hold a
+	 * schedule, and the failure arrives hours later as an authentication error
+	 * rather than as anything that points at the cause.
+	 */
+	private function is_temporary(): bool {
+		return '' !== trim( (string) $this->secret( 'session_token' ) );
 	}
 
 	/** @return string[] */
@@ -253,6 +275,10 @@ final class VulnHub_AWS_Connector extends Connector {
 					? __( 'Inspector EC2 scanning is ON — its reachability findings will be used', 'vulnhub' )
 					: __( 'Inspector is off — exposure will be derived from security groups and routing', 'vulnhub' );
 			}
+		}
+
+		if ( $this->is_temporary() || str_contains( $who['arn'], ':assumed-role/' ) ) {
+			$notes[] = __( 'these are SHORT-TERM credentials — good for a sync you press, but they will expire and a scheduled sync will start failing', 'vulnhub' );
 		}
 
 		return array(
