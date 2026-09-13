@@ -249,6 +249,68 @@ final class VulnHub_AWS_Accounts {
 		);
 	}
 
+	/**
+	 * AWS accounts our own inventory already points at, that are not on the
+	 * list yet.
+	 *
+	 * Tenable records the account and region for every EC2 asset it scans, so
+	 * the set of accounts worth connecting is already sitting in the assets
+	 * table. Asking somebody to type them from memory invites the failure this
+	 * method exists to prevent: connecting the account they happen to log into
+	 * -- an SSO or management account with no workloads in it -- watching the
+	 * sync succeed, and reading zero instances as a broken connector.
+	 *
+	 * Ordered by how much of the estate each one holds, so the account worth
+	 * doing first is first.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	public static function discovered(): array {
+		global $wpdb;
+
+		$a = vh_table( 'assets' );
+
+		$rows = (array) $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			"SELECT cloud_account_id AS account_id,
+			        GROUP_CONCAT(DISTINCT NULLIF(cloud_region,'') ORDER BY cloud_region SEPARATOR ', ') AS regions,
+			        COUNT(*) AS assets
+			   FROM {$a}
+			  WHERE cloud_provider = 'aws' AND cloud_account_id <> ''
+			  GROUP BY cloud_account_id
+			  ORDER BY assets DESC", // phpcs:ignore
+			ARRAY_A
+		);
+
+		if ( ! $rows ) {
+			return array();
+		}
+
+		$known = array_flip(
+			array_map(
+				'strval',
+				(array) $wpdb->get_col( 'SELECT account_id FROM ' . self::table() ) // phpcs:ignore
+			)
+		);
+
+		$out = array();
+
+		foreach ( $rows as $row ) {
+			$id = (string) $row['account_id'];
+
+			if ( isset( $known[ $id ] ) ) {
+				continue;
+			}
+
+			$out[] = array(
+				'account_id' => $id,
+				'regions'    => (string) $row['regions'],
+				'assets'     => (int) $row['assets'],
+			);
+		}
+
+		return $out;
+	}
+
 	/** How many accounts are in each state, for the screen header. */
 	public static function summary(): array {
 		global $wpdb;

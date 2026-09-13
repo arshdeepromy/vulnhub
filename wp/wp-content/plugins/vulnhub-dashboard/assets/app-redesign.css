@@ -1448,3 +1448,20 @@ body.vh-modal-open { overflow: hidden; }
 .vh-aws-actions form { display: inline-block; margin: 0 2px 0 0; }
 
 .vh-aws-accounts tr.is-off { opacity: .55; }
+
+/* Accounts discovered from our own inventory. Presented first because the
+   alternative is typing account numbers from memory, and the natural mistake
+   there is the SSO account with no workloads in it. */
+.vh-aws-found-list { margin: 10px 0 14px; padding: 0; list-style: none; }
+.vh-aws-found-list > li { padding: 3px 0; }
+.vh-aws-found-list label {
+  display: grid;
+  grid-template-columns: auto 13ch 1fr auto;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12.5px;
+}
+.vh-aws-found-list em { font-style: normal; color: var(--vh-muted); }
+.vh-aws-found-list strong { font-variant-numeric: tabular-nums; color: var(--vh-ink-2); }
+
+.vh-aws-empty { margin: 6px 0 0; color: var(--vh-sev-medium, #e0a33e); }
