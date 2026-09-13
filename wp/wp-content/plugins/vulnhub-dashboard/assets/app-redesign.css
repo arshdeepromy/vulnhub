@@ -1465,3 +1465,70 @@ body.vh-modal-open { overflow: hidden; }
 .vh-aws-found-list strong { font-variant-numeric: tabular-nums; color: var(--vh-ink-2); }
 
 .vh-aws-empty { margin: 6px 0 0; color: var(--vh-sev-medium, #e0a33e); }
+
+/* --------------------------------------------------- cloud connector list. */
+.vh-cc__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.vh-cc__search { display: flex; align-items: baseline; gap: 10px; flex: 1 1 320px; }
+.vh-cc__search input { flex: 1 1 auto; min-width: 0; }
+.vh-cc__count { font-size: 12px; color: var(--vh-muted); white-space: nowrap; }
+
+.vh-cc__tally { display: flex; gap: 16px; font-size: 12px; color: var(--vh-ink-2); }
+.vh-cc__tally strong { font-variant-numeric: tabular-nums; color: var(--vh-ink); }
+.vh-cc__tally .is-bad strong { color: var(--vh-sev-critical); }
+
+.vh-cc__type { font-size: 11px; letter-spacing: .04em; color: var(--vh-muted); }
+.vh-cc__none { padding: 18px 0; text-align: center; color: var(--vh-muted); font-size: 12.5px; }
+
+/* The add dialog. A real <dialog>, so Escape, focus trapping and the backdrop
+   come from the platform instead of being re-implemented badly. */
+.vh-modal {
+  /*
+   * Both declared, neither inherited. A <dialog> picks up whatever display
+   * and positioning the surrounding cascade happens to give it -- here that
+   * laid the heading out as a column beside the form -- and the close button
+   * needs a positioned ancestor or it anchors to the viewport instead.
+   */
+  display: block;
+  position: relative;
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  padding: 22px 24px;
+  border: 1px solid var(--vh-line);
+  border-radius: 14px;
+  background: var(--vh-surface);
+  color: var(--vh-ink);
+  overflow: auto;
+}
+.vh-modal::backdrop { background: rgba(3, 8, 18, .72); }
+.vh-modal > h2 { margin: 0 0 14px; font-size: 17px; }
+
+.vh-modal__x { position: absolute; top: 10px; right: 12px; margin: 0; }
+.vh-modal__x button {
+  border: 0;
+  background: none;
+  color: var(--vh-muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.vh-modal__x button:hover { color: var(--vh-ink); }
+
+.vh-modal__found {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--vh-line);
+  border-left: 3px solid var(--vh-link);
+  border-radius: 10px;
+}
+.vh-modal__found > summary { cursor: pointer; font-size: 12.5px; }
+
+.vh-modal__bulk { margin-top: 16px; border-top: 1px solid var(--vh-line); padding-top: 12px; }
+.vh-modal__bulk > summary { cursor: pointer; font-size: 12.5px; color: var(--vh-ink-2); }
+
+.vh-modal__foot { display: flex; gap: 10px; align-items: center; margin-top: 14px; }
