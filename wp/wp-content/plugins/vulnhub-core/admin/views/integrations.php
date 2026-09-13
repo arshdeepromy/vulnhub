@@ -108,6 +108,25 @@ $vh_active   = $vh_selected ? vulnhub()->connectors->get( $vh_selected ) : null;
 						<?php
 						$vh_key    = (string) $vh_field['key'];
 						$vh_type   = (string) ( $vh_field['type'] ?? 'text' );
+
+						/*
+						 * A `note` is guidance, not a setting: setup steps, a
+						 * warning, a link to somewhere else. It spans both
+						 * columns and stores nothing.
+						 *
+						 * Without it the only place to put a paragraph of
+						 * instructions is a field's help text, which leaves a
+						 * one-line label stranded beside a tall block and
+						 * reads as though the prose belongs to that input.
+						 */
+						if ( 'note' === $vh_type ) {
+							printf(
+								'<tr class="vh-field-note"><td colspan="2">%s</td></tr>',
+								wp_kses_post( (string) ( $vh_field['help'] ?? '' ) )
+							);
+							continue;
+						}
+
 						$vh_name   = 'vh_' . $vh_key;
 						$vh_id     = 'vh-field-' . $vh_key;
 						$vh_secret = ! empty( $vh_field['secret'] );
