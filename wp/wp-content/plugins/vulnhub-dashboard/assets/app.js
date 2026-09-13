@@ -1667,3 +1667,33 @@ document.addEventListener( 'click', function ( e ) {
 		}
 	} );
 }() );
+
+/*
+ * AWS account form: show only the credential fields the chosen mode uses.
+ *
+ * Both fieldsets are rendered server-side so the form still works without
+ * JavaScript -- this only hides the half that does not apply.
+ */
+( function () {
+	function sync( select ) {
+		var form = select.closest( 'form' );
+		if ( ! form ) { return; }
+		var mode = select.value;
+		form.querySelectorAll( '.vh-aws-mode' ).forEach( function ( fs ) {
+			fs.hidden = ! fs.classList.contains( 'vh-aws-mode--' + mode );
+		} );
+	}
+
+	function init() {
+		document.querySelectorAll( '[data-vh-aws-mode]' ).forEach( function ( sel ) {
+			sync( sel );
+			sel.addEventListener( 'change', function () { sync( sel ); } );
+		} );
+	}
+
+	if ( 'loading' === document.readyState ) {
+		document.addEventListener( 'DOMContentLoaded', init );
+	} else {
+		init();
+	}
+}() );
