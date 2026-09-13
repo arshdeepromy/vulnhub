@@ -62,6 +62,7 @@ final class VulnHub_AWS_Admin {
 		$summary  = VulnHub_AWS_Accounts::summary();
 		$types    = VulnHub_AWS_Accounts::data_types();
 		$edit     = isset( $_GET['edit'] ) ? VulnHub_AWS_Accounts::get( (int) $_GET['edit'] ) : null; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$found    = VulnHub_AWS_Accounts::discovered();
 
 		include VULNHUB_AWS_DIR . 'admin/views/accounts.php';
 	}
@@ -100,6 +101,9 @@ final class VulnHub_AWS_Admin {
 				break;
 			case 'bulk_add':
 				self::do_bulk_add();
+				break;
+			case 'add_discovered':
+				self::do_add_discovered();
 				break;
 		}
 	}
@@ -196,6 +200,52 @@ final class VulnHub_AWS_Admin {
 		self::$notice = array(
 			'text' => $text,
 			'tone' => $bad ? 'warn' : 'ok',
+		);
+	}
+
+	/**
+	 * Add the accounts our own inventory already points at.
+	 *
+	 * The list comes from the assets Tenable has scanned, so it is the set of
+	 * accounts that demonstrably hold machines -- not the account somebody
+	 * happens to sign in to.
+	 */
+	private static function do_add_discovered(): void {
+		$wanted = array_map( 'strval', (array) ( $_POST['accounts'] ?? array() ) ); // phpcs:ignore
+		$mode   = sanitize_key( wp_unslash( (string) ( $_POST['discover_auth_mode'] ?? 'role' ) ) ); // phpcs:ignore
+		$added  = 0;
+
+		foreach ( VulnHub_AWS_Accounts::discovered() as $found ) {
+			if ( $wanted && ! in_array( (string) $found['account_id'], $wanted, true ) ) {
+				continue;
+			}
+
+			$res = VulnHub_AWS_Accounts::save(
+				array(
+					'account_id' => (string) $found['account_id'],
+					'label'      => sprintf(
+						/* translators: %d: number of assets already known in that account. */
+						_n( '%d known asset', '%d known assets', (int) $found['assets'], 'vulnhub' ),
+						(int) $found['assets']
+					),
+					'auth_mode'  => $mode,
+					'regions'    => (string) $found['regions'],
+					'enabled'    => true,
+				)
+			);
+
+			if ( $res['ok'] ) {
+				++$added;
+			}
+		}
+
+		self::$notice = array(
+			'text' => sprintf(
+				/* translators: %d: accounts added. */
+				_n( '%d account added from your inventory.', '%d accounts added from your inventory.', $added, 'vulnhub' ),
+				$added
+			),
+			'tone' => $added ? 'ok' : 'warn',
 		);
 	}
 

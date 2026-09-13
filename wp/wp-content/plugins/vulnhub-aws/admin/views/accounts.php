@@ -9,6 +9,7 @@
  * @var array<string,int>                      $summary
  * @var array<string,string>                   $types
  * @var array<string,mixed>|null               $edit
+ * @var array<int,array<string,mixed>>         $found
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -32,6 +33,64 @@ $vh_regions = implode( ', ', VulnHub_AWS_Setup::suggested_regions() );
 		<li class="<?php echo $summary['failed'] ? 'is-bad' : ''; ?>"><strong><?php echo esc_html( number_format_i18n( $summary['failed'] ) ); ?></strong> <?php esc_html_e( 'failed', 'vulnhub' ); ?></li>
 		<li><strong><?php echo esc_html( number_format_i18n( $summary['never'] ) ); ?></strong> <?php esc_html_e( 'never run', 'vulnhub' ); ?></li>
 	</ul>
+
+	<?php
+	/*
+	 * The accounts our own inventory already points at.
+	 *
+	 * Offered before anything else because the alternative is typing account
+	 * numbers from memory, and the natural mistake there is connecting the
+	 * account you log in to -- which for most organisations is an SSO or
+	 * management account holding no workloads at all. That sync succeeds,
+	 * reads nothing, and looks like a broken connector.
+	 */
+	?>
+	<?php if ( $found ) : ?>
+		<div class="vh-card vh-aws-found">
+			<h2><?php esc_html_e( 'Accounts your assets are already in', 'vulnhub' ); ?></h2>
+			<p class="vh-field-help">
+				<?php
+				printf(
+					/* translators: 1: number of accounts, 2: number of assets. */
+					esc_html__( 'Tenable records the account each EC2 asset lives in. These %1$d accounts hold %2$d of the machines you already track, and none of them is on the list yet.', 'vulnhub' ),
+					count( $found ),
+					array_sum( array_column( $found, 'assets' ) )
+				);
+				?>
+			</p>
+
+			<form method="post">
+				<?php VulnHub_AWS_Admin::nonce_field(); ?>
+				<input type="hidden" name="vh_action" value="add_discovered">
+
+				<ul class="vh-aws-found-list">
+					<?php foreach ( $found as $vh_f ) : ?>
+						<li>
+							<label>
+								<input type="checkbox" name="accounts[]" value="<?php echo esc_attr( (string) $vh_f['account_id'] ); ?>" checked>
+								<span class="vh-mono"><?php echo esc_html( (string) $vh_f['account_id'] ); ?></span>
+								<em><?php echo esc_html( (string) $vh_f['regions'] ); ?></em>
+								<strong><?php echo esc_html( sprintf( /* translators: %s: asset count. */ _n( '%s asset', '%s assets', (int) $vh_f['assets'], 'vulnhub' ), number_format_i18n( (int) $vh_f['assets'] ) ) ); ?></strong>
+							</label>
+						</li>
+					<?php endforeach; ?>
+				</ul>
+
+				<p>
+					<label>
+						<input type="radio" name="discover_auth_mode" value="role" checked>
+						<?php esc_html_e( 'Assume a read-only role in each (recommended)', 'vulnhub' ); ?>
+					</label>
+					<label style="margin-left:16px">
+						<input type="radio" name="discover_auth_mode" value="keys">
+						<?php esc_html_e( 'Add credentials per account afterwards', 'vulnhub' ); ?>
+					</label>
+				</p>
+
+				<?php submit_button( __( 'Add the selected accounts', 'vulnhub' ), 'primary', 'submit', false ); ?>
+			</form>
+		</div>
+	<?php endif; ?>
 
 	<?php /* Adding fifty-eight accounts one form at a time is fifty-eight page
 	         loads, and the numbers always already exist as a list somewhere. */ ?>
@@ -273,6 +332,20 @@ $vh_regions = implode( ', ', VulnHub_AWS_Setup::suggested_regions() );
 									</ul>
 									<?php if ( (string) $vh_a['last_message'] !== '' && 'ok' !== (string) $vh_a['last_status'] ) : ?>
 										<p class="vh-meta vh-aws-err"><?php echo esc_html( (string) $vh_a['last_message'] ); ?></p>
+									<?php endif; ?>
+									<?php
+									/*
+									 * A clean read that found nothing is the
+									 * confusing outcome: it looks like a
+									 * failure and reports as a success. Say
+									 * which it is, because the usual cause is
+									 * the wrong account rather than a fault.
+									 */
+									?>
+									<?php if ( 'ok' === (string) $vh_a['last_status'] && 0 === (int) ( $vh_stats['instances'] ?? 0 ) ) : ?>
+										<p class="vh-meta vh-aws-empty">
+											<?php esc_html_e( 'Connected, but this account has no EC2 instances in the regions checked. Nothing is wrong — check it is the account the machines are actually in.', 'vulnhub' ); ?>
+										</p>
 									<?php endif; ?>
 								<?php endif; ?>
 							</td>
