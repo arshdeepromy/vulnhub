@@ -1697,3 +1697,83 @@ document.addEventListener( 'click', function ( e ) {
 		init();
 	}
 }() );
+
+/*
+ * Generic dialog opener, and a client-side table filter.
+ *
+ * The opener hijacks a real link (?add=1) rather than replacing it, so the
+ * button still works with JavaScript off -- the server renders the dialog
+ * already open when that parameter is present.
+ */
+( function () {
+	function openers() {
+		/*
+		 * Delegated on document with a capture-phase listener, not bound to
+		 * each element.
+		 *
+		 * vh-motion.js listens for anchor clicks on document and navigates
+		 * programmatically to run its page transition. preventDefault() alone
+		 * does not stop that -- it is not following the default action, it is
+		 * calling location itself -- so the opener has to win the event before
+		 * vh-motion sees it at all. Capture phase plus stopPropagation does
+		 * that; the same collision is already worked around for the CSV
+		 * drill-down links further up this file.
+		 *
+		 * The anchor keeps its real href (?add=1) so the button still works
+		 * with JavaScript off, where the server renders the dialog open.
+		 */
+		document.addEventListener( 'click', function ( e ) {
+			var el = e.target.closest ? e.target.closest( '[data-vh-dialog]' ) : null;
+			if ( ! el ) { return; }
+
+			var dlg = document.getElementById( el.getAttribute( 'data-vh-dialog' ) );
+			if ( ! dlg || typeof dlg.showModal !== 'function' ) { return; }
+
+			e.preventDefault();
+			e.stopPropagation();
+			if ( ! dlg.open ) { dlg.showModal(); }
+		}, true );
+
+		// A server-rendered <dialog open> is non-modal; promote it so the
+		// backdrop and Escape behave the same however it was opened.
+		document.querySelectorAll( 'dialog[open]' ).forEach( function ( dlg ) {
+			if ( typeof dlg.showModal === 'function' ) {
+				dlg.close();
+				dlg.showModal();
+			}
+		} );
+	}
+
+	function filters() {
+		document.querySelectorAll( '[data-vh-filter]' ).forEach( function ( input ) {
+			var table = document.getElementById( input.getAttribute( 'data-vh-filter' ) );
+			if ( ! table ) { return; }
+
+			var count = document.querySelector( '[data-vh-filter-count]' );
+			var empty = document.querySelector( '[data-vh-filter-empty]' );
+			var total = count ? count.textContent.trim() : '';
+
+			input.addEventListener( 'input', function () {
+				var q = input.value.trim().toLowerCase();
+				var shown = 0;
+
+				table.querySelectorAll( 'tbody tr[data-vh-row]' ).forEach( function ( tr ) {
+					var hit = ! q || tr.getAttribute( 'data-vh-row' ).indexOf( q ) !== -1;
+					tr.hidden = ! hit;
+					if ( hit ) { shown++; }
+				} );
+
+				if ( count ) { count.textContent = q ? shown + ' of ' + total : total; }
+				if ( empty ) { empty.hidden = shown !== 0; }
+			} );
+		} );
+	}
+
+	function init() { openers(); filters(); }
+
+	if ( 'loading' === document.readyState ) {
+		document.addEventListener( 'DOMContentLoaded', init );
+	} else {
+		init();
+	}
+}() );
