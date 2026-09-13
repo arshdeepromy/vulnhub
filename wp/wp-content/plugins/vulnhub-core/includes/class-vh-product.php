@@ -260,7 +260,32 @@ final class VH_Product {
 			if ( preg_match( '#Path\s*:?\s*(/[^\s]+)#', $output, $mu ) ) {
 				return self::app_clean( self::app_from_unix_path( $mu[1] ) );
 			}
-			return '';
+
+			/*
+			 * No path at all, but a distro package list. Tenable's "Linux
+			 * Distros Unpatched Vulnerability : CVE-x" plugins -- one per CVE,
+			 * 202,216 findings here -- report no file path, only the packages
+			 * the CVE affects on that host:
+			 *
+			 *   The following packages were identified as being present...
+			 *    - kernel
+			 *    - kernel-core
+			 *    - kernel-devel
+			 *
+			 * Without this they all grouped under one product called "Linux:
+			 * unpatched CVEs (no vendor fix)", which is the biggest row in the
+			 * Linux view and says nothing anybody can act on. The package is
+			 * the Linux answer to the question the Windows side already
+			 * answers with the install path: what do I actually update.
+			 */
+			/*
+			 * Not app_clean(): that ucfirst()s a lower-case name so a Linux
+			 * folder reads like its Windows twin, which is right for an app
+			 * directory and wrong for a package. "openssl" is the name -- it
+			 * is what goes after `dnf update`, and "Openssl" is both incorrect
+			 * and not copy-pasteable.
+			 */
+			return self::app_from_package_list( $output );
 		}
 		$path = $m[1];
 		$low  = strtolower( $path );
@@ -292,6 +317,93 @@ final class VH_Product {
 			}
 		}
 		return self::app_clean( self::app_strip_version( $fname ) );
+	}
+
+	/**
+	 * The source package behind a distro sub-package list.
+	 *
+	 * A distro splits one source package into many binaries -- kernel,
+	 * kernel-core, kernel-devel, kernel-modules, python3-perf -- and a CVE
+	 * lists whichever of them are installed. There is one thing to update, so
+	 * the suffixes and language prefixes come off and the name that covers the
+	 * rest of the list wins: that list is a kernel update, not eleven.
+	 */
+	private static function app_from_package_list( string $output ): string {
+		$names = array();
+
+		// Shape one, the unpatched-CVE plugins: a bare bulleted list.
+		if ( preg_match_all( '/^\s*-\s*([A-Za-z0-9][A-Za-z0-9._+-]*)\s*$/m', $output, $m ) ) {
+			$names = $m[1];
+		}
+
+		/*
+		 * Shape two, the vendor advisory plugins (RHSA, USN, DSA), which print
+		 * the installed and wanted versions instead of a list:
+		 *
+		 *   Remote package installed : curl-7.76.1-35.el9_7.3
+		 *   Should be                : curl-7.76.1-40.el9_8.5
+		 *
+		 * The version is everything from the first "-<digit>", so the name is
+		 * what precedes it. These were the last generic Linux row, 4,928
+		 * findings still grouped as "Linux: RHEL".
+		 */
+		if ( preg_match_all( '/Remote package installed\s*:\s*(\S+)/i', $output, $mp ) ) {
+			foreach ( $mp[1] as $nvr ) {
+				$names[] = preg_match( '/^(.+?)-\d/', $nvr, $nm ) ? $nm[1] : $nvr;
+			}
+		}
+
+		if ( ! $names ) {
+			return '';
+		}
+
+		$m = array( 1 => $names );
+
+		$suffix = '/-(core|devel|headers|libs?|tools|modules|common|utils|docs?|debuginfo|debugsource|static|bin|dev|data|selinux|minimal|enhanced|filesystem|X11)$/i';
+		$bases  = array();
+
+		foreach ( $m[1] as $name ) {
+			$name = strtolower( trim( $name ) );
+			$name = (string) preg_replace( '/^(python3?|perl|ruby|php|golang|rust)-/', '', $name );
+
+			do {
+				$before = $name;
+				$name   = (string) preg_replace( $suffix, '', $name );
+			} while ( $name !== $before );
+
+			if ( '' !== $name ) {
+				$bases[ $name ] = ( $bases[ $name ] ?? 0 ) + 1;
+			}
+		}
+
+		if ( ! $bases ) {
+			return '';
+		}
+
+		arsort( $bases );
+
+		/*
+		 * Cast back to string. PHP turns a numeric array key into an int, and
+		 * distros really do ship packages named like that -- "389" survives
+		 * from 389-ds, "7zip" from p7zip -- so array_keys() can hand back
+		 * integers and strpos() then fails with a TypeError mid-sync.
+		 */
+		$names = array_map( 'strval', array_keys( $bases ) );
+
+		// A name that prefixes most of the others is the source package.
+		foreach ( $names as $candidate ) {
+			$covers = 0;
+			foreach ( $names as $other ) {
+				if ( 0 === strpos( $other, $candidate ) ) {
+					++$covers;
+				}
+			}
+			if ( $covers > count( $names ) / 2 ) {
+				return $candidate;
+			}
+		}
+
+		return (string) $names[0];
 	}
 
 	private static function app_from_unix_path( string $path ): string {

@@ -3258,7 +3258,15 @@ final class Repo {
 			// everything else to its own product. Without this, clicking the
 			// "Microsoft Teams" row searched for a vuln whose product is Teams
 			// -- there is none -- instead of the libcurl it bundles.
-			$where[]  = "( CASE WHEN v.product_kind = 'library' AND f.bundle_app <> '' THEN f.bundle_app_slug ELSE v.product_slug END ) = %s";
+			/*
+			 * os_package is in here for the same reason library is: the widget
+			 * groups a distro CVE under the source package carried on the
+			 * finding, so the list has to match on the same expression or the
+			 * drill-through from a package row returns nothing. Clicking
+			 * "kernel" searched for a vuln whose own product_slug is "kernel"
+			 * -- there is none -- and handed back an empty list.
+			 */
+			$where[]  = "( CASE WHEN v.product_kind IN ( 'library', 'os_package' ) AND f.bundle_app <> '' THEN f.bundle_app_slug ELSE v.product_slug END ) = %s";
 			$params[] = (string) $args['product_slug'];
 			$need_v   = true;
 		}
