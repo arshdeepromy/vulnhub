@@ -1343,3 +1343,42 @@ body.vh-modal-open { overflow: hidden; }
 }
 
 .vh-field-note > td { padding-top: 4px; padding-bottom: 14px; }
+
+/* The route that needs no permissions is the one to look at first, so it is
+   the one carrying a border and a tint. The permanent route is folded away
+   behind a summary that names its requirement -- presented as an equal option
+   it is an option people pick, and then watch fail. */
+.vh-aws-route--now {
+  padding: 14px 16px;
+  border: 1px solid var(--vh-line);
+  border-left: 3px solid var(--vh-link);
+  border-radius: 10px;
+  background: var(--vh-surface);
+}
+
+.vh-aws-route--later {
+  margin-top: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--vh-line);
+  border-radius: 10px;
+}
+.vh-aws-route--later > summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--vh-ink-2);
+}
+.vh-aws-route--later[open] > summary { margin-bottom: 8px; }
+
+.vh-aws-ask {
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px;
+  border: 1px solid var(--vh-line);
+  border-radius: 8px;
+  background: var(--vh-surface);
+  color: var(--vh-ink-2);
+  font-family: var(--vh-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  line-height: 1.6;
+  resize: vertical;
+}

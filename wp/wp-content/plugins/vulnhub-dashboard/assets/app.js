@@ -1651,3 +1651,19 @@ document.addEventListener( 'click', function ( e ) {
 		init();
 	}
 }() );
+
+/*
+ * Select-all on the hand-to-your-administrator block.
+ *
+ * Bound here rather than as an onclick attribute: the connector help is run
+ * through wp_kses_post, which strips event handlers, so an inline handler
+ * silently never arrives.
+ */
+( function () {
+	document.addEventListener( 'focusin', function ( e ) {
+		var el = e.target;
+		if ( el && el.classList && el.classList.contains( 'vh-aws-ask' ) ) {
+			el.select();
+		}
+	} );
+}() );
