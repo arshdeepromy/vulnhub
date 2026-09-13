@@ -25,6 +25,7 @@ define( 'VULNHUB_THREAT_URL', plugin_dir_url( __FILE__ ) );
 
 require_once VULNHUB_THREAT_DIR . 'includes/class-vh-threat-install.php';
 require_once VULNHUB_THREAT_DIR . 'includes/class-vh-threat-feeds.php';
+require_once VULNHUB_THREAT_DIR . 'includes/class-vh-threat-ports.php';
 require_once VULNHUB_THREAT_DIR . 'includes/class-vh-threat-classify.php';
 require_once VULNHUB_THREAT_DIR . 'includes/class-vh-threat-repo.php';
 require_once VULNHUB_THREAT_DIR . 'includes/class-vh-threat-widget.php';
@@ -62,6 +63,7 @@ add_action(
 		}
 
 		VulnHub_Threat_Install::maybe_upgrade();
+		VulnHub_Threat_Ports::init();
 		VulnHub_Threat_Feeds::init();
 		VulnHub_Threat_Repo::init();
 		VulnHub_Threat_Widget::init();

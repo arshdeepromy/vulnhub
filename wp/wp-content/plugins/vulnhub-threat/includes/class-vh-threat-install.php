@@ -30,7 +30,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 final class VulnHub_Threat_Install {
 
-	public const DB_VERSION = '1.0.0';
+	public const DB_VERSION = '1.3.0';
 	public const DB_OPTION  = 'vulnhub_threat_db_version';
 
 	/** Fully qualified name of one of this plugin's tables. */
@@ -67,6 +67,7 @@ final class VulnHub_Threat_Install {
 		$intel   = self::table( 'cve_intel' );
 		$paths   = self::table( 'vuln_paths' );
 		$expo    = self::table( 'asset_exposure' );
+		$ports = self::table( 'asset_ports' );
 
 		/*
 		 * `route` and `has_poc` are indexed together because every question the
@@ -137,10 +138,44 @@ final class VulnHub_Threat_Install {
 				asset_id bigint(20) unsigned NOT NULL,
 				internet_facing tinyint(1) NOT NULL DEFAULT 0,
 				source varchar(16) NOT NULL DEFAULT 'rule',
+				basis varchar(12) NOT NULL DEFAULT 'unknown',
 				reason varchar(191) NOT NULL DEFAULT '',
 				updated_at datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
 				PRIMARY KEY  (asset_id),
-				KEY facing (internet_facing)
+				KEY facing (internet_facing),
+				KEY basis (basis)
+			) {$charset};"
+		);
+
+		/*
+		 * What each machine is actually listening on.
+		 *
+		 * Tenable already collects this -- Netstat Portscanner (WMI) plugin
+		 * 34220 and (SSH) 14272 -- but it arrives as an informational finding
+		 * whose whole payload is in the plugin output, and informational
+		 * findings are suppressed estate-wide. So the evidence was present and
+		 * unreadable: exposure was being decided on `asset_type = server`,
+		 * which says nothing about whether anything is listening.
+		 *
+		 * Parsed out into rows here so it can be joined and counted. This is
+		 * observation, not opinion -- what the host reported listening at scan
+		 * time. Whether a firewall lets the internet reach it is a separate
+		 * question this table deliberately does not answer.
+		 */
+		dbDelta(
+			"CREATE TABLE {$ports} (
+				asset_id bigint(20) unsigned NOT NULL,
+				port int(10) unsigned NOT NULL,
+				protocol varchar(8) NOT NULL DEFAULT 'tcp',
+				remote tinyint(1) NOT NULL DEFAULT 0,
+				service varchar(32) NOT NULL DEFAULT '',
+				kind varchar(12) NOT NULL DEFAULT '',
+				plugin_id int(10) unsigned NOT NULL DEFAULT 0,
+				updated_at datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
+				PRIMARY KEY  (asset_id,port,protocol),
+				KEY remote (remote),
+				KEY kind (kind),
+				KEY port (port)
 			) {$charset};"
 		);
 
