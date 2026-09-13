@@ -86,11 +86,52 @@
     if (opts && opts.opacity != null) c.style.opacity = opts.opacity;
     host.insertBefore(c, host.firstChild);
     var ctx = c.getContext('2d'), W = 1, H = 1, raf, visible = true;
-    function rs() { W = c.clientWidth || 1; H = c.clientHeight || 1; c.width = W * dpr; c.height = H * dpr; }
+
+    /* Browsers cap how large a canvas may be -- Firefox at 32767px a side,
+       Chrome by total area -- and over the cap the canvas fails to allocate
+       and paints as a broken image: an opaque grey box with a broken-image
+       glyph in the corner. The products page is one card listing every
+       product, which at 670 rows is ~53000px tall, so `inset: 0` made this
+       backing store 107000px high at dpr 2 and greyed out the whole list.
+
+       Clamp the backing store, and stop scaling the drawing by more than the
+       clamp allows so the effect still lines up with the element. MAX is well
+       under every browser's limit because a decorative wash on a card metres
+       long is invisible anyway. */
+    var MAX = 8192;
+
+    function rs() {
+      W = c.clientWidth || 1;
+      H = c.clientHeight || 1;
+
+      var scale = Math.min( dpr, MAX / Math.max( W, H, 1 ) );
+
+      c.width  = Math.max( 1, Math.round( W * scale ) );
+      c.height = Math.max( 1, Math.round( H * scale ) );
+      c.dataset.scale = scale;
+    }
+
     rs(); new ResizeObserver(rs).observe(c);
     if ('IntersectionObserver' in window) new IntersectionObserver(function (es) { visible = es[0].isIntersecting; }).observe(c);
     var t0 = performance.now(), state = {};
-    (function loop(now) { raf = requestAnimationFrame(loop); if (!visible) return; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H); draw(ctx, W, H, (now - t0) * speed, state, (opts && opts.color) || accent); })(t0);
+    (function loop(now) {
+      raf = requestAnimationFrame(loop);
+      if (!visible) return;
+      // The transform follows the clamped scale, not dpr, or the drawing
+      // would be laid out for a canvas larger than the one allocated.
+      var k = parseFloat(c.dataset.scale) || dpr;
+      ctx.setTransform(k, 0, 0, k, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      /* Math.max(0, ...): the first requestAnimationFrame timestamp is the
+         frame's start time, which can be fractionally EARLIER than the
+         performance.now() captured when this canvas was set up. That made
+         elapsed time negative for one frame, and effects that wrap it with
+         `% 1` inherited the sign -- JS keeps the dividend's -- so `ping`
+         asked for a negative arc radius and threw. Invisible on a small
+         card and very visible on a tall one, where the same tiny negative
+         is multiplied by the element's height. */
+      draw(ctx, W, H, Math.max(0, now - t0) * speed, state, (opts && opts.color) || accent);
+    })(t0);
   }
 
   /* 3. widget-specific animations
