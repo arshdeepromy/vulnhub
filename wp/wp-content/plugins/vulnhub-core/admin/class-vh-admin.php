@@ -400,6 +400,14 @@ final class Admin {
 			$key  = (string) $field['key'];
 			$name = 'vh_' . $key;
 
+			// A note is rendered guidance with no input behind it. It happens
+			// to be skipped below for want of a matching POST key, but relying
+			// on that would let a crafted request write a setting that does
+			// not exist.
+			if ( 'note' === ( $field['type'] ?? 'text' ) ) {
+				continue;
+			}
+
 			if ( ! empty( $field['secret'] ) ) {
 				if ( isset( $_POST[ 'clear_' . $key ] ) ) {
 					vulnhub()->settings->set_secret( $id, $key, null );

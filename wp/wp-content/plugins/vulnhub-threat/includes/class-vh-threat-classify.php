@@ -402,6 +402,15 @@ final class VulnHub_Threat_Classify {
 		$listening = array(
 			'publishable' => array_flip( VulnHub_Threat_Ports::publishable_ids() ),
 			'scanned'     => array_flip( VulnHub_Threat_Ports::scanned_ids() ),
+
+			/*
+			 * What a cloud provider says about reachability, which is the only
+			 * source here that can see the network rather than the host. A
+			 * filter so this keeps working with no cloud connector installed.
+			 *
+			 * @param array<int,string> $assets Asset id => why it is reachable.
+			 */
+			'cloud'       => (array) apply_filters( 'vulnhub_cloud_reachable_assets', array() ),
 		);
 
 		$manual = array_map(
@@ -485,6 +494,16 @@ final class VulnHub_Threat_Classify {
 				 */
 				if ( '' !== $hit ) {
 					return array( true, sprintf( /* translators: %s: matched tag. */ __( 'tagged %s', 'vulnhub' ), $hit ), 'evidence' );
+				}
+
+				/*
+				 * The cloud provider's own answer outranks everything below
+				 * it. A security group, a route table and a load balancer
+				 * describe the path itself; a listening socket and an address
+				 * are only clues that one might exist.
+				 */
+				if ( isset( $listening['cloud'][ (int) $row['id'] ] ) ) {
+					return array( true, (string) $listening['cloud'][ (int) $row['id'] ], 'evidence' );
 				}
 
 				if ( self::has_public_address( $row ) ) {

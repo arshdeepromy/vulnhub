@@ -67,6 +67,7 @@ final class Connectors {
 	public static function categories(): array {
 		return array(
 			'vulnerability' => __( 'Vulnerability data', 'vulnhub' ),
+			'cloud'         => __( 'Cloud connectors', 'vulnhub' ),
 			'identity'      => __( 'Identity &amp; device', 'vulnhub' ),
 			'cmdb'          => __( 'CMDB &amp; documentation', 'vulnhub' ),
 			'itsm'          => __( 'Ticketing &amp; ITSM', 'vulnhub' ),
