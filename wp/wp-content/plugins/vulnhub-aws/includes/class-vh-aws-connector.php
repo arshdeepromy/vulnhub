@@ -104,7 +104,7 @@ final class VulnHub_AWS_Connector extends Connector {
 				'type'     => 'text',
 				'secret'   => true,
 				'required' => false,
-				'help'     => __( 'Only for short-term credentials copied from the AWS access portal. Leave blank for a permanent access key. Short-term credentials expire within hours, so a connector using them can run on demand but will fail on a schedule.', 'vulnhub' ),
+				'help'     => __( '<strong>Required if your access key starts with ASIA.</strong> That is a short-term key, and AWS rejects it without the session token issued alongside it — the AWS_SESSION_TOKEN value on the same screen you copied the key from. Leave blank for a permanent AKIA key. Short-term credentials expire within hours, so they can run a sync you press but will fail on a schedule.', 'vulnhub' ),
 			),
 			array(
 				'key'         => 'regions',
@@ -186,16 +186,60 @@ final class VulnHub_AWS_Connector extends Connector {
 			);
 		}
 
+		/*
+		 * Two mismatches AWS reports as the same opaque InvalidClientTokenId,
+		 * and both are obvious from the key itself. The prefix says which kind
+		 * of credential this is: ASIA is short-term and meaningless without
+		 * the session token issued alongside it, AKIA is permanent and has no
+		 * session token to give. Catching them here costs one string
+		 * comparison and replaces "the security token included in the request
+		 * is invalid" -- which sends people to check the secret they just
+		 * pasted correctly -- with the actual missing step.
+		 */
+		$key   = trim( (string) $this->get( 'access_key_id' ) );
+		$token = trim( (string) $this->secret( 'session_token' ) );
+
+		if ( str_starts_with( $key, 'ASIA' ) && '' === $token ) {
+			return array(
+				'ok'      => false,
+				'message' => __( 'This is a short-term key (it starts with ASIA), which AWS only accepts together with the session token issued with it — and the session token field is empty. Go back to the same “Environment variables” screen you copied the key from and paste AWS_SESSION_TOKEN into the Session token field. It is long, several hundred characters.', 'vulnhub' ),
+			);
+		}
+
+		if ( str_starts_with( $key, 'AKIA' ) && '' !== $token ) {
+			return array(
+				'ok'      => false,
+				'message' => __( 'This is a permanent key (it starts with AKIA), which has no session token — but the Session token field is filled in. Clear it, or use the short-term key the token belongs to.', 'vulnhub' ),
+			);
+		}
+
 		$who = $client->caller_identity();
 
 		if ( ! $who['ok'] ) {
+			$hint = '';
+
+			// Short-term credentials expire in hours, and an expired one is
+			// far more likely than a mistyped one on a key that worked before.
+			if ( '' !== $token ) {
+				$hint = ' ' . __( 'Short-term credentials expire after a few hours — if this worked earlier today, fetch a fresh set from the AWS access portal and paste all three values again.', 'vulnhub' );
+			}
+
+			// AWS is inconsistent about ending its messages with a full stop,
+			// so one is added when it is missing rather than letting the hint
+			// run straight on from the error.
+			$err = rtrim( (string) $who['error'] );
+
+			if ( '' !== $err && ! in_array( substr( $err, -1 ), array( '.', '!', '?' ), true ) ) {
+				$err .= '.';
+			}
+
 			return array(
 				'ok'      => false,
 				'message' => sprintf(
 					/* translators: %s: AWS error. */
 					__( 'AWS rejected the credentials: %s', 'vulnhub' ),
-					$who['error']
-				),
+					$err
+				) . $hint,
 			);
 		}
 
