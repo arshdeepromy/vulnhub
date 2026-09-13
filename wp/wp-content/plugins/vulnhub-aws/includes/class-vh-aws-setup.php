@@ -207,18 +207,46 @@ YAML;
 	}
 
 	/**
-	 * The setup steps, rendered into the first field's help text.
+	 * The setup steps.
 	 *
-	 * It lives here rather than in the connector so the wording and the
-	 * template cannot drift apart.
+	 * Two routes, because the obvious one does not work for everybody. The
+	 * CloudFormation template creates an IAM user, and the AWS SSO PowerUser
+	 * permission set -- which is what most people are signed in as -- allows
+	 * every service except IAM. The stack fails at CreateUser with
+	 * AccessDenied, which reads like a broken template rather than a policy
+	 * boundary working as designed.
+	 *
+	 * So the short-term route is offered first and on equal footing: it needs
+	 * no IAM permission at all, works in the next two minutes, and is honest
+	 * about expiring. The permanent route is there for whoever can run it.
 	 */
 	public static function instructions( string $region ): string {
-		$steps = sprintf(
-			'<ol class="vh-aws-steps">
-				<li>%1$s <a href="%2$s" download="vulnhub-aws-readonly.yaml"><strong>%3$s</strong></a></li>
-				<li>%4$s <a href="%5$s" target="_blank" rel="noopener noreferrer"><strong>%6$s</strong></a> %7$s</li>
-				<li>%8$s</li>
+		$short = sprintf(
+			'<h4 class="vh-aws-h">%1$s</h4>
+			<p class="vh-aws-lede">%2$s</p>
+			<ol class="vh-aws-steps">
+				<li>%3$s</li>
+				<li>%4$s</li>
+				<li>%5$s</li>
 			</ol>',
+			esc_html__( 'Quickest: short-term credentials from your AWS login', 'vulnhub' ),
+			esc_html__( 'Needs no IAM permissions — it reuses the access you already have. They expire within a few hours, so use this to connect and sync now, and set up the permanent route when somebody with IAM access is available.', 'vulnhub' ),
+			esc_html__( 'Open your AWS access portal and find the account and role you normally use.', 'vulnhub' ),
+			esc_html__( 'Choose “Access keys”, then the “Environment variables” tab. It shows three values: an access key ID, a secret access key and a session token.', 'vulnhub' ),
+			esc_html__( 'Paste all three into the fields below — including the session token — then press Test connection.', 'vulnhub' )
+		);
+
+		$permanent = sprintf(
+			'<h4 class="vh-aws-h">%1$s</h4>
+			<p class="vh-aws-lede">%2$s</p>
+			<ol class="vh-aws-steps">
+				<li>%3$s <a href="%4$s" download="vulnhub-aws-readonly.yaml"><strong>%5$s</strong></a></li>
+				<li>%6$s <a href="%7$s" target="_blank" rel="noopener noreferrer"><strong>%8$s</strong></a> %9$s</li>
+				<li>%10$s</li>
+			</ol>
+			<p class="vh-aws-note">%11$s</p>',
+			esc_html__( 'Permanent: a read-only user that can hold a schedule', 'vulnhub' ),
+			esc_html__( 'Creates an IAM user, so it needs someone with IAM permissions to run it once. The AWS SSO PowerUser role cannot — it allows every service except IAM, and the stack will stop at CreateUser with AccessDenied. That is the policy working correctly, not a broken template.', 'vulnhub' ),
 			esc_html__( 'Download the read-only CloudFormation template:', 'vulnhub' ),
 			esc_url( self::template_url() ),
 			esc_html__( 'vulnhub-aws-readonly.yaml', 'vulnhub' ),
@@ -226,10 +254,12 @@ YAML;
 			esc_url( self::console_url( $region ) ),
 			esc_html__( 'CloudFormation → Create stack', 'vulnhub' ),
 			esc_html__( 'in your AWS account, upload the file, and name the stack anything you like.', 'vulnhub' ),
-			esc_html__( 'When it finishes, open the stack’s Outputs tab and copy the three values into the fields below. Then press Test connection.', 'vulnhub' )
+			esc_html__( 'When it finishes, open the stack’s Outputs tab and copy the three values into the fields below. Leave the session token blank.', 'vulnhub' ),
+			esc_html__( 'If a stack already failed, delete it before trying again — a failed stack keeps the name reserved.', 'vulnhub' )
 		);
 
-		return $steps
-			. '<p>' . esc_html__( 'The template grants only Describe and Get permissions — it cannot change, start, stop or delete anything. Deleting the stack revokes the key.', 'vulnhub' ) . '</p>';
+		return '<div class="vh-aws-setup">' . $short . $permanent
+			. '<p class="vh-aws-note">' . esc_html__( 'Either way, everything granted is a Describe or a Get. Nothing this connector can do will change, start, stop or delete anything in your account.', 'vulnhub' ) . '</p>'
+			. '</div>';
 	}
 }
