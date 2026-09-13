@@ -231,6 +231,72 @@ final class VulnHub_AWS_Client {
 	}
 
 	/**
+	 * Borrow a role in another account.
+	 *
+	 * This is what makes fifty-eight accounts tractable. One base credential
+	 * assumes the same read-only role in every member account, so adding an
+	 * account is entering its number -- not minting, storing and rotating
+	 * another key pair. It is also the only arrangement that survives contact
+	 * with short-term SSO credentials, which expire hourly and would otherwise
+	 * have to be re-pasted fifty-eight times.
+	 *
+	 * The returned credentials are temporary by construction, which is the
+	 * point: nothing long-lived is created in the member account, and
+	 * revoking access is deleting one role rather than hunting for keys.
+	 *
+	 * @param string $role_arn    Role to assume in the target account.
+	 * @param string $external_id Shared secret the role's trust policy requires.
+	 * @return array{ok:bool,client:?self,error:string,expires:string}
+	 */
+	public function assume( string $role_arn, string $external_id = '', string $session = 'vulnhub' ): array {
+		$params = array(
+			'Action'          => 'AssumeRole',
+			'Version'         => '2011-06-15',
+			'RoleArn'         => $role_arn,
+			'RoleSessionName' => substr( preg_replace( '/[^A-Za-z0-9=,.@-]/', '-', $session ) ?: 'vulnhub', 0, 64 ),
+			'DurationSeconds' => '3600',
+		);
+
+		if ( '' !== $external_id ) {
+			$params['ExternalId'] = $external_id;
+		}
+
+		$res = $this->query( 'sts', 'us-east-1', $params, 'sts.amazonaws.com' );
+
+		if ( ! $res['ok'] ) {
+			return array(
+				'ok'      => false,
+				'client'  => null,
+				'error'   => (string) $res['error'],
+				'expires' => '',
+			);
+		}
+
+		$creds = $res['xml']->AssumeRoleResult->Credentials ?? null; // phpcs:ignore
+
+		if ( ! $creds ) {
+			return array(
+				'ok'      => false,
+				'client'  => null,
+				'error'   => __( 'AWS returned no credentials for that role.', 'vulnhub' ),
+				'expires' => '',
+			);
+		}
+
+		return array(
+			'ok'      => true,
+			'client'  => new self(
+				(string) $creds->AccessKeyId, // phpcs:ignore
+				(string) $creds->SecretAccessKey, // phpcs:ignore
+				(string) $creds->SessionToken, // phpcs:ignore
+				$this->timeout
+			),
+			'error'   => '',
+			'expires' => (string) ( $creds->Expiration ?? '' ), // phpcs:ignore
+		);
+	}
+
+	/**
 	 * @return array{ok:bool,status:int,data:array<string,mixed>,error:string}
 	 */
 	private static function fail( int $status, string $error ): array {

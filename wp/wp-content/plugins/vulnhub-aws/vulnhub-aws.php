@@ -3,7 +3,7 @@
  * Plugin Name:       VulnHub AWS
  * Plugin URI:        https://github.com/arshdeepromy/vulnhub
  * Description:       Reads network exposure straight from the AWS account: which instances the internet can actually reach, and on which ports.
- * Version:           0.2.0
+ * Version:           0.3.0
  * Requires at least: 6.4
  * Requires PHP:      8.1
  * Author:            VulnHub
@@ -43,10 +43,14 @@ add_action(
 	'vulnhub_register_connectors',
 	static function ( $connectors ): void {
 		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-setup.php';
+		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-accounts.php';
 		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-reachability.php';
 		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-connector.php';
+		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-admin.php';
 
 		VulnHub_AWS_Reachability::install();
+		VulnHub_AWS_Accounts::install();
+		VulnHub_AWS_Admin::init();
 
 		// Registering here is what puts it on the Integrations screen beside
 		// the others, with the same form, health panel, Test connection,

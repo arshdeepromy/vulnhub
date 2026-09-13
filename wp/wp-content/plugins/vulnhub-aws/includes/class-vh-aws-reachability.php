@@ -43,6 +43,18 @@ final class VulnHub_AWS_Reachability {
 	private VulnHub_AWS_Client $client;
 	private ?Connector $connector;
 
+	/**
+	 * What this run actually managed to read.
+	 *
+	 * Counted per data type rather than collapsed into a pass/fail, because on
+	 * a large estate the interesting failure is never "it broke" -- it is
+	 * "everything worked except load balancers in three accounts", and that is
+	 * invisible in a boolean.
+	 *
+	 * @var array<string,mixed>
+	 */
+	private array $stats = array();
+
 	public function __construct( VulnHub_AWS_Client $client, ?Connector $connector = null ) {
 		$this->client    = $client;
 		$this->connector = $connector;
@@ -87,10 +99,25 @@ final class VulnHub_AWS_Reachability {
 	 *
 	 * @return array{instances:int,reachable:int,calls:int}
 	 */
+	/** @return array<string,mixed> What the run read, across all regions. */
+	public function stats(): array {
+		return $this->stats;
+	}
+
+	private function count( string $key, int $n ): void {
+		$this->stats[ $key ] = (int) ( $this->stats[ $key ] ?? 0 ) + $n;
+	}
+
+	/** Record that an API refused us, so the screen can name the permission. */
+	private function denied( string $key, string $why ): void {
+		$this->stats['denied'][ $key ] = $why;
+	}
+
 	public function region( string $region ): array {
 		$before = $this->client->calls();
 
 		$instances = $this->instances( $region );
+		$this->count( 'instances', count( $instances ) );
 
 		if ( ! $instances ) {
 			return array(
@@ -101,7 +128,10 @@ final class VulnHub_AWS_Reachability {
 		}
 
 		$groups = $this->security_groups( $region );
+		$this->count( 'security_groups', count( $groups ) );
+
 		$public = $this->public_subnets( $region );
+		$this->count( 'subnets', count( $public ) );
 
 		global $wpdb;
 
@@ -156,6 +186,7 @@ final class VulnHub_AWS_Reachability {
 		$this->store( $region, $rows );
 
 		$reachable = count( array_unique( array_column( $rows, 0 ) ) );
+		$this->count( 'reachable', $reachable );
 
 		return array(
 			'instances' => count( $instances ),
@@ -188,6 +219,7 @@ final class VulnHub_AWS_Reachability {
 
 			if ( ! $res['ok'] ) {
 				$this->log( sprintf( '%s: DescribeInstances failed: %s', $region, $res['error'] ) );
+				$this->denied( 'instances', (string) $res['error'] );
 
 				return $out;
 			}
@@ -263,6 +295,7 @@ final class VulnHub_AWS_Reachability {
 
 			if ( ! $res['ok'] ) {
 				$this->log( sprintf( '%s: DescribeSecurityGroups failed: %s', $region, $res['error'] ) );
+				$this->denied( 'security_groups', (string) $res['error'] );
 
 				return $out;
 			}
@@ -334,6 +367,7 @@ final class VulnHub_AWS_Reachability {
 
 		if ( ! $res['ok'] ) {
 			$this->log( sprintf( '%s: DescribeRouteTables failed: %s', $region, $res['error'] ) );
+			$this->denied( 'route_tables', (string) $res['error'] );
 
 			return array();
 		}
@@ -341,8 +375,10 @@ final class VulnHub_AWS_Reachability {
 		$public   = array();
 		$main_vpc = array();
 		$assigned = array();
+		$tables   = 0;
 
 		foreach ( $res['xml']->routeTableSet->item ?? array() as $rt ) { // phpcs:ignore
+			++$tables;
 			$vpc     = (string) ( $rt->vpcId ?? '' ); // phpcs:ignore
 			$to_igw  = false;
 			$is_main = false;
@@ -379,6 +415,8 @@ final class VulnHub_AWS_Reachability {
 				$main_vpc[ $vpc ] = true;
 			}
 		}
+
+		$this->count( 'route_tables', $tables );
 
 		if ( ! $main_vpc ) {
 			return $public;
@@ -428,13 +466,16 @@ final class VulnHub_AWS_Reachability {
 			// Optional permission: say so once and carry on with the direct
 			// paths rather than failing the whole region.
 			$this->log( sprintf( '%s: load balancers not readable (%s)', $region, $lbs['error'] ) );
+			$this->denied( 'load_balancers', (string) $lbs['error'] );
 
 			return array();
 		}
 
 		$out = array();
+		$seen = 0;
 
 		foreach ( $lbs['xml']->DescribeLoadBalancersResult->LoadBalancers->member ?? array() as $lb ) { // phpcs:ignore
+			++$seen;
 			if ( 'internet-facing' !== (string) ( $lb->Scheme ?? '' ) ) { // phpcs:ignore
 				continue;
 			}
@@ -526,6 +567,8 @@ final class VulnHub_AWS_Reachability {
 				}
 			}
 		}
+
+		$this->count( 'load_balancers', $seen );
 
 		return $out;
 	}

@@ -343,40 +343,219 @@ final class VulnHub_AWS_Connector extends Connector {
 	}
 
 	/**
+	 * Build a client for one stored account.
+	 *
+	 * Two arrangements, and the difference matters at this scale. `keys` uses
+	 * a credential belonging to that account -- fine for one or two. `role`
+	 * uses the connector's own base credential to assume a read-only role in
+	 * the target account, which is the only arrangement where adding the
+	 * fifty-ninth account is typing a number rather than minting, storing and
+	 * rotating another key pair.
+	 *
+	 * @param array<string,mixed> $account Stored account row.
+	 * @return array{ok:bool,client:?VulnHub_AWS_Client,error:string}
+	 */
+	private function client_for( array $account ): array {
+		$id = (int) $account['id'];
+
+		if ( 'keys' === (string) $account['auth_mode'] ) {
+			$key    = trim( (string) $account['access_key_id'] );
+			$secret = VulnHub_AWS_Accounts::secret( $id, 'secret' );
+
+			if ( '' === $key || '' === $secret ) {
+				return array(
+					'ok'     => false,
+					'client' => null,
+					'error'  => __( 'No access key stored for this account.', 'vulnhub' ),
+				);
+			}
+
+			return array(
+				'ok'     => true,
+				'client' => new VulnHub_AWS_Client( $key, $secret, VulnHub_AWS_Accounts::secret( $id, 'token' ) ),
+				'error'  => '',
+			);
+		}
+
+		$base = $this->client();
+
+		if ( ! $base ) {
+			return array(
+				'ok'     => false,
+				'client' => null,
+				'error'  => __( 'No base credentials on the connector to assume a role with. Add them above, or set this account to use its own access key.', 'vulnhub' ),
+			);
+		}
+
+		$arn = trim( (string) $account['role_arn'] );
+
+		if ( '' === $arn ) {
+			$arn = sprintf( 'arn:aws:iam::%s:role/%s', $account['account_id'], self::DEFAULT_ROLE );
+		}
+
+		$res = $base->assume( $arn, (string) $account['external_id'], 'vulnhub-' . $account['account_id'] );
+
+		if ( ! $res['ok'] ) {
+			return array(
+				'ok'     => false,
+				'client' => null,
+				'error'  => sprintf(
+					/* translators: 1: role arn, 2: AWS error. */
+					__( 'Could not assume %1$s — %2$s', 'vulnhub' ),
+					$arn,
+					$res['error']
+				),
+			);
+		}
+
+		return array(
+			'ok'     => true,
+			'client' => $res['client'],
+			'error'  => '',
+		);
+	}
+
+	/** The role name assumed in each member account when none is given. */
+	public const DEFAULT_ROLE = 'VulnHubReadOnly';
+
+	/**
+	 * Read one account, and record what it managed to read.
+	 *
+	 * Returns rather than throws on failure: one account with a missing
+	 * permission must not stop the other fifty-seven, and the whole point of
+	 * recording per account is that a partial run is the normal outcome at
+	 * this scale.
+	 *
+	 * @param array<string,mixed> $account Stored account row.
+	 * @return array{ok:bool,stats:array<string,mixed>,message:string}
+	 */
+	public function sync_account( array $account ): array {
+		$built = $this->client_for( $account );
+
+		if ( ! $built['ok'] ) {
+			VulnHub_AWS_Accounts::record( (int) $account['id'], 'failed', (string) $built['error'], array() );
+
+			return array(
+				'ok'      => false,
+				'stats'   => array(),
+				'message' => (string) $built['error'],
+			);
+		}
+
+		$client  = $built['client'];
+		$regions = array_values( array_filter( array_map( 'trim', explode( ',', (string) $account['regions'] ) ) ) );
+
+		if ( ! $regions ) {
+			$regions = $this->regions();
+		}
+
+		$reach = new VulnHub_AWS_Reachability( $client, $this );
+
+		foreach ( $regions as $region ) {
+			$reach->region( $region );
+		}
+
+		$stats = $reach->stats();
+
+		// Inspector is optional, and worth recording either way: "off" and
+		// "not permitted" call for different actions.
+		if ( $this->get_bool_setting( 'use_inspector', true ) ) {
+			$status = ( new VulnHub_AWS_Inspector( $client ) )->status( $regions[0] ?? 'us-east-1' );
+
+			if ( ! $status['ok'] ) {
+				$stats['inspector'] = 'denied';
+			} else {
+				$on = false;
+
+				foreach ( $status['accounts'] as $acct ) {
+					if ( 'ENABLED' === $acct['ec2'] ) {
+						$on = true;
+					}
+				}
+
+				$stats['inspector'] = $on ? 'enabled' : 'off';
+			}
+		}
+
+		$stats['regions'] = $regions;
+		$stats['calls']   = $client->calls();
+
+		$ok      = empty( $stats['denied']['instances'] );
+		$message = $ok
+			? sprintf(
+				/* translators: 1: instances, 2: reachable. */
+				__( '%1$d instance(s), %2$d reachable from the internet.', 'vulnhub' ),
+				(int) ( $stats['instances'] ?? 0 ),
+				(int) ( $stats['reachable'] ?? 0 )
+			)
+			: (string) $stats['denied']['instances'];
+
+		VulnHub_AWS_Accounts::record( (int) $account['id'], $ok ? 'ok' : 'failed', $message, $stats );
+
+		return array(
+			'ok'      => $ok,
+			'stats'   => $stats,
+			'message' => $message,
+		);
+	}
+
+	/**
 	 * @param array<string,mixed> $args Sync arguments.
 	 * @return array{ok:bool,message:string}
 	 */
 	protected function do_sync( array $args = array() ): array {
-		$client = $this->client();
+		$accounts = VulnHub_AWS_Accounts::all( true );
 
-		if ( ! $client ) {
-			return array(
-				'ok'      => false,
-				'message' => __( 'Not configured: no access key stored.', 'vulnhub' ),
+		// No accounts on the list: fall back to the single-account settings,
+		// which is still the right shape for somebody with one account.
+		if ( ! $accounts && $this->client() ) {
+			$accounts = array(
+				array(
+					'id'            => 0,
+					'account_id'    => (string) $this->get( 'account_id' ),
+					'label'         => __( 'Connector settings', 'vulnhub' ),
+					'auth_mode'     => 'keys',
+					'access_key_id' => (string) $this->get( 'access_key_id' ),
+					'role_arn'      => '',
+					'external_id'   => '',
+					'regions'       => (string) $this->get( 'regions' ),
+				),
 			);
 		}
 
-		$reach = new VulnHub_AWS_Reachability( $client, $this );
-		$total = 0;
-		$open  = 0;
+		if ( ! $accounts ) {
+			return array(
+				'ok'      => false,
+				'message' => __( 'No AWS accounts configured. Add one on the AWS accounts screen.', 'vulnhub' ),
+			);
+		}
 
-		foreach ( $this->regions() as $region ) {
-			$res = $reach->region( $region );
+		$ok     = 0;
+		$failed = 0;
+
+		foreach ( $accounts as $account ) {
+			// id 0 is the settings-form fallback, which has no row to read a
+			// secret from; sync_account() handles it through the same path.
+			$res = 0 === (int) $account['id']
+				? $this->sync_account_inline( $account )
+				: $this->sync_account( $account );
 
 			$this->log(
 				sprintf(
-					'%s: %d instance(s), %d reachable from the internet, %d API call(s)',
-					$region,
-					$res['instances'],
-					$res['reachable'],
-					$res['calls']
+					'%s (%s): %s',
+					$account['account_id'],
+					$account['label'] ?: '—',
+					$res['message']
 				)
 			);
 
-			$total += (int) $res['instances'];
-			$open  += (int) $res['reachable'];
-
-			$this->bump( 'seen', (int) $res['instances'] );
+			if ( $res['ok'] ) {
+				++$ok;
+				$this->bump( 'seen', (int) ( $res['stats']['instances'] ?? 0 ) );
+			} else {
+				++$failed;
+				$this->bump( 'failed' );
+			}
 		}
 
 		$linked = VulnHub_AWS_Reachability::apply_to_assets();
@@ -384,13 +563,50 @@ final class VulnHub_AWS_Connector extends Connector {
 		$this->bump( 'updated', $linked );
 
 		return array(
-			'ok'      => true,
+			'ok'      => $ok > 0,
 			'message' => sprintf(
-				/* translators: 1: instances seen, 2: reachable, 3: assets matched. */
-				__( '%1$d instance(s) read, %2$d reachable from the internet, %3$d matched to assets we hold.', 'vulnhub' ),
-				$total,
-				$open,
+				/* translators: 1: accounts read, 2: accounts failed, 3: assets matched. */
+				__( '%1$d account(s) read, %2$d failed, %3$d asset(s) matched.', 'vulnhub' ),
+				$ok,
+				$failed,
 				$linked
+			),
+		);
+	}
+
+	/**
+	 * The single-account path, for an install that never added a row.
+	 *
+	 * @param array<string,mixed> $account Synthetic account.
+	 * @return array{ok:bool,stats:array<string,mixed>,message:string}
+	 */
+	private function sync_account_inline( array $account ): array {
+		$client = $this->client();
+
+		if ( ! $client ) {
+			return array(
+				'ok'      => false,
+				'stats'   => array(),
+				'message' => __( 'Not configured.', 'vulnhub' ),
+			);
+		}
+
+		$reach = new VulnHub_AWS_Reachability( $client, $this );
+
+		foreach ( $this->regions() as $region ) {
+			$reach->region( $region );
+		}
+
+		$stats = $reach->stats();
+
+		return array(
+			'ok'      => empty( $stats['denied']['instances'] ),
+			'stats'   => $stats,
+			'message' => sprintf(
+				/* translators: 1: instances, 2: reachable. */
+				__( '%1$d instance(s), %2$d reachable from the internet.', 'vulnhub' ),
+				(int) ( $stats['instances'] ?? 0 ),
+				(int) ( $stats['reachable'] ?? 0 )
 			),
 		);
 	}
