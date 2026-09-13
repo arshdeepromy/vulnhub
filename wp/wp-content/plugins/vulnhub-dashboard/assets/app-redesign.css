@@ -1265,3 +1265,43 @@ body.vh-modal-open { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .vh-vdetail > summary::before { transition: none; }
 }
+
+/* The evidence behind "reached straight from the internet". Monospaced so
+   port numbers line up down the column, and wrapping rather than truncating:
+   an asset listening on four services is exactly the row worth reading in
+   full. */
+.vh-reach {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.vh-reach > li {
+  font-family: var(--vh-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--vh-ink-2);
+  white-space: nowrap;
+}
+
+/* Enough room for the longest label the port table can produce
+   ("elasticsearch 9200/tcp") without the column stealing width from the file
+   path beside it. Scoped to the list itself rather than an nth-child on
+   .vh-table, which would have sized the fifth column of every table in the
+   app -- a different column on every other page. */
+.vh-reach { min-width: 15ch; }
+
+/* The infinite-scroll sentinel. It must have a box -- an element with no box
+   never intersects, so it can never trigger the load that fills the table. It
+   is 1px of nothing until a fetch is in flight, then it makes room for the
+   loading note. */
+.vh-sentinel > td { height: 1px; padding: 0; border: 0; }
+.vh-sentinel.is-loading > td {
+  height: 40px;
+  padding: 10px 0;
+  text-align: center;
+  color: var(--vh-muted);
+  font-size: 12px;
+}
+.vh-sentinel.is-loading > td::after { content: "Loading more…"; }
