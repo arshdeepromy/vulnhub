@@ -253,70 +253,32 @@ final class VH_Product {
 			return '';
 		}
 
-		// Windows path first, then a Unix path -- Linux hosts bundle libraries
-		// under /opt/<app>, /u01/<app>, /usr/local/<app> just as Windows does,
-		// and Tenable prints either shape after "Path :".
-		if ( ! preg_match(  '/Path\s*:?\s*([A-Za-z]:\\\\.+?\.(?:dll|jar|exe|so|node))/i', $output, $m ) ) {
-			if ( preg_match( '#Path\s*:?\s*(/[^\s]+)#', $output, $mu ) ) {
-				return self::app_clean( self::app_from_unix_path( $mu[1] ) );
+		/*
+		 * One path parser, one knowledge base. This used to inline a Windows
+		 * branch, a Unix branch and a folder-picking heuristic, each with its
+		 * own idea of what a product looks like -- which is how
+		 * "...\Zoom\tmp_bin\libcurl.dll" became "Tmp_bin". install_path()
+		 * already knows how to read every shape this scanner emits, and
+		 * product_from_path() owns what a path means.
+		 */
+		$path = self::install_path( $output );
+
+		if ( '' !== $path ) {
+			// A genuine OS library belongs to the library, not to an app.
+			$low = strtolower( str_replace( '\\', '/', $path ) );
+			if ( preg_match( '#/windows/|/system32/|/syswow64/|^/(usr/)?lib(64)?/|^/(usr/)?s?bin/|^/usr/share/|^/usr/libexec/#', $low ) ) {
+				return '';
 			}
 
-			/*
-			 * No path at all, but a distro package list. Tenable's "Linux
-			 * Distros Unpatched Vulnerability : CVE-x" plugins -- one per CVE,
-			 * 202,216 findings here -- report no file path, only the packages
-			 * the CVE affects on that host:
-			 *
-			 *   The following packages were identified as being present...
-			 *    - kernel
-			 *    - kernel-core
-			 *    - kernel-devel
-			 *
-			 * Without this they all grouped under one product called "Linux:
-			 * unpatched CVEs (no vendor fix)", which is the biggest row in the
-			 * Linux view and says nothing anybody can act on. The package is
-			 * the Linux answer to the question the Windows side already
-			 * answers with the install path: what do I actually update.
-			 */
-			/*
-			 * Not app_clean(): that ucfirst()s a lower-case name so a Linux
-			 * folder reads like its Windows twin, which is right for an app
-			 * directory and wrong for a package. "openssl" is the name -- it
-			 * is what goes after `dnf update`, and "Openssl" is both incorrect
-			 * and not copy-pasteable.
-			 */
-			return self::app_from_package_list( $output );
-		}
-		$path = $m[1];
-		$low  = strtolower( $path );
+			$product = self::product_from_path( $path );
 
-		// A genuine OS library: leave it attributed to the library.
-		if ( str_contains( $low, '\\windows\\' ) || str_contains( $low, 'system32' ) || str_contains( $low, 'syswow64' ) ) {
-			return '';
-		}
-
-		// MSIX / Store app: WindowsApps\<Publisher>.<App>_<ver>_<arch>__<hash>.
-		if ( preg_match( '/WindowsApps\\\\+([^\\\\]+)/i', $path, $w ) ) {
-			return self::app_clean( self::msix_app( $w[1] ) );
-		}
-
-		// Classic install under Program Files (x86 too): the app is the first
-		// folder, or the product folder when the first is a known vendor.
-		if ( preg_match( '/Program Files(?: \(x86\))?\\\\+(.+)$/i', $path, $pf ) ) {
-			return self::app_clean( self::app_from_segments( $pf[1] ) );
-		}
-
-		// Loose location (a jar in Downloads, temp, a profile): the nearest
-		// meaningful folder above the file names the app.
-		$segs    = array_values( array_filter( explode( '\\', $path ) ) );
-		$folders = array_slice( $segs, 0, -1 );
-		$fname   = end( $segs );
-		foreach ( array_reverse( $folders ) as $f ) {
-			if ( ! self::app_is_noise( $f ) ) {
-				return self::app_clean( $f );
+			if ( '' !== $product ) {
+				return $product;
 			}
 		}
-		return self::app_clean( self::app_strip_version( $fname ) );
+
+		// No usable path: a distro package list names the thing to update.
+		return self::app_from_package_list( $output );
 	}
 
 	/**
@@ -328,6 +290,244 @@ final class VH_Product {
 	 * the suffixes and language prefixes come off and the name that covers the
 	 * rest of the list wins: that list is a kernel update, not eleven.
 	 */
+	/** The path knowledge base, loaded once. */
+	private static function path_kb(): array {
+		static $kb = null;
+
+		if ( null === $kb ) {
+			$file = VULNHUB_DIR . 'data/product-paths.php';
+			$kb   = is_readable( $file ) ? (array) require $file : array();
+
+			$kb['structure'] = array_flip( array_map( 'strtolower', (array) ( $kb['structure'] ?? array() ) ) );
+			$kb['anchors']   = (array) ( $kb['anchors'] ?? array() );
+			$kb['aliases']   = (array) ( $kb['aliases'] ?? array() );
+
+			/**
+			 * Filters the install-path knowledge base.
+			 *
+			 * @param array $kb structure / anchors / aliases.
+			 */
+			$kb = (array) apply_filters( 'vulnhub_product_path_kb', $kb );
+		}
+
+		return $kb;
+	}
+
+	/** A folder name reduced to a comparison key. */
+	private static function path_key( string $segment ): string {
+		return strtolower( (string) preg_replace( '/[^a-z0-9]+/i', '', $segment ) );
+	}
+
+	/** Whether a path segment is install structure rather than a product. */
+	private static function is_structure( string $segment ): bool {
+		$kb  = self::path_kb();
+		$low = strtolower( trim( $segment ) );
+
+		if ( isset( $kb['structure'][ $low ] ) ) {
+			return true;
+		}
+
+		// Pure version or build directories: 152.0.4191.66, 12.2.1.4, v1.2.4,
+		// 37852500, x64. None of them name a product.
+		if ( preg_match( '/^v?[\d._-]+$/', $low ) ) {
+			return true;
+		}
+
+		// A date-stamped working copy: backup20260401, 20240625.
+		if ( preg_match( '/^(backup|copy|old|tmp|temp)?[\s_-]*\d{6,}$/', $low ) ) {
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * The product an install path belongs to, or '' when nothing is credible.
+	 *
+	 * Resolution order, most trustworthy first:
+	 *
+	 *   1. A vendor layout anchor. `/u01/jde920/e920/system/bin64/openssl` is
+	 *      only readable as JD Edwards if you know what a JDE deployment root
+	 *      looks like; no amount of folder-picking gets there.
+	 *   2. An MSIX package name, which carries the product properly:
+	 *      Microsoft.Todos_2.176.7601.0_x64__8wekyb3d8bbwe.
+	 *   3. A folder whose name is a known alias -- sqldeveloper_23 -> Oracle
+	 *      SQL Developer -- searched left to right so the product root wins
+	 *      over a nested copy of itself.
+	 *   4. A folder that matches something actually installed in the estate,
+	 *      taken from the CPE inventory. A positive signal only: the inventory
+	 *      covers 216 products and rejecting everything outside it would throw
+	 *      away correct names like "HP One Agent".
+	 *   5. Otherwise the first non-structural folder after the install root.
+	 *
+	 * Returning '' is a valid answer and better than a guess. "Configuration"
+	 * and "Tmp_bin" were rows in the exposure widget that nobody could act on.
+	 */
+	public static function product_from_path( string $path ): string {
+		$path = trim( $path );
+
+		if ( '' === $path ) {
+			return '';
+		}
+
+		$kb = self::path_kb();
+
+		/*
+		 * Collapse repeated separators before anything else. Scanner output
+		 * escapes backslashes inconsistently, so "Microsoft\\EdgeWebView"
+		 * arrives as "Microsoft//EdgeWebView" once flattened -- and then a
+		 * layout pattern looking for "/Microsoft/EdgeWebView" does not match
+		 * and the path falls through to a guess. install_path() already
+		 * normalises, but this has to hold for any caller.
+		 */
+		$norm = (string) preg_replace( '#/{2,}#', '/', str_replace( '\\', '/', $path ) );
+		$norm = '/' . ltrim( $norm, '/' );
+
+		// 1. Vendor layout.
+		foreach ( $kb['anchors'] as $pattern => $product ) {
+			if ( '' !== $product && preg_match( $pattern, $norm ) ) {
+				return $product;
+			}
+		}
+
+		$segments = array_values( array_filter( explode( '/', $norm ), static fn( $x ): bool => '' !== $x ) );
+
+		/*
+		 * 2. MSIX / Store package.
+		 *
+		 * Not simply the segment after WindowsApps: Windows stages packages
+		 * pending removal under "WindowsApps\Deleted\<package>", so that
+		 * segment was "Deleted" for 23 findings that are really Teams and
+		 * Office. Scan forward instead for the first segment shaped like a
+		 * package identifier -- Publisher.Name_version_arch__hash.
+		 */
+		foreach ( $segments as $i => $segment ) {
+			if ( 0 !== strcasecmp( $segment, 'WindowsApps' ) ) {
+				continue;
+			}
+
+			for ( $j = $i + 1; $j < count( $segments ) && $j <= $i + 3; $j++ ) {
+				if ( false === strpos( $segments[ $j ], '_' ) ) {
+					continue;   // "Deleted", "MutableBackup" and friends.
+				}
+
+				$app = self::app_clean( self::msix_app( $segments[ $j ] ) );
+
+				if ( '' !== $app ) {
+					return $app;
+				}
+			}
+		}
+
+		// The file itself is not a folder.
+		$folders = array_slice( $segments, 0, -1 );
+
+		// 3. A known alias, product root first.
+		foreach ( $folders as $segment ) {
+			$key = self::path_key( self::app_strip_version( $segment ) );
+			if ( '' !== $key && isset( $kb['aliases'][ $key ] ) ) {
+				return $kb['aliases'][ $key ];
+			}
+		}
+
+		// 4. Something the estate actually has installed.
+		$known = self::installed_vocabulary();
+		foreach ( $folders as $segment ) {
+			if ( self::is_structure( $segment ) ) {
+				continue;
+			}
+			$key = self::path_key( self::app_strip_version( $segment ) );
+			if ( '' !== $key && isset( $known[ $key ] ) ) {
+				return $known[ $key ];
+			}
+		}
+
+		/*
+		 * A file under a scratch location has no install root to read. A
+		 * folder in %TEMP% or a user profile is a project directory, a ticket
+		 * number or somebody's surname -- "C:\temp\corrossion\_internal\
+		 * sqlite3.dll" is not a product called Corrossion. Steps 1 to 4 can
+		 * still name it from real evidence; step 5's guess is refused here.
+		 */
+		if ( preg_match( '#^/([A-Za-z]:?/)?(temp|tmp|users|home|programdata/temp)(/|$)#i', $norm )
+			|| preg_match( '#/(appdata|downloads)/#i', $norm ) ) {
+			return '';
+		}
+
+		// 5. First non-structural folder, left to right: the install root
+		//    names the product, the folder next to the file does not.
+		foreach ( $folders as $segment ) {
+			if ( self::is_structure( $segment ) ) {
+				continue;
+			}
+			$name = self::app_clean( self::app_strip_version( $segment ) );
+			if ( '' !== $name && strlen( self::path_key( $name ) ) >= 3 ) {
+				return $name;
+			}
+		}
+
+		return '';
+	}
+
+	/**
+	 * Products the estate actually has installed, from the CPE inventory.
+	 *
+	 * Tenable reports installed software as cpe:/a:vendor:product:version, so
+	 * this is evidence rather than a guess -- but only 216 products wide, so
+	 * it is used to confirm a folder name and never to reject one.
+	 *
+	 * @return array<string,string> comparison key => display name.
+	 */
+	public static function installed_vocabulary(): array {
+		static $vocab = null;
+
+		if ( null !== $vocab ) {
+			return $vocab;
+		}
+
+		$cached = get_transient( 'vh_installed_vocab' );
+
+		if ( is_array( $cached ) ) {
+			$vocab = $cached;
+			return $vocab;
+		}
+
+		global $wpdb;
+		$vocab = array();
+
+		$rows = (array) $wpdb->get_col(
+			'SELECT software_json FROM ' . vh_table( 'assets' )
+			. " WHERE software_json <> '' AND software_json <> '[]'" // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		);
+
+		foreach ( $rows as $json ) {
+			$list = json_decode( (string) $json, true );
+
+			if ( ! is_array( $list ) ) {
+				continue;
+			}
+
+			foreach ( $list as $cpe ) {
+				$parts = explode( ':', str_replace( '\\', '', (string) $cpe ) );
+
+				if ( count( $parts ) < 4 || '' === $parts[3] ) {
+					continue;
+				}
+
+				$display = ucwords( str_replace( array( '_', '-' ), ' ', $parts[3] ) );
+				$key     = self::path_key( $display );
+
+				if ( strlen( $key ) >= 4 && ! isset( $vocab[ $key ] ) ) {
+					$vocab[ $key ] = $display;
+				}
+			}
+		}
+
+		set_transient( 'vh_installed_vocab', $vocab, DAY_IN_SECONDS );
+
+		return $vocab;
+	}
+
 	private static function app_from_package_list( string $output ): string {
 		$names = array();
 
@@ -506,12 +706,44 @@ final class VH_Product {
 		if ( 0 === stripos( (string) $base, 'zoom' ) ) {
 			return 'Zoom';
 		}
-		if ( 0 === stripos( (string) $base, 'crossdevice' ) ) {
+		if ( false !== stripos( (string) $base, 'crossdevice' ) ) {
 			return 'Microsoft Phone Link';
 		}
-		$name = (string) strrchr( (string) $base, '.' );
-		$name = '' !== $name ? substr( $name, 1 ) : (string) $base;
-		return self::app_spacecase( $name );
+
+		/*
+		 * Try the map again with the publisher stripped. A package identifier
+		 * carries its publisher -- Microsoft.MicrosoftPowerBIDesktop,
+		 * MicrosoftWindows.CrossDevice -- and keying only on the whole string
+		 * meant the map missed both of those even though the product names
+		 * were sitting in it. Strip one dotted segment at a time, longest
+		 * remainder first, so an exact full-key hit still wins.
+		 */
+		$parts = explode( '.', (string) $base );
+
+		for ( $i = 1; $i < count( $parts ); $i++ ) {
+			$try = strtolower( implode( '', array_slice( $parts, $i ) ) );
+
+			if ( isset( $map[ $try ] ) ) {
+				return $map[ $try ];
+			}
+		}
+
+		/*
+		 * Nothing known: keep the publisher rather than drop it. The last
+		 * dotted segment alone turned Microsoft.Todos into "Todos", which
+		 * reads like a to-do list somebody left on the disk rather than a
+		 * Microsoft application.
+		 */
+		$name   = self::app_spacecase( (string) end( $parts ) );
+		$vendor = self::app_spacecase( (string) $parts[0] );
+
+		if ( count( $parts ) > 1 && '' !== $name && 0 !== stripos( $name, $vendor ) ) {
+			// "MicrosoftWindows" and "Microsoft" both mean Microsoft here.
+			$vendor = preg_replace( '/^Microsoft\s*Windows$/i', 'Microsoft', $vendor );
+			return trim( $vendor . ' ' . $name );
+		}
+
+		return $name;
 	}
 
 	private static function app_spacecase( string $x ): string {
@@ -522,6 +754,17 @@ final class VH_Product {
 	private static function app_strip_version( string $fn ): string {
 		$fn = (string) preg_replace( '/\.(dll|jar|exe|so|node)$/i', '', $fn );
 		$fn = (string) preg_replace( '/[-_]v?\d[\d._()+-]*(?:[-_][a-z0-9]+)*$/i', '', $fn );
+
+		/*
+		 * A version glued straight onto the name, no separator: Python310,
+		 * Office16, SOA12. The stem has to be at least three letters, which
+		 * keeps "log4j" (digits in the middle, ends in a letter) and "e920"
+		 * (stem too short to mean anything) out of it.
+		 */
+		if ( preg_match( '/^([A-Za-z][A-Za-z._ -]{2,})\d+$/', trim( $fn ), $m ) ) {
+			$fn = $m[1];
+		}
+
 		return trim( $fn, " -_" );
 	}
 
