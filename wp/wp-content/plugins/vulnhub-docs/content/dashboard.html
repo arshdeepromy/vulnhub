@@ -1,0 +1,124 @@
+<p>The dashboard is a board of <strong>widgets</strong> you can rearrange. Each widget answers one question and — almost always — every number on it is a link that opens the exact list of findings or assets it counted. This page explains all 37 widgets: what each shows, what its figures mean, how the data is filtered, and where clicking takes you.</p>
+
+<div class="vh-note"><p><strong>How the board works.</strong> Drag the handle on any widget to rearrange; use <em>Customise</em> to add or remove widgets from the picker or reset to defaults. Your layout is saved to your account. Each widget's header has an export menu — <strong>CSV</strong> / <strong>Copy as TSV</strong> when the widget has tabular data, and <strong>PNG</strong> / <strong>SVG</strong> when it draws a chart. Widgets are grouped in the picker as <em>Exposure</em>, <em>End of life</em>, <em>Tenable coverage</em>, <em>Defender coverage</em>, <em>Ownership</em> and <em>Remediation</em>.</p></div>
+
+<div class="vh-warn"><p><strong>Two things to know before reading numbers.</strong> (1) <strong>Tenable coverage % and Defender coverage % are not comparable</strong> — they use different denominators (Defender additionally excludes device classes no agent runs on). That is why they are in separate groups. (2) A few Exposure widgets (<em>Findings by age</em>, <em>Impact funnel</em>, <em>Impact by OS</em>, <em>Impact by family</em>, <em>Most widespread vulnerabilities</em>) are <strong>not</strong> filtered to the reporting scope, so their totals can be larger than the scoped headline figures. Everywhere else, "reportable" scope applies (see <a href="?doc=lifecycle">Finding lifecycle &amp; scoping</a>).</p></div>
+
+<h2>The attack-path widget: How an attacker gets in</h2>
+
+<p>This is the widget added by the threat plugin and pinned directly under the headline. It is the single most important picture on the board, so it has <a href="?doc=classification">its own concept page</a>; in brief:</p>
+<ul>
+  <li>It shows only <strong>open findings that have a working exploit</strong>, sorted into the route an attacker would take.</li>
+  <li><span class="vh-tag vh-tag--edge">edge</span> — reached straight from the internet (no account, no click) on an internet-facing machine. This should read zero.</li>
+  <li><span class="vh-tag vh-tag--user">user</span> — delivered to a person; the three doors (<strong>email / website / download</strong>) sum to this lane.</li>
+  <li><span class="vh-tag vh-tag--inside">inside</span> — only usable after a foothold, plus edge findings on machines the internet cannot currently reach.</li>
+  <li>Every number links into the findings list filtered to exactly that lane or door (<code>route=…</code>, <code>delivery=…</code>, <code>poc=1</code>). The reachability strip below it reports what is <em>Reachable</em>, <em>Never looked</em> and <em>Ruled out</em>.</li>
+</ul>
+
+<h2>Group: Exposure</h2>
+
+<h3>Headline figures</h3>
+<p>Four big KPI tiles. <strong>Critical open</strong> = open, non-excepted critical findings on in-scope assets (with the high count beside it). <strong>Past SLA</strong> = open findings past their due date. <strong>Not scanned by Tenable</strong> = in-scope assets with a Tenable coverage gap (with coverage % beside it). <strong>Closed but still detected</strong> = tickets Jira marked done that Tenable still sees. The first two carry a 30-day sparkline. Each tile links to the matching filtered list.</p>
+
+<h3>Open findings over time (trend)</h3>
+<p>A four-line chart (Critical/High/Medium/Low) of open findings per day over the last 30 days. It reads a nightly <em>snapshot</em> table, not live data, so it shows the <em>direction of travel</em> — is exposure rising or falling.</p>
+
+<h3>Findings by severity</h3>
+<p>A donut of currently-open, non-excepted findings split across the five severities; the centre is the total open. The proportional shape of what is open right now.</p>
+
+<h3>Findings by age</h3>
+<p>A severity-stacked bar per age band (0–30, 31–60, 61–90, 91–180, 180+ days, plus Unknown), aged by when each finding was <em>first discovered</em>. A large <em>180+</em> critical segment means long-standing unfixed criticals. (Not scope-filtered.)</p>
+
+<h3>Vulnerabilities by severity and age</h3>
+<p>A matrix: rows are severities, columns are three age bands (Under 30 / 30–90 / Over 90 days) plus a <strong>Movement</strong> column. Each cell's big number is the count of distinct <em>vulnerabilities</em> whose oldest open instance falls in that band ("counted once"); the sub-line is how many <em>asset findings</em> those represent. The Movement pill is vulnerabilities that resurfaced minus those fixed (↓ green = improving, ↑ red = worse). Every cell links to the findings list filtered by that severity and age.</p>
+
+<h3>Impact funnel</h3>
+<p>A four-stage funnel: <em>Open findings</em> → <em>Critical or high</em> → <em>With a public exploit</em> (the vuln has <code>exploit_available</code>) → <em>And nobody has a ticket</em>. The last stage is the unmanaged-risk number that matters most. (Not scope-filtered.)</p>
+
+<h3>Most widespread vulnerabilities</h3>
+<p>A bar chart of the vulnerabilities affecting the most assets (critical/medium and above), largest first. "Fix these once and the number moves." Each bar links to that vulnerability's findings. (Filters on the definition's severity; not scope-filtered.)</p>
+
+<h3>Most exposed assets</h3>
+<p>The machines with the highest stored risk score, with the owner (person, else team, else "Unassigned") and their open critical/high counts — who to chase first. Each hostname links to the single-asset view.</p>
+
+<h3>Impact by operating system / Impact by product family</h3>
+<p>Two "where does the work sit" views. <em>By OS</em> is a donut of open findings weighted by the operating system of the affected machine; <em>by family</em> is a bar chart of open findings by Tenable plugin family (e.g. "Windows", "Web Servers"). Both are finding-weighted, so a machine with many findings dominates. (Not scope-filtered; both are off the default board but in the picker.)</p>
+
+<h3>Vulnerable software in Downloads folders</h3>
+<p>Open findings whose vulnerable file sits in a user's Downloads folder — software nobody patches and no packaging system tracks — split into Windows / Linux / macOS tiles, in reporting scope. A separate footnote counts the <em>informational</em> file listings Tenable catalogued (deliberately kept out of the vulnerability count). Tiles link to the filtered findings.</p>
+
+<h3>Patch availability by severity</h3>
+<p>Per severity, a bar split into <strong>Patch available</strong> (green — the vendor has a fix, so it is schedulable) and <strong>No patch available</strong> (red — nobody has a fix, so it needs a <em>decision</em>, not a patch window). The scale is per-row so you see the <em>proportion</em> fixable at each severity. Each half links to that severity + patch-state in the findings list.</p>
+
+<h3>Exposure by product</h3>
+<p>The flagship "what software carries the risk" list: each row is a product (app, library or OS package), showing the <strong>assets</strong> affected (machines to touch) and total <strong>findings</strong>, with a proportional bar and a kind badge (library / app / OS). A vulnerable library is regrouped under the application that ships it. Fix the top rows and the number moves fastest. Names link to the product's findings; "View all products" opens the full list. See <a href="?doc=products-vendors">Products &amp; vendors</a>.</p>
+
+<h2>Group: End of life</h2>
+
+<p>These match your estate against published end-of-support dates. Status buckets: <strong>Out of support</strong> (past the date), <strong>Support ends within six months</strong>, <strong>Supported</strong>, and <strong>No published date</strong>. The wording is "out of support", not "past end of life", because these are release branches, not dead products.</p>
+
+<h3>Platforms past end of life</h3>
+<p>Assets grouped by the OS <em>release</em> they run, matched on <strong>build number</strong> rather than what the inventory label claims (so a machine labelled "Windows 11" actually running an old build is placed correctly, or left "unknown" rather than guessed). Four tiles give the estate split; bars show each release coloured by status, with the supported release to move to. The table adds "Mainstream ends" (a different promise) and days remaining. Bars link to the assets on that release.</p>
+
+<h3>Software on unsupported releases</h3>
+<p>Installed software (from each asset's software inventory) on a release the vendor no longer patches, counted <strong>once per machine</strong>, with the supported release to move to. (Off the default board; in the picker. Rows are not clickable here.)</p>
+
+<h3>Hardware support</h3>
+<p>A single stacked bar of warranty status from the CMDB's support-end date: Out of hardware support / Expires within 90 days / Under support / No date recorded. This is a <em>warranty</em> date, not a security one — an out-of-warranty machine still gets OS updates — which is why it is never merged into platform EOL. (No CSV; off the default board.)</p>
+
+<h2>Group: Tenable coverage</h2>
+
+<p><strong>What "covered" and "gap" mean here.</strong> "Covered" = Tenable has <em>any</em> record of the asset (even a stale or never-scanned one). A "gap" is only <em>Not in Tenable</em> or <em>No recent contact</em> — stale/never-scanned are shown as "unscanned" but are not gaps. The denominator excludes retired kit and things nobody scans (printers, switches).</p>
+
+<h3>Tenable coverage</h3>
+<p>A donut with the headline coverage percentage in the centre — how much of the in-scope estate Tenable has a record of. The sub-line names the assets excluded from the figure (by lifecycle status, and un-scannable kit) and links to them.</p>
+
+<h3>Tenable coverage by device type / by site / by source system</h3>
+<p>The same coverage bar, broken down three ways, worst coverage first: by <strong>device type</strong>, by <strong>site/location</strong> (the "Unclassified"/unplaced row usually holds the most gaps), and by <strong>source system</strong> (of the machines <em>this</em> system says exist, how many Tenable knows — plus a "claimed by one system alone" flag for machines to doubt). Every bar links to those gap assets. (By-site and by-source are in the picker.)</p>
+
+<h3>Tenable coverage of the CMDB</h3>
+<p>A meter + gap tile focused on the CMDB register specifically: of the assets the CMDB says exist, how many Tenable has a record of. The gap tile links to the CMDB assets Tenable is missing.</p>
+
+<h3>Tenable gap list / Tenable gaps in the CMDB register</h3>
+<p>The actionable tables: assets something knows about that Tenable does not, with why it is a gap, which systems know it, the owner, and last scan. The CMDB variant (on the default board) is every-row-vouched — each has a CI, owner and service, so it is directly actionable. Hostnames link to the asset; the footer opens the full gap list.</p>
+
+<h2>Group: Defender coverage</h2>
+
+<p>The same shape as Tenable coverage, but for the Microsoft Defender sensor, reading the precomputed <code>defender_coverage_state</code>. <strong>Different denominator:</strong> in-scope here additionally excludes appliances, network gear and mobiles, and devices Defender flags as unsupported — so do not compare this percentage with Tenable's.</p>
+
+<h3>Defender coverage</h3>
+<p>A donut with the centre percentage of in-scope assets that have a Defender sensor, and a footnote listing what is excluded (including "servers and workstations Defender cannot onboard" — the reason its denominator differs from Tenable's).</p>
+
+<h3>Defender coverage by device type / by source system, and of the CMDB</h3>
+<p>Worst-first breakdowns by device type and source system, and a meter focused on the CMDB register — "onboarded" counts as covered, "onboarded but sensor quiet" is surfaced separately. Bars and tiles link to the assets with no sensor.</p>
+
+<h3>Defender gap list / Defender gaps in the CMDB register</h3>
+<p>Tables of in-scope assets with no reporting Defender sensor, ordered by criticality, with why it is a gap, who knows it, the owner and the last sensor report. The CMDB variant leads the default board.</p>
+
+<h2>Group: Ownership</h2>
+
+<h3>Exposure by team</h3>
+<p>A severity-stacked bar per team (top 8 by critical→high→total) — who currently carries the open findings. "Unassigned" is findings on assets with no team. The team label links to that team's findings; each severity segment links to that severity within the team.</p>
+
+<h3>Ownership gaps</h3>
+<p>Workstations and mobiles, in scope, with <em>no owner person</em> — highest-risk first, so you know who has nobody to chase. Hostnames link to the asset; the footer opens the full "needs a user" list.</p>
+
+<h3>Estate by device type</h3>
+<p>A donut of the in-scope fleet by device type — a population breakdown, not a risk figure. (In the picker.)</p>
+
+<h2>Group: Remediation</h2>
+
+<h3>Remediation health</h3>
+<p>Three meters: <strong>Findings within SLA</strong> (open findings not past their due date), <strong>Assets with an owner or team</strong> (in-scope assets that resolve to a person or team), and <strong>Estate scanned by Tenable</strong> (coverage). One glance at whether remediation is keeping up.</p>
+
+<h3>Closure verification</h3>
+<p>A donut of what happened when VulnHub re-checked tickets Jira called "done": <strong>Verified fixed</strong> (green — a rescan confirmed it gone), <strong>Still detected</strong> (red — a false closure), <strong>Cannot verify</strong> (amber), <strong>Not yet checked</strong> (grey). "A ticket marked done is a claim; this is what re-checking found."</p>
+
+<h3>Ticket flow</h3>
+<p>A donut of remediation tickets by status category — To do / In progress / Done / Unknown — with the total in the centre.</p>
+
+<h3>Exceptions expiring</h3>
+<p>Approved risk acceptances with an expiry date, soonest first. When one lapses its findings stop being excepted and re-enter the open counts — so this is your review queue. References link to the exceptions list. (In the picker.)</p>
+
+<h2>How the numbers stay fresh</h2>
+<p>Rendered widgets are cached per board with 15-minute freshness and up to 6-hour serve-stale, so a page load rarely waits on the database. When a connector sync finishes it <em>busts</em> only the widgets that read the data it moved (findings, assets, coverage, Defender, tickets, threat), and a background job re-renders them. So the board reflects new data within about a minute of a sync without ever rebuilding everything at once. If a figure looks stale, it is at most one refresh behind; an administrator can force a refresh from the object cache.</p>

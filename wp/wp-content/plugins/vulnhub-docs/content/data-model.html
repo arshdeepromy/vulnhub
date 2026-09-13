@@ -1,0 +1,79 @@
+<p>Every application table is prefixed <code>vh_vulnhub_*</code> (the WordPress prefix here is <code>vh_</code>). Core owns the estate tables and creates them with <code>dbDelta</code> in <code>vulnhub-core/includes/class-vh-install.php</code>; satellite plugins own their own tables. This page is the field guide — what each table is for and what its load-bearing columns mean. It is a reference, not a migration script; the install classes are canonical.</p>
+
+<div class="vh-note"><p><strong>Three entities to keep straight.</strong> A <strong>vuln</strong> is a scanner <em>definition</em> (one Tenable plugin, e.g. "RHEL 9 : kernel (RHSA-…)") — it can name many CVEs. An <strong>asset</strong> is a machine. A <strong>finding</strong> is one <em>(asset × vuln × port × protocol)</em> — the working row VulnHub counts. There are far more findings than vulns or assets.</p></div>
+
+<h2>The working set</h2>
+
+<h3><code>vulnhub_findings</code> — one row per asset × vuln × port</h3>
+<p>The busiest table (load-tested past 400k rows). Fingerprinted and de-duplicated.</p>
+<div class="vh-defs">
+  <div><span class="k">fingerprint</span><span class="v"><code>sha256(asset_id | vuln_id | port | protocol)</code>, UNIQUE — the dedup key.</span></div>
+  <div><span class="k">state</span><span class="v"><code>open</code>, <code>reopened</code>, <code>fixed</code>, <code>archived</code>, <code>suppressed</code>. Only <code>open</code>+<code>reopened</code> are "live" and counted.</span></div>
+  <div><span class="k">severity</span><span class="v"><code>critical / high / medium / low / info</code> (info is always <code>suppressed</code>).</span></div>
+  <div><span class="k">risk_score</span><span class="v">decimal — severity × asset criticality × exploit × VPR, capped 100.</span></div>
+  <div><span class="k">exception_id / ticket_id</span><span class="v">Attached risk-acceptance / remediation ticket (0 = none). A non-zero <code>exception_id</code> removes the finding from live counts.</span></div>
+  <div><span class="k">first_found / last_found / last_fixed / due_at</span><span class="v">Lifecycle timestamps; <code>due_at</code> is the SLA deadline that drives "overdue".</span></div>
+  <div><span class="k">prev_state</span><span class="v">The state before an archive/suppress — the "way back", so a machine returning to service restores exactly.</span></div>
+  <div><span class="k">verification_state / verified_at</span><span class="v">Mirrors ticket verification: <code>pending</code>, <code>confirmed_fixed</code>, <code>still_open</code>, <code>unknown</code>.</span></div>
+  <div><span class="k">bundle_app / bundle_app_slug</span><span class="v">The application that ships a vulnerable library, derived from scanner output at write time.</span></div>
+  <div><span class="k">path_zone / zone_path</span><span class="v">The install-path zone of a downloaded/opened component.</span></div>
+  <div><span class="k">scan_uuid / last_synced_at</span><span class="v">Tenable scan id (proves a rescan); "last seen this sync".</span></div>
+</div>
+<p>Its composite indexes are deliberately ordered for the count queries — e.g. <code>state_sev_risk</code>, <code>exc_state_sev</code>, <code>vuln_state_exc</code>, <code>asset_state_exc</code>.</p>
+
+<h3><code>vulnhub_assets</code> — the merged inventory</h3>
+<p>One row per machine, merged across Tenable, Intune, Entra, Defender, CMDB and AWS. Highlights by group:</p>
+<div class="vh-defs">
+  <div><span class="k">Identity keys</span><span class="v"><code>primary_source</code>, <code>tenable_uuid</code>, <code>intune_id</code>, <code>azure_ad_device_id</code>, <code>cmdb_id</code>, <code>defender_id</code>, <code>serial_number</code>, <code>hostname</code>, <code>fqdn</code>, <code>ipv4</code>/<code>ipv4s</code>. <code>sources_json</code> records which system last saw it, and when.</span></div>
+  <div><span class="k">Classification</span><span class="v"><code>asset_type</code> (workstation/server/mobile/network/cloud/appliance/unknown), <code>criticality</code> (critical/high/medium/low), <code>environment</code>, <code>business_service</code>, <code>lifecycle_status</code>.</span></div>
+  <div><span class="k">Ownership</span><span class="v"><code>owner_person_id</code>, <code>owner_source</code>, <code>owner_confidence</code> (high/medium/low), <code>owner_rule</code>, <code>team_id</code>, <code>location_id</code>.</span></div>
+  <div><span class="k">Coverage</span><span class="v"><code>coverage_state</code>, plus per-source timestamps (<code>tenable_last_scan</code>, <code>last_intune_sync</code>, <code>cmdb_last_scan</code>) and Defender columns (<code>defender_onboarding</code>, <code>defender_coverage_state</code>, …).</span></div>
+  <div><span class="k">Roll-ups</span><span class="v"><code>open_critical/high/medium/low</code> and <code>risk_score</code>, recomputed by <code>Repo::recalculate_asset_rollups()</code>.</span></div>
+</div>
+
+<h3><code>vulnhub_vulns</code> — the definition catalogue</h3>
+<p>UNIQUE on <code>(source, plugin_id)</code>. Carries <code>title</code>, <code>family</code>, <code>severity</code>/<code>severity_id</code>, <code>cve_json</code>, the raw scores <code>cvss2_base</code>/<code>cvss3_base</code>/<code>vpr_score</code>, <code>solution</code>, and the product classification columns <code>component_class</code> / <code>product</code> / <code>product_kind</code> / <code>product_slug</code>.</p>
+
+<h2>Threat &amp; reachability (owned by <code>vulnhub-threat</code>)</h2>
+<div class="vh-defs">
+  <div><span class="k">vuln_paths</span><span class="v">One row per definition (PK <code>vuln_id</code>), rebuilt each refresh: <code>route</code>, <code>poc_route</code>, <code>delivery</code>, <code>has_poc</code>, <code>kev</code>, <code>top_epss</code>, <code>top_cve</code>, <code>evidence</code>. The table the attack-path widget reads.</span></div>
+  <div><span class="k">cve_intel</span><span class="v">One row per CVE (PK <code>cve_id</code>): the CVSS vector fields, <code>base_score</code>, <code>epss</code>/<code>epss_percentile</code>, <code>kev</code>/<code>kev_added</code>/<code>kev_ransomware</code>, <code>exploit_refs</code>, <code>has_poc</code>, derived <code>route</code>/<code>delivery</code>.</span></div>
+  <div><span class="k">asset_exposure</span><span class="v">The internet-facing <em>opinion</em>, kept separate from <code>assets</code> so a connector can't overwrite it: <code>internet_facing</code>, <code>source</code> (<code>rule</code>/<code>manual</code>), <code>basis</code> (<code>evidence</code>/<code>ruled_out</code>/<code>unknown</code>/<code>asserted</code>), <code>reason</code>.</span></div>
+  <div><span class="k">asset_ports</span><span class="v">Observed listening ports (PK asset+port+protocol) parsed from Tenable's Netstat plugins: <code>remote</code>, <code>service</code>, <code>kind</code> (web/mail/shell/…).</span></div>
+</div>
+
+<h2>Workflow</h2>
+<div class="vh-defs">
+  <div><span class="k">tickets / ticket_findings</span><span class="v">Remediation tickets (Jira) and their join to findings. Tickets carry <code>status_category</code> (<code>done</code>=closed), <code>verification_state</code>, SLA and routing fields; the join is UNIQUE per <code>(ticket, finding)</code>.</span></div>
+  <div><span class="k">exceptions</span><span class="v">Risk acceptances: <code>reference</code> (UNIQUE), <code>scope_type</code> (finding/asset/vuln/team), <code>reason</code>, <code>status</code> (draft→pending→approved→…), <code>justification</code>, <code>expires_at</code>, <code>affected_count</code>.</span></div>
+  <div><span class="k">automations</span><span class="v">Rules that raise tickets on events (<code>trigger_event</code>, <code>conditions_json</code>, <code>actions_json</code>, <code>grouping</code>, throttles).</span></div>
+  <div><span class="k">mapping_rules</span><span class="v">Ownership routing: match an asset field, assign a person/team/location/criticality. Distinct from the classification rules below.</span></div>
+</div>
+
+<h2>Organisation</h2>
+<div class="vh-defs">
+  <div><span class="k">teams</span><span class="v"><code>slug</code> (UNIQUE), manager, Jira routing, and per-severity SLA days (<code>sla_critical_days</code>=7, high=30, medium=90, low=180 by default).</span></div>
+  <div><span class="k">people</span><span class="v">The directory (UNIQUE per <code>source,source_uid</code>): UPN, email, manager, department, office, <code>team_id</code>, <code>location_id</code>, <code>wp_user_id</code>.</span></div>
+  <div><span class="k">locations</span><span class="v">Sites: name, slug, city/region/timezone.</span></div>
+</div>
+
+<h2>Classification &amp; roll-ups</h2>
+<div class="vh-defs">
+  <div><span class="k">class_rules / class_rule_conditions / class_asset_state</span><span class="v">The asset-classification engine (owned by <code>vulnhub-rules</code>): rules with ordered conditions that set environment/criticality/type/business-service/weight, and the per-asset result.</span></div>
+  <div><span class="k">summary_products</span><span class="v">A materialised product-exposure roll-up (assets/findings per product with a stored rank), rebuilt by the dashboard warm job so the "Exposure by product" top-N is an index range, not a live aggregate.</span></div>
+  <div><span class="k">metrics</span><span class="v">Daily trend snapshots (<code>snapshot_date</code>+<code>metric_key</code>+<code>dimension</code> UNIQUE) — what the trend widget plots.</span></div>
+</div>
+
+<h2>Bookkeeping &amp; the rest</h2>
+<div class="vh-defs">
+  <div><span class="k">sync_runs</span><span class="v">One row per connector run: mode, status, counters, message, <code>stats_json</code>, <code>log_text</code>.</span></div>
+  <div><span class="k">import_jobs</span><span class="v">One row per CSV import: type/shape, resumable <code>byte_offset</code>, status, counters. Never shares rows with <code>sync_runs</code>.</span></div>
+  <div><span class="k">audit</span><span class="v">Who changed what, when — action, object, summary, actor, IP.</span></div>
+  <div><span class="k">stale_records</span><span class="v">Records held out of inventory (a name with nothing to act on) — only the importer holds these.</span></div>
+  <div><span class="k">alert_feeds / alerts / alert_matches / alert_events</span><span class="v">The advisory-watch tables (owned by <code>vulnhub-alerts</code>): sources, normalised advisories, estate matches, and a state-change audit.</span></div>
+  <div><span class="k">aws_accounts / aws_exposure</span><span class="v">AWS account config and per-instance cloud reachability (owned by <code>vulnhub-aws</code>).</span></div>
+  <div><span class="k">mcp_tokens / backup_jobs</span><span class="v">MCP API bearer tokens (stored as SHA-256 hashes) and the backup job ledger.</span></div>
+</div>
+
+<h2>Secrets at rest</h2>
+<p>Connector credentials never sit in plaintext. Non-secret config goes in an autoloaded option <code>vulnhub_cfg_&lt;connector&gt;</code>; secrets go in a non-autoloaded <code>vulnhub_sec_&lt;connector&gt;</code>, each value encrypted with libsodium XChaCha20-Poly1305 (blobs prefixed <code>vhenc1:</code>). The key comes from the <code>VULNHUB_ENCRYPTION_KEY</code> constant in <code>wp-config.php</code>; if that is absent a fallback key is generated and stored in the database, with a loud admin warning that this is a weaker posture. Submitting a blank secret keeps the existing one.</p>

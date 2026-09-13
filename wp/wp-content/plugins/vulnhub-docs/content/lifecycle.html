@@ -1,0 +1,64 @@
+<p>A finding is not a static fact — it opens when a scan first sees it, closes when a scan stops seeing it, and can reopen, be archived when its machine leaves service, or be formally excepted. This page explains those states, and the single most important filter on every screen: what counts as <strong>reportable</strong>.</p>
+
+<h2>The states a finding moves through</h2>
+
+<p>A <strong>finding</strong> is one row per <em>asset × vulnerability × port</em> — the working unit VulnHub counts. Its <code>state</code> moves as scans come in:</p>
+
+<div class="vh-defs">
+  <div><span class="k">open</span><span class="v">Currently detected. Live and counted.</span></div>
+  <div><span class="k">reopened</span><span class="v">Was fixed, then detected again by a later scan. Also live and counted.</span></div>
+  <div><span class="k">fixed</span><span class="v">A scan that used to report it no longer does. Closed; outside the counts. The <code>last_fixed</code> date records when.</span></div>
+  <div><span class="k">suppressed</span><span class="v">Informational (severity Info). Parked outside every count on purpose.</span></div>
+  <div><span class="k">archived</span><span class="v">Its asset left service (retired, spare, in stock…). Set aside, remembering the previous state so it can be restored exactly if the machine returns.</span></div>
+</div>
+
+<p>Only <strong>open</strong> and <strong>reopened</strong> are "live". Every headline number, roll-up, overdue count and dashboard widget counts live findings only. The row also tracks <code>first_found</code>, <code>last_found</code>, <code>last_fixed</code>, <code>due_at</code> (the remediation deadline from the team's SLA), and verification fields.</p>
+
+<h3>Archiving follows the asset's lifecycle</h3>
+
+<p>When an asset moves <em>out</em> of service, VulnHub archives its live findings (remembering their exact prior state); when it returns to service, they are restored precisely. This runs after every import, so re-importing data can never silently reopen findings on a machine that has been gone for months.</p>
+
+<h2>Lifecycle scoping — the "reportable" default</h2>
+
+<p>Assets carry a <code>lifecycle_status</code> (In service, In quarantine, In repair, Spare, In stock, Planned, Retired, Missing, Unknown). VulnHub deliberately answers three <em>different</em> questions with three different subsets of those statuses:</p>
+
+<table>
+  <thead><tr><th>Question</th><th>Scope</th><th>Includes</th></tr></thead>
+  <tbody>
+    <tr><td>Should this asset resolve to an owner?</td><td><code>in_service_all</code></td><td>In service, quarantine, maintenance, unknown</td></tr>
+    <tr><td>Should Tenable have scanned it?</td><td>coverage scope</td><td>In service, unknown (editable)</td></tr>
+    <tr><td>Should it appear in a reported number?</td><td><code>reportable</code> <em>(default)</em></td><td>In service, unknown</td></tr>
+  </tbody>
+</table>
+
+<p>The findings and asset screens offer three scopes, and <strong>reportable is the default</strong>:</p>
+
+<div class="vh-defs">
+  <div><span class="k">reportable</span><span class="v">Live and unknown-status machines someone can actually act on — minus off-network (quarantine/maintenance) and un-issued kit (spare/stock/planned/retired). This is what a reported figure is <em>about</em>.</span></div>
+  <div><span class="k">in_service_all</span><span class="v">Everything currently in service, including quarantine and maintenance.</span></div>
+  <div><span class="k">all</span><span class="v">No lifecycle filter at all — every asset, whatever its status.</span></div>
+</div>
+
+<div class="vh-warn"><p><strong>Why <code>unknown</code> is included in "reportable".</strong> It is tempting to report only confirmed in-service machines. But on a real estate the vast majority of open findings sit on assets whose lifecycle status simply hasn't been set yet — excluding <code>unknown</code> would report a tiny fraction of reality and hide almost everything. So "reportable" errs toward showing the work, while still dropping machines that are genuinely off-network or not yet issued.</p></div>
+
+<h2>Exceptions — formally accepting a risk</h2>
+
+<p>An <strong>exception</strong> is how a finding is removed from the counts <em>on purpose</em>, with an audit trail. It is not "ignore" — it is a recorded decision with a reason, a justification an auditor will read, and an expiry date.</p>
+
+<h3>Anatomy of an exception</h3>
+
+<div class="vh-defs">
+  <div><span class="k">Scope</span><span class="v"><strong>finding</strong> (one finding on one asset), <strong>asset</strong> (all findings on one asset), <strong>vuln</strong> (one vulnerability across all assets), or <strong>team</strong> (one vulnerability across one team).</span></div>
+  <div><span class="k">Reason</span><span class="v">false positive, compensating control, no fix available, business impact, end of life, not exploitable, accepted risk, or other.</span></div>
+  <div><span class="k">Status</span><span class="v">draft → pending → approved (or rejected); later expired or revoked.</span></div>
+  <div><span class="k">Justification</span><span class="v">Required, at least 20 characters — "the record an auditor will read".</span></div>
+  <div><span class="k">Expiry</span><span class="v">Mandatory and in the future. An exception is a temporary, reviewed decision, never permanent.</span></div>
+</div>
+
+<h3>What approval does to the numbers</h3>
+
+<p>On approval, the exception stamps its id onto every matching open/reopened finding, and those findings immediately drop out of every live count (they now have a non-zero <code>exception_id</code>). A separate "excepted" metric counts them so the accepted risk is never invisible. Asset roll-ups are recalculated on approval, revoke and expiry, so severity totals move the moment the decision changes.</p>
+
+<p>Each night, approved exceptions past their expiry date flip to <code>expired</code> and their findings return to the open counts (only <em>approved</em> exceptions are honoured). <strong>Revoking</strong> an exception explicitly clears the stamp from its findings straight away. Reference numbers are auto-assigned (<code>EXC-0001</code>, …) so every decision is citable.</p>
+
+<p>See <a href="?doc=tickets-exceptions">Tickets &amp; exceptions</a> for the day-to-day workflow, and <a href="?doc=vulnerabilities">The Vulnerabilities list</a> for how to filter to (or away from) excepted findings.</p>

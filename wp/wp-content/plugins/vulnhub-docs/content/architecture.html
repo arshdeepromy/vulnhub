@@ -1,0 +1,56 @@
+<p>VulnHub is a set of sibling WordPress plugins built around a core. Each plugin owns one concern and talks to the others through WordPress filters and actions — there is no shared God-object beyond <code>vulnhub()</code> (the Core singleton). This page is the map a new developer needs before opening any single file.</p>
+
+<h2>The runtime it lives in</h2>
+
+<p>The application runs as a Docker Compose stack (<code>~/vulnhub</code>): a <code>wordpress:php8.3-apache</code> container serving the app on port 8093, MariaDB 11, a Redis object cache, a WP-CLI container, a cron loop container that runs <code>wp cron event run --due-now</code> every 60 seconds, and MailHog for captured mail. The portal answers both on <code>localhost:8093</code> and behind a Cloudflare tunnel at the public hostname — which is why widget HTML is cached per host (absolute links get baked in).</p>
+
+<h2>The fifteen plugins</h2>
+
+<p>All boot on <code>plugins_loaded</code> at priority 20, after guarding that <code>function vulnhub()</code> exists (Core loads first alphabetically, but the guard makes the dependency explicit).</p>
+
+<h3>The spine</h3>
+<div class="vh-defs">
+  <div><span class="k">vulnhub-core</span><span class="v">The estate and the shared library. Owns the <code>assets</code>, <code>vulns</code> (scanner definitions), <code>findings</code>, <code>exceptions</code>, <code>teams</code>, <code>tickets</code> and more tables; the <code>Repo</code> data layer; capabilities and roles (<code>Caps</code>); product classification; the finding lifecycle; the scheduler; and the <code>vulnhub()</code> singleton every other plugin depends on.</span></div>
+  <div><span class="k">vulnhub-dashboard</span><span class="v">The portal itself: the app shell, the view/nav/page framework, the whole dashboard widget system (registry, layout, caching, CSV export), and the admin area. If you are building UI, you are mostly here.</span></div>
+  <div><span class="k">vulnhub-threat</span><span class="v">CVE intelligence and attack-path classification. Pulls NVD, CISA KEV and FIRST EPSS; builds the <code>cve_intel</code>, <code>vuln_paths</code>, <code>asset_exposure</code> and <code>asset_ports</code> tables; draws the "How an attacker gets in" widget.</span></div>
+  <div><span class="k">vulnhub-rules</span><span class="v">The asset-classification engine — ordered rules with conditions that set an asset's environment, criticality, type, business service and priority weight.</span></div>
+</div>
+
+<h3>Connectors (data in)</h3>
+<div class="vh-defs">
+  <div><span class="k">vulnhub-tenable</span><span class="v">The primary scanner connector — pulls assets and vulnerability findings from Tenable.</span></div>
+  <div><span class="k">vulnhub-intune</span><span class="v">Microsoft Intune &amp; Entra ID — device inventory, management and identity signals.</span></div>
+  <div><span class="k">vulnhub-cmdb</span><span class="v">CMDB reconciliation — authoritative asset ownership, location and lifecycle.</span></div>
+  <div><span class="k">vulnhub-aws</span><span class="v">AWS accounts and cloud exposure signal.</span></div>
+  <div><span class="k">vulnhub-import</span><span class="v">Batched, resumable CSV import for very large CMDB and Tenable exports.</span></div>
+</div>
+
+<h3>Workflow &amp; output</h3>
+<div class="vh-defs">
+  <div><span class="k">vulnhub-jira</span><span class="v">Raises and syncs remediation tickets in Jira Cloud, with an automation/routing engine and a reopener for still-detected issues.</span></div>
+  <div><span class="k">vulnhub-alerts</span><span class="v">Watches advisory / zero-day feeds (EUVD, MSRC, CISA, GitHub, Red Hat, Ubuntu) and reports which advisories can actually reach your estate. Adds its own portal view and a nav badge.</span></div>
+  <div><span class="k">vulnhub-backup</span><span class="v">Batched, resumable backup &amp; restore, with optional scheduled push to S3.</span></div>
+  <div><span class="k">vulnhub-mcp</span><span class="v">A Model Context Protocol server: lets an AI agent read and (audited) write the estate over JSON-RPC, authenticated by bearer tokens.</span></div>
+  <div><span class="k">vulnhub-auth</span><span class="v">Identity: portal sign-in, SSO (Okta / Entra / generic OIDC), MFA, LDAP/AD, and the people directory.</span></div>
+  <div><span class="k">vulnhub-elementor</span><span class="v">Exposes the live dashboard widgets as Elementor widgets and lets Elementor Pro build the portal header/footer.</span></div>
+</div>
+
+<h2>How a request flows</h2>
+
+<ol>
+  <li>A visitor hits a portal page (say <code>/vulnerabilities</code>). Each portal page is a normal WP page whose only content is the shortcode <code>[vulnhub_app view="…"]</code>.</li>
+  <li><code>vulnhub-dashboard</code> swaps the theme template for its own shell (<code>templates/app.php</code>) via <code>template_include</code>, renders the nav, and calls <code>render_view($view)</code> inside the main region.</li>
+  <li><code>render_view()</code> checks access (<code>gate()</code> → needs <code>Caps::VIEW</code>), then dispatches: a plugin-contributed view is drawn by its <code>vulnhub_dash_render_view_&lt;view&gt;</code> action; the built-in views fall through a switch.</li>
+  <li>The view asks Core's <code>Repo</code> for numbers. Dashboard widgets render through a serve-stale cache keyed by a per-widget epoch, so most requests never touch the database.</li>
+</ol>
+
+<h2>How data flows in</h2>
+
+<ol>
+  <li>A connector (Tenable, Intune, CMDB, AWS) runs on its cron schedule, or an operator uploads a CSV through <code>vulnhub-import</code>.</li>
+  <li>Rows are upserted into <code>assets</code> / <code>vulns</code> / <code>findings</code>; each finding is de-duplicated by a fingerprint; findings a scan no longer reports are closed.</li>
+  <li>On <code>vulnhub_sync_complete</code>, the classification chain runs: the rules engine classifies assets (priority 10), then Core's ownership mapping resolves owners (priority 20), then the threat plugin rebuilds exposure and attack paths.</li>
+  <li>The same hook busts the widget cache for exactly the sources that connector moved, so the dashboard reflects the new data without rebuilding everything.</li>
+</ol>
+
+<div class="vh-note"><p><strong>The golden rule of coupling here:</strong> plugins never call into each other directly. A connector fires <code>vulnhub_sync_complete</code>; the threat plugin, the rules engine, the widget cache and Jira all <em>listen</em>. To add behaviour, hook an existing action rather than editing another plugin. The hooks worth knowing are catalogued in <a href="?doc=extending">Filters &amp; extension points</a>.</p></div>

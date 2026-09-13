@@ -217,23 +217,41 @@ final class VulnHub_Threat_Widget {
 			self::strand( self::PATH_DOWN_USER, 'inside', $user, $peak, 2.2 );
 			?>
 
-			<!-- The three doors a person is handed something through. -->
+			<!-- The three doors a person is handed something through. Each one is
+			     a link into the findings that arrive that way, exactly as the
+			     landing boxes are: a number on this diagram that you cannot open
+			     is a number nobody can act on. -->
 			<?php
 			$doors = array(
-				array( 244, 228, __( 'email', 'vulnhub' ), (int) ( $deliv['mail'] ?? 0 ) ),
-				array( 328, 260, __( 'website', 'vulnhub' ), (int) ( $deliv['web'] ?? 0 ) ),
-				array( 412, 280, __( 'download', 'vulnhub' ), (int) ( $deliv['file'] ?? 0 ) ),
+				array( 244, 228, 'mail', __( 'email', 'vulnhub' ), (int) ( $deliv['mail'] ?? 0 ) ),
+				array( 328, 260, 'web', __( 'website', 'vulnhub' ), (int) ( $deliv['web'] ?? 0 ) ),
+				array( 412, 280, 'file', __( 'download', 'vulnhub' ), (int) ( $deliv['file'] ?? 0 ) ),
 			);
 
 			foreach ( $doors as $door ) :
-				[ $x, $y, $label, $n ] = $door;
+				[ $x, $y, $channel, $label, $n ] = $door;
+
+				$url = VulnHub_Threat_Repo::delivery_url( $channel );
+				$aria = sprintf(
+					/* translators: 1: channel, e.g. "email"; 2: number of findings. */
+					__( '%1$s: %2$s exploitable findings delivered this way — see them', 'vulnhub' ),
+					$label,
+					number_format_i18n( $n )
+				);
+
+				// An anchor when the portal is reachable, a plain group when it
+				// is not, so the picture never renders a dead link.
+				if ( '' !== $url ) {
+					printf( '<a href="%s" class="vh-flow__door vh-flow__door--%s" aria-label="%s">', esc_url( $url ), esc_attr( $channel ), esc_attr( $aria ) );
+				} else {
+					printf( '<g class="vh-flow__door vh-flow__door--%s">', esc_attr( $channel ) );
+				}
 				?>
-				<g class="vh-flow__door">
 					<rect x="<?php echo (int) $x; ?>" y="<?php echo (int) $y; ?>" width="100" height="26" rx="13"/>
 					<text x="<?php echo (int) $x + 50; ?>" y="<?php echo (int) $y + 17; ?>" text-anchor="middle">
 						<?php echo esc_html( $label . ' · ' . number_format_i18n( $n ) ); ?>
 					</text>
-				</g>
+				<?php echo '' !== $url ? '</a>' : '</g>'; ?>
 			<?php endforeach; ?>
 
 			<!-- The person who opens it. -->

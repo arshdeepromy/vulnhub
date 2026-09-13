@@ -111,6 +111,7 @@
 	fill: var(--vh-plane);
 	stroke: var(--vh-line);
 	stroke-width: 1;
+	transition: stroke .15s ease, fill .15s ease;
 }
 
 .vh-flow__door text {
@@ -118,6 +119,20 @@
 	font-size: 11px;
 	font-weight: 600;
 }
+
+/* Clickable: each door drills into the findings delivered that way. */
+a.vh-flow__door { cursor: pointer; }
+
+a.vh-flow__door:hover rect,
+a.vh-flow__door:focus-visible rect {
+	stroke: var(--vh-link);
+	fill: var(--vh-raised-solid, #0e1526);
+}
+
+a.vh-flow__door:hover text,
+a.vh-flow__door:focus-visible text { fill: var(--vh-link); }
+
+a.vh-flow__door:focus { outline: none; }
 
 .vh-flow__person circle {
 	fill: var(--vh-warn-bg);

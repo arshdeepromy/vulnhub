@@ -1,0 +1,62 @@
+<p>VulnHub carries several different scores, and they answer different questions. <strong>Severity</strong> is how bad the bug is; <strong>KEV, EPSS and exploit references</strong> are how likely it is to be used; <strong>VPR and the risk score</strong> blend those with how much the affected machine matters to you. Reading them as one number is the most common way to mis-prioritise, so this page keeps them apart.</p>
+
+<h2>Severity</h2>
+
+<p>Severity is the familiar five-rung ladder. It comes straight from the scanner (Tenable) as a category, and <code>severity_id</code> maps one-to-one to Tenable's numeric ids:</p>
+
+<table>
+  <thead><tr><th>Label</th><th><code>severity_id</code></th><th>Risk weight</th></tr></thead>
+  <tbody>
+    <tr><td><span class="vh-tag vh-tag--critical">Critical</span></td><td>4</td><td>40</td></tr>
+    <tr><td><span class="vh-tag vh-tag--high">High</span></td><td>3</td><td>20</td></tr>
+    <tr><td><span class="vh-tag vh-tag--medium">Medium</span></td><td>2</td><td>8</td></tr>
+    <tr><td><span class="vh-tag vh-tag--low">Low</span></td><td>1</td><td>3</td></tr>
+    <tr><td><span class="vh-tag">Info</span></td><td>0</td><td>0</td></tr>
+  </tbody>
+</table>
+
+<p>Severity is a <em>categorical label</em>, not a recomputation of the raw CVSS score. The underlying scores are stored separately on each definition (<code>cvss2_base</code>, <code>cvss3_base</code>, <code>vpr_score</code>) and feed the risk score, not the severity bucket.</p>
+
+<div class="vh-note"><p><strong>Info findings are suppressed, not deleted.</strong> Informational findings (severity <em>Info</em>) are parked in the <code>suppressed</code> state and sit outside every count on every screen. They are still in the database — some of them (the Netstat port-scanner plugins) are exactly what the reachability engine reads — but they never inflate a number a person is meant to act on.</p></div>
+
+<h2>Is it exploitable? Three independent signals</h2>
+
+<p>"Exploitable today" is not a single vendor's opinion — it is built from three free, public, unauthenticated feeds, refreshed nightly. None of your estate data ever leaves the box to get them.</p>
+
+<div class="vh-defs">
+  <div><span class="k">KEV</span><span class="v"><strong>CISA Known Exploited Vulnerabilities.</strong> The authoritative "this is being exploited in the wild right now" list. The highest-trust signal. Also carries whether the CVE is used in ransomware campaigns.</span></div>
+  <div><span class="k">EPSS</span><span class="v"><strong>FIRST Exploit Prediction Scoring System.</strong> A daily-updated probability (0–1) that a CVE will be exploited in the next 30 days, plus a percentile ranking it against all CVEs.</span></div>
+  <div><span class="k">exploit_refs</span><span class="v"><strong>Published exploit code.</strong> A count of NVD references tagged "Exploit" — pointers to working proof-of-concept or weaponised code.</span></div>
+</div>
+
+<h3>The EPSS threshold</h3>
+
+<p>EPSS is a continuous probability, so it needs a line. A CVE counts as "likely enough to matter" when its EPSS is at or above the threshold, which defaults to <strong>0.10 (a 10% chance in the next 30 days)</strong>. Administrators can change it under <strong>Settings</strong> (option <code>vulnhub_threat_epss_min</code>); changing it re-derives the flags in a single SQL statement, with no need to re-ingest the feeds.</p>
+
+<h3>How the three combine into <code>has_poc</code></h3>
+
+<p>A CVE is flagged <code>has_poc = 1</code> ("a working exploit is plausible") when <em>any</em> enabled source fires:</p>
+
+<pre>has_poc = ( kev = 1  OR  exploit_refs &gt; 0  OR  epss &gt;= threshold )</pre>
+
+<p>Which sources are enabled is configurable (default: all three — <code>kev</code>, <code>refs</code>, <code>epss</code>). A scanner <em>definition</em> is flagged exploitable if any of its CVEs is. This <code>has_poc</code> flag — rolled up onto the <code>poc_route</code> — is exactly what the "How an attacker gets in" widget means by counting only exploitable findings.</p>
+
+<h3>Which evidence is shown, when several apply</h3>
+
+<p>When a finding qualifies on more than one signal, VulnHub shows the <em>most defensible</em> one, not the highest-scoring. The order is: <strong>KEV</strong> (known-exploited) beats a <strong>published exploit reference</strong> beats being <strong>over the EPSS threshold</strong>; ties break on the higher EPSS. So "on CISA's exploited list" is always shown in preference to "has an 18% EPSS", because the first is an observation and the second is a prediction.</p>
+
+<h2>VPR and the risk score</h2>
+
+<p><strong>VPR</strong> (Vulnerability Priority Rating) is Tenable's own 0–10 priority number, blending CVSS with threat intelligence. VulnHub stores it on the definition (<code>vpr_score</code>) straight from the Tenable import — it is a feed value, not something VulnHub computes, and it does <em>not</em> feed the <code>has_poc</code> exploitability flag. It feeds the risk score.</p>
+
+<p>The <strong>risk score</strong> is VulnHub's single prioritisation number for a finding, capped at 100. It combines four things:</p>
+
+<pre>risk = severity_weight
+     × criticality_factor          // asset importance: critical 2.0, high 1.5, medium 1.0, low 0.6
+     × (exploitable ? 1.4 : 1.0)   // a working exploit raises it 40%
+     × (1 + VPR / 20)              // Tenable's priority nudges it, when present
+     (then capped at 100)</pre>
+
+<p>The asset-classification rules can nudge this further: a rule that sets a machine's <em>priority weight</em> multiplies the risk of every finding on it (200 doubles it, 50 halves it). This is how "the same CVE on a crown-jewel database server outranks it on a spare laptop" is expressed as a number.</p>
+
+<div class="vh-tip"><p><strong>Rule of thumb for prioritising.</strong> Start with the attack-path widget (what a stranger can reach), then within a lane sort by risk score — it already folds in severity, whether an exploit exists, Tenable's VPR, and how much the machine matters. Don't sort by raw CVSS alone; a 9.8 on an unreachable spare is not your first job.</p></div>

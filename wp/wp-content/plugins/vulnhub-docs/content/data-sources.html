@@ -1,0 +1,51 @@
+<p>VulnHub does not scan anything itself. It is a <em>correlation</em> layer: it pulls from the systems you already run — your scanner, your device manager, your CMDB, your cloud — reconciles them into one asset register, and enriches everything with public threat intelligence. This page explains each source, what it contributes, and how often it runs.</p>
+
+<div class="vh-note"><p><strong>Sample data.</strong> Until credentials are added, the portal runs on generated sample data and shows a "Sample data" chip in the top bar. Everything below describes a live deployment; the shape of the data is identical either way.</p></div>
+
+<h2>The connectors</h2>
+
+<table>
+  <thead><tr><th>Connector</th><th>System</th><th>Brings in</th><th>Default cadence</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Tenable</strong></td><td>Tenable Vulnerability Management (cloud)</td><td>Assets and vulnerability findings — the core of the data</td><td>every 4 hours</td></tr>
+    <tr><td><strong>Intune &amp; Entra ID</strong></td><td>Microsoft Graph</td><td>Managed devices, compliance, and the people directory (owners)</td><td>every 12 hours</td></tr>
+    <tr><td><strong>CMDB</strong></td><td>ServiceNow, Confluence or CSV</td><td>Authoritative ownership, criticality, business service, lifecycle</td><td>daily</td></tr>
+    <tr><td><strong>AWS</strong></td><td>EC2 / ELB / Inspector</td><td>Cloud network reachability (is an instance actually exposed)</td><td>hourly</td></tr>
+    <tr><td><strong>Threat context</strong></td><td>NVD, CISA KEV, FIRST EPSS</td><td>CVE vectors, known-exploited status, exploit probability</td><td>nightly</td></tr>
+    <tr><td><strong>Import</strong></td><td>CSV upload</td><td>Large Tenable / CMDB / Intune / Defender exports, as a stand-in for a live feed</td><td>on demand</td></tr>
+  </tbody>
+</table>
+
+<h3>Tenable — the spine</h3>
+<p>Tenable is the primary source. It brings in the asset inventory and every vulnerability finding through Tenable's asynchronous export API (request → poll → download in chunks, so a huge export never has to fit in memory). By default it imports Critical→Low findings (informational findings are left out — they would more than double the row count). It keys assets on their Tenable UUID and findings on the scanner plugin id. Tenable's own <code>FIXED</code> state is what closes a finding — VulnHub never guesses "fixed" from absence.</p>
+<p>A companion <strong>verifier</strong> runs hourly: when a remediation ticket closes, it waits a settling period (default 24h) then re-runs a narrowed scan export to <em>prove</em> the finding is gone. Still-detected findings are flipped back to <em>reopened</em>.</p>
+
+<h3>Intune &amp; Entra ID — devices and people</h3>
+<p>Microsoft Graph provides two things: managed <strong>devices</strong> (compliance state, enrolment, "is it managed", last sync) and the Entra <strong>people</strong> directory (names, managers, departments, office). The connector deliberately does <em>not</em> set an owner directly — it records each device's primary user, and Core's ownership-mapping engine later resolves that to a person, a team (from department) and a location (from office). Owners resolved this way are high-confidence.</p>
+
+<h3>CMDB — the authority on ownership and lifecycle</h3>
+<p>The CMDB (ServiceNow table API, a Confluence page, or a CSV) is the authority for what a machine is <em>for</em>: its criticality, environment, business service, support group and lifecycle status. It has guard rails so it can never do harm — it will not overwrite another connector's asset type, and if it claims a machine is decommissioned but Tenable scanned it recently, the conflicting lifecycle change is recorded rather than applied (so a stale CMDB record can't archive live findings).</p>
+
+<h3>AWS — cloud reachability</h3>
+<p>The AWS connector is unusual: it does <em>not</em> create assets. It reads security groups, route tables and load balancers (and Amazon Inspector's network-reachability findings) to decide which EC2 instances are genuinely reachable from the internet — <code>direct</code> (a security group open to <code>0.0.0.0/0</code> on a public IP with an internet gateway route) or <code>elb</code> (behind an internet-facing load balancer). It then feeds that verdict into the reachability engine for instances Tenable already inventoried.</p>
+
+<h3>Threat context — the public feeds</h3>
+<p>Nightly, the threat plugin pulls three free, unauthenticated feeds — NVD (for CVSS vectors), CISA KEV (known-exploited), and FIRST EPSS (exploit probability) — and rebuilds the attack-path and exploitability data. None of your estate ever leaves the box to fetch these. See <a href="?doc=classification">Routes, delivery &amp; reachability</a> and <a href="?doc=scoring">Severity, KEV, EPSS &amp; VPR</a>.</p>
+
+<h2>How a sync runs</h2>
+
+<p>Every connector shares one framework. A run:</p>
+<ul>
+  <li>takes a 30-minute lock (no two runs of the same connector overlap);</li>
+  <li>opens a row in the <strong>sync ledger</strong> (<code>sync_runs</code>) recording mode, counts (processed / created / updated / skipped / failed), a message and a full log;</li>
+  <li>upserts assets, vulnerabilities and findings — findings de-duplicated by a fingerprint, and matched on <em>(asset, vulnerability)</em> first so port/protocol drift enriches a row instead of duplicating it;</li>
+  <li>on success fires <code>vulnhub_sync_complete</code>, which triggers asset classification, ownership mapping, reachability rebuild, and a targeted widget-cache bust.</li>
+</ul>
+
+<p>You can watch every run under <strong>Admin → Sync activity</strong>, including its log. Cron is driven by a dedicated container running WordPress's scheduler every 60 seconds, so scheduled work happens even when nobody has the site open.</p>
+
+<div class="vh-note"><p><strong>Imports are tracked separately.</strong> CSV imports are large, resumable jobs with their own ledger (<code>import_jobs</code>) and their own progress UI under <strong>Admin → Imports</strong> — they never write to the connector ledger. When an import finishes, it runs the same housekeeping a live sync would (lifecycle sweep, de-duplication, roll-ups, ownership mapping, coverage).</p></div>
+
+<h2>How the same machine from three systems becomes one asset</h2>
+
+<p>An asset can be discovered by Tenable, managed by Intune, recorded in the CMDB and seen by Defender — VulnHub merges them into a single row by matching on the strongest identifier available (Tenable UUID, Intune id, Azure AD device id, serial number, then hostname). Each contributing system is remembered in the asset's <code>sources_json</code>, and the "discovered by" and coverage widgets are built from exactly which systems have and haven't seen each machine. This is why <strong>coverage gaps</strong> are a first-class concept: a server the CMDB knows about but Tenable has never scanned is precisely the blind spot the dashboard is built to surface.</p>

@@ -1,0 +1,28 @@
+<p>Findings are easiest to act on when grouped by the <em>software</em> that carries them: patch one product across the fleet and many findings close at once. VulnHub classifies every vulnerability into a product and a kind, and the <strong>Products</strong> and <strong>Vendors</strong> screens (and the <em>Exposure by product</em> dashboard widget) roll findings up that way.</p>
+
+<h2>How a finding is mapped to a product</h2>
+
+<p>Tenable ships no clean product identifier on this feed, so VulnHub derives one from the plugin title (with the family as a coarse filter). It stamps four fields on each vulnerability definition:</p>
+
+<div class="vh-defs">
+  <div><span class="k">component_class</span><span class="v">Broad bucket: <strong>os_linux</strong>, <strong>os_windows</strong> or <strong>third_party</strong>.</span></div>
+  <div><span class="k">product_kind</span><span class="v"><strong>os_package</strong> (a Linux package), <strong>os_update</strong> (a Windows/Microsoft update), <strong>library</strong> (a component other software bundles), or <strong>application</strong> (an app in its own right).</span></div>
+  <div><span class="k">product</span><span class="v">The human name — "Google Chrome", "Apache Log4j", "Microsoft .NET", or a Linux group like "Linux: RHEL".</span></div>
+  <div><span class="k">product_slug</span><span class="v">The URL-safe key used for grouping and filtering (and, incidentally, for the product's icon).</span></div>
+</div>
+
+<p>Library vs application matters: a name is treated as a <em>library</em> if it is a known component (libcurl, openssl, sqlite, log4j, glibc, openssh, …) or begins with <code>lib</code>; otherwise it is an <em>application</em>.</p>
+
+<h3>Bundled libraries — attributed to the app that ships them</h3>
+<p>A vulnerable copy of, say, libcurl is rarely something you patch directly — it lives <em>inside</em> an application that shipped it. When VulnHub can read the install path from the scanner output, it attributes the library finding to the <strong>application that carries it</strong>, and the product roll-up regroups it there. That is why the widget can say "Ships a vulnerable libcurl inside the app — update the app, or check the vendor for a fixed release", and why the product with the most exposure is often an app, not the raw library. (This is exactly the mechanism behind the icons on the <em>Exposure by product</em> widget — each product's slug maps to a bundled logo.)</p>
+
+<h2>The Exposure by product widget</h2>
+<p>Each row is a product, ordered by the number of <strong>assets</strong> affected (the machines you'd have to touch), with total <strong>findings</strong> beside it and a proportional bar against the top row. A kind badge marks it as library / app / OS. The list counts open, non-excepted, non-info findings in the reporting scope. Because the top rows move the number fastest, this is the widget to work top-down.</p>
+
+<div class="vh-note"><p><strong>Performance note (for the curious).</strong> The product roll-up is materialised into a summary table and cached for six hours, rebuilt when the findings data changes — so the "top products" list is an index lookup, not a live aggregate over hundreds of thousands of rows. If a brand-new deployment shows "No products classified yet", an administrator runs the product classifier once.</p></div>
+
+<h2>Vendors</h2>
+<p>The <strong>Vendors</strong> screen groups exposure a level up — by the vendor behind the products — so you can see which supplier relationships carry the most risk across your estate. It is reached from the primary navigation.</p>
+
+<h2>Icons</h2>
+<p>Products show a real brand logo when one is bundled (stored locally under the dashboard plugin's <code>assets/products/&lt;slug&gt;.svg</code> or <code>.png</code>), fall back to a clean single-colour motif for a set of well-known components, and otherwise show a brand-coloured monogram chip. Adding a missing logo is just dropping a correctly-named file into that folder.</p>

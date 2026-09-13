@@ -1,0 +1,32 @@
+<p>The <strong>Assets</strong> screen is the register of every machine VulnHub knows about — merged from all your systems into one row each — with its owner, what has and hasn't scanned it, whether the internet can reach it, and the findings it carries. It is where coverage-gap drill-downs land.</p>
+
+<h2>What one asset row represents</h2>
+<p>A single machine may be discovered by Tenable, managed by Intune, recorded in the CMDB and seen by Defender. VulnHub merges them by matching on the strongest identifier available (Tenable UUID → Intune id → Azure AD id → serial → hostname) and remembers every contributing system. So one row can carry facts from four sources, and the "Discovered by" / "Known from" column tells you which.</p>
+
+<h2>Key fields</h2>
+<div class="vh-defs">
+  <div><span class="k">Hostname / IP / OS</span><span class="v">Identity and platform. The OS release is what the End-of-life widgets match against (by build number, not label).</span></div>
+  <div><span class="k">Type</span><span class="v">Workstation, server, mobile, network, cloud, appliance or unknown — set by the classification rules or a connector.</span></div>
+  <div><span class="k">Criticality &amp; environment</span><span class="v">How much the machine matters, and where it sits (production/test/…). Criticality multiplies the risk score of its findings.</span></div>
+  <div><span class="k">Owner / team / location</span><span class="v">Who to chase. Resolved by ownership mapping — from the Intune primary user (high confidence), or the CMDB custodian (medium), or a fallback (low).</span></div>
+  <div><span class="k">Lifecycle status</span><span class="v">In service, quarantine, maintenance, spare, stock, planned, retired, missing or unknown — drives whether the asset is "reportable" and whether its findings are counted or archived.</span></div>
+  <div><span class="k">Open critical / high</span><span class="v">Pre-computed roll-ups of the asset's live findings by severity, and its overall risk score.</span></div>
+</div>
+
+<h2>Coverage — the blind-spot view</h2>
+<p>Every asset carries a <strong>Tenable coverage state</strong> and a <strong>Defender coverage state</strong>, precomputed so the coverage widgets are fast:</p>
+<div class="vh-defs">
+  <div><span class="k">Covered</span><span class="v">Tenable/Defender has a current record of it.</span></div>
+  <div><span class="k">Unscanned / silent</span><span class="v">Known to the tool but not scanned in the freshness window (Tenable), or onboarded but the sensor is quiet (Defender). Surfaced, but not counted as a gap.</span></div>
+  <div><span class="k">Gap</span><span class="v">Not in the tool at all, or no recent contact from anything — a genuine blind spot. This is what the "gap list" widgets and the <code>coverage=gap</code> / <code>defender=gap</code> filters select.</span></div>
+  <div><span class="k">Out of scope / other device</span><span class="v">Retired kit, or device classes nobody scans (printers, switches) — excluded from the coverage denominator so the percentage is honest.</span></div>
+</div>
+<div class="vh-warn"><p><strong>The two coverage percentages are not the same measure.</strong> Tenable "covered" counts any Tenable record; Defender additionally excludes device classes no agent runs on. Compare each to itself over time, not to each other.</p></div>
+
+<h2>Reachability</h2>
+<p>Assets also carry an internet-facing verdict with its basis — <em>Reachable</em> (observed evidence), <em>Ruled out</em> (scanned, nothing listening) or <em>Never looked</em> (no port scan yet). This is what the attack-path widget's edge lane depends on; the full logic is on the <a href="?doc=classification">Routes, delivery &amp; reachability</a> page. A verdict a person sets by hand is preserved across rule passes.</p>
+
+<h2>Filters &amp; drill-downs</h2>
+<p>The asset list can be filtered by coverage state (<code>coverage=gap</code>, <code>defender=gap</code>), lifecycle scope (<code>life=reportable</code> and friends), the system that knows it (<code>known=cmdb</code>, or <code>known=only:intune</code> for single-source machines to doubt), device type, team, location (<code>location_id=none</code> = unplaced), ownership gap (<code>needs_user=1</code>), and end-of-life release. A single asset opens to its full detail — identity, sources, coverage, reachability, and its findings.</p>
+
+<div class="vh-tip"><p><strong>The most valuable asset view is the gap list.</strong> A production server the CMDB vouches for but Tenable has never scanned is precisely the machine your dashboard <em>can't</em> see findings on — so the coverage-gap widgets, which land here, are often more important than the findings you already have.</p></div>

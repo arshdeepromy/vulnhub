@@ -1,0 +1,39 @@
+<p>Everything in VulnHub lives in one portal. The top bar carries the primary navigation on the left, and — for administrators — an <strong>Administration</strong> link and your account menu on the right, along with a light/dark theme toggle. This page walks through each destination.</p>
+
+<h2>The primary navigation</h2>
+
+<div class="vh-defs">
+  <div><span class="k">Dashboard</span><span class="v">The widget board — the at-a-glance picture of exposure, coverage, ownership and remediation. Fully covered in <a href="?doc=dashboard">The dashboard, widget by widget</a>.</span></div>
+  <div><span class="k">Vulnerabilities</span><span class="v">The findings list: every open (or closed) finding, with a rich set of filters. This is where dashboard drill-downs land. See <a href="?doc=vulnerabilities">The Vulnerabilities list</a>.</span></div>
+  <div><span class="k">Assets</span><span class="v">The asset register: every machine, its owner, coverage state, reachability and findings. See <a href="?doc=assets">Assets &amp; owners</a>.</span></div>
+  <div><span class="k">Tickets</span><span class="v">Remediation tickets raised in Jira, their status, and the verification result when they close. See <a href="?doc=tickets-exceptions">Tickets &amp; exceptions</a>.</span></div>
+  <div><span class="k">Exceptions</span><span class="v">The risk-acceptance register: formally accepted risks, with reasons, approvers and expiry dates.</span></div>
+  <div><span class="k">Vendors</span><span class="v">Exposure grouped by vendor.</span></div>
+  <div><span class="k">Docs</span><span class="v">This handbook and developer wiki.</span></div>
+</div>
+
+<p><strong>Products</strong> (exposure grouped by software product) is reached from the "View all products" control on the dashboard's <em>Exposure by product</em> widget rather than from the main nav. If the advisory-watch plugin is active, an <strong>Alerts</strong> destination appears too, sometimes with a badge counting new advisories that match your estate.</p>
+
+<h2>The Administration area</h2>
+
+<p>Administrators reach the admin area from the <strong>Administration</strong> link in the top bar (it only appears if you hold the manage capability). Its sections are grouped into <em>Data</em>, <em>Integrations</em> and <em>Platform</em>:</p>
+
+<div class="vh-defs">
+  <div><span class="k">Admin overview</span><span class="v">Connector health, data freshness, and what needs attention.</span></div>
+  <div><span class="k">Integrations</span><span class="v">Configure Tenable, Intune, Jira, CMDB and single sign-on.</span></div>
+  <div><span class="k">Imports</span><span class="v">Upload large CMDB and Tenable CSV exports (resumable, up to very large files).</span></div>
+  <div><span class="k">Rules</span><span class="v">The asset-classification rules — categorise and prioritise assets and decide who owns what. Also where the exposure rule (observed / asserted) is set.</span></div>
+  <div><span class="k">Teams &amp; SLAs</span><span class="v">Remediation owners, Jira routing and per-severity response targets.</span></div>
+  <div><span class="k">Sync activity</span><span class="v">Every connector run, with its full log. Start here when data looks stale.</span></div>
+  <div><span class="k">Audit trail</span><span class="v">Who changed what, and when.</span></div>
+  <div><span class="k">Settings</span><span class="v">Platform behaviour, ownership policy, retention, and thresholds (e.g. the EPSS threshold).</span></div>
+  <div><span class="k">Documentation</span><span class="v">A link straight to this wiki.</span></div>
+</div>
+
+<p>Integration plugins (Jira, Backup, and others) add their own sections here automatically. Which sections you see depends on your role — see the <a href="?doc=portal-framework">Portal framework</a> page for how access is gated.</p>
+
+<h2>Who can see what</h2>
+
+<p>Access is capability-based. In short: <strong>Viewers</strong> can read the portal; <strong>Analysts</strong> can also triage, raise tickets, request exceptions and run syncs; <strong>Approvers</strong> can approve exceptions; <strong>Administrators</strong> can do everything, including configure connectors. A "portal-only" user is one who can use the portal but is kept out of the WordPress admin entirely. The specifics are in <a href="?doc=portal-framework">Portal, views &amp; navigation</a>.</p>
+
+<div class="vh-tip"><p><strong>Getting around fast.</strong> Almost every number on the dashboard is a link into the Vulnerabilities or Assets list with the right filters already applied — so the quickest way to "the list behind this figure" is to click the figure, not to rebuild the filter by hand.</p></div>

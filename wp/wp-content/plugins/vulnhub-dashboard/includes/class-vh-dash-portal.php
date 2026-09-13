@@ -755,70 +755,189 @@ final class VulnHub_Dash_Portal {
 			'integrations' => __( 'Integrations', 'vulnhub' ),
 			'platform'     => __( 'Platform', 'vulnhub' ),
 		);
-		?>
-		<div class="vh-admin">
-			<aside class="vh-admin__nav" aria-label="<?php esc_attr_e( 'Admin sections', 'vulnhub' ); ?>">
-				<?php foreach ( $groups as $group => $group_label ) : ?>
-					<?php
-					$in_group = array_filter(
-						$sections,
-						static fn( array $s ): bool => ( $s['group'] ?? 'platform' ) === $group
-					);
-					$in_group = array_filter(
-						$in_group,
-						static fn( array $s ): bool => current_user_can( (string) $s['cap'] )
-					);
-					if ( ! $in_group ) {
-						continue;
-					}
-					?>
-					<p class="vh-admin__group"><?php echo esc_html( $group_label ); ?></p>
-					<ul>
-						<?php foreach ( $in_group as $slug => $s ) : ?>
-							<li>
-								<a class="<?php echo $slug === $section ? 'is-active' : ''; ?>"
-									href="<?php echo esc_url( self::portal_url( self::ADMIN_VIEW, array( 'section' => $slug ) ) ); ?>"
-									<?php echo $slug === $section ? ' aria-current="page"' : ''; ?>>
-									<?php echo esc_html( (string) $s['label'] ); ?>
-								</a>
-							</li>
-						<?php endforeach; ?>
-					</ul>
-				<?php endforeach; ?>
-			</aside>
 
-			<div class="vh-admin__body">
-				<div class="vh-page-head">
-					<div>
-						<h1><?php echo esc_html( (string) $def['label'] ); ?></h1>
-						<?php if ( ! empty( $def['summary'] ) ) : ?>
-							<p class="vh-sub"><?php echo esc_html( (string) $def['summary'] ); ?></p>
+		/*
+		 * Connector health for the context bar. `$conn_bad` also drives the red
+		 * dot on the Integrations nav row. One cheap `last_run` per connector.
+		 */
+		$conn_total = 0;
+		$conn_bad   = 0;
+
+		if ( function_exists( 'vulnhub' ) && isset( vulnhub()->connectors, vulnhub()->logger ) ) {
+			foreach ( (array) vulnhub()->connectors->all() as $cid => $conn ) {
+				++$conn_total;
+				$lr = vulnhub()->logger->last_run( (string) $cid );
+				if ( $lr && 'failed' === ( $lr['status'] ?? '' ) ) {
+					++$conn_bad;
+				}
+			}
+		}
+
+		$group_label = (string) ( $groups[ $def['group'] ?? 'platform' ] ?? '' );
+		$mock        = function_exists( 'vulnhub' ) && vulnhub()->settings->mock_mode();
+		?>
+		<div class="vh-adm">
+			<div class="vh-adm__context">
+				<nav class="vh-adm__crumbs" aria-label="<?php esc_attr_e( 'Breadcrumb', 'vulnhub' ); ?>">
+					<span><?php esc_html_e( 'Administration', 'vulnhub' ); ?></span>
+					<span class="sep">/</span><span><?php echo esc_html( $group_label ); ?></span>
+					<span class="sep">/</span><span class="cur" aria-current="page"><?php echo esc_html( (string) $def['label'] ); ?></span>
+				</nav>
+				<span class="vh-adm__spacer"></span>
+				<?php if ( $mock ) : ?>
+					<span class="vh-adm__mock"><?php esc_html_e( 'MOCK DATA', 'vulnhub' ); ?></span>
+				<?php endif; ?>
+				<?php if ( $conn_total > 0 ) : ?>
+					<span class="vh-adm__health<?php echo $conn_bad > 0 ? ' is-bad' : ''; ?>">
+						<?php
+						echo esc_html(
+							$conn_bad > 0
+								/* translators: %s: number of connectors whose last run failed. */
+								? sprintf( _n( '%s connector failing', '%s connectors failing', $conn_bad, 'vulnhub' ), number_format_i18n( $conn_bad ) )
+								/* translators: %s: total connector count. */
+								: sprintf( _n( '%s connector idle', '%s connectors idle', $conn_total, 'vulnhub' ), number_format_i18n( $conn_total ) )
+						);
+						?>
+					</span>
+				<?php endif; ?>
+			</div>
+
+			<div class="vh-adm__cols">
+				<aside class="vh-adm__nav" aria-label="<?php esc_attr_e( 'Admin sections', 'vulnhub' ); ?>" data-vh-adm-nav>
+					<input type="search" class="vh-adm__filter" data-vh-adm-filter
+						placeholder="<?php esc_attr_e( 'Filter sections…', 'vulnhub' ); ?>"
+						aria-label="<?php esc_attr_e( 'Filter admin sections', 'vulnhub' ); ?>" autocomplete="off">
+					<?php foreach ( $groups as $group => $glabel ) : ?>
+						<?php
+						$in_group = array_filter(
+							$sections,
+							static fn( array $s ): bool => ( $s['group'] ?? 'platform' ) === $group
+						);
+						$in_group = array_filter(
+							$in_group,
+							static fn( array $s ): bool => current_user_can( (string) $s['cap'] )
+						);
+						if ( ! $in_group ) {
+							continue;
+						}
+						?>
+						<p class="vh-adm__group"><?php echo esc_html( $glabel ); ?></p>
+						<ul>
+							<?php foreach ( $in_group as $slug => $s ) : ?>
+								<?php $is_wp = str_starts_with( (string) $slug, self::MIRROR_PREFIX ); ?>
+								<li>
+									<a class="vh-adm__item<?php echo $slug === $section ? ' is-active' : ''; ?>"
+										href="<?php echo esc_url( self::portal_url( self::ADMIN_VIEW, array( 'section' => $slug ) ) ); ?>"
+										data-vh-adm-item="<?php echo esc_attr( $slug ); ?>"
+										<?php echo $slug === $section ? ' aria-current="page"' : ''; ?>>
+										<span class="vh-adm__label"><?php echo esc_html( (string) $s['label'] ); ?></span>
+										<?php if ( 'integrations' === $slug && $conn_bad > 0 ) : ?>
+											<span class="vh-adm__dot" title="<?php esc_attr_e( 'A connector is failing', 'vulnhub' ); ?>"></span>
+										<?php endif; ?>
+										<?php if ( $is_wp ) : ?>
+											<span class="vh-adm__wp">WP</span>
+										<?php endif; ?>
+									</a>
+								</li>
+							<?php endforeach; ?>
+						</ul>
+					<?php endforeach; ?>
+					<p class="vh-adm__nomatch" data-vh-adm-nomatch hidden><?php esc_html_e( 'Nothing matches that.', 'vulnhub' ); ?></p>
+				</aside>
+
+				<div class="vh-adm__body">
+					<div class="vh-adm__head">
+						<div>
+							<h1><?php echo esc_html( (string) $def['label'] ); ?></h1>
+							<?php if ( ! empty( $def['summary'] ) ) : ?>
+								<p class="vh-sub"><?php echo esc_html( (string) $def['summary'] ); ?></p>
+							<?php endif; ?>
+						</div>
+						<?php
+						// The save handler redirects back with vh_type=success and a
+						// vh_msg; the portal keeps those params. Show it as a chip.
+						// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+						if ( 'success' === ( $_GET['vh_type'] ?? '' ) ) :
+							// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+							$vh_msg = isset( $_GET['vh_msg'] ) ? sanitize_text_field( wp_unslash( (string) $_GET['vh_msg'] ) ) : '';
+							?>
+							<span class="vh-adm__saved"><?php echo esc_html( '' !== $vh_msg ? $vh_msg : __( 'Saved', 'vulnhub' ) ); ?></span>
 						<?php endif; ?>
 					</div>
+
+					<div class="vh-adm__view">
+						<?php
+						$view = VULNHUB_DASH_DIR . 'admin-views/' . $section . '.php';
+
+						if ( ! empty( $def['screen'] ) ) {
+							// Core owns the screen registry and the view files, so ask
+							// it to draw the body. Integration screens it has no view
+							// for fall through to `vulnhub_render_admin_page` inside.
+							vulnhub()->admin->render_screen( (string) $def['screen'] );
+						} elseif ( is_readable( $view ) ) {
+							include $view;
+						} else {
+							/**
+							 * Lets a plugin render a portal admin section it registered.
+							 *
+							 * @param string $section Section slug.
+							 */
+							do_action( 'vulnhub_render_portal_section', $section );
+						}
+						?>
+					</div>
 				</div>
-
-				<?php
-				$view = VULNHUB_DASH_DIR . 'admin-views/' . $section . '.php';
-
-				if ( ! empty( $def['screen'] ) ) {
-					// Core owns the screen registry and the view files, so ask
-					// it to draw the body. Integration screens it has no view
-					// for fall through to `vulnhub_render_admin_page` inside.
-					vulnhub()->admin->render_screen( (string) $def['screen'] );
-				} elseif ( is_readable( $view ) ) {
-					include $view;
-				} else {
-					/**
-					 * Lets a plugin render a portal admin section it registered.
-					 *
-					 * @param string $section Section slug.
-					 */
-					do_action( 'vulnhub_render_portal_section', $section );
-				}
-				?>
 			</div>
+
+			<?php self::render_admin_footer(); ?>
 		</div>
 		<?php
+	}
+
+	/**
+	 * Per-source freshness and the platform version line at the foot of the
+	 * admin shell. Fed from the sync-run ledger, exactly as before.
+	 */
+	private static function render_admin_footer(): void {
+		$srcs = array(
+			'tenable' => __( 'Tenable', 'vulnhub' ),
+			'cmdb'    => __( 'CMDB', 'vulnhub' ),
+			'intune'  => __( 'Intune', 'vulnhub' ),
+			'jira'    => __( 'Jira', 'vulnhub' ),
+		);
+
+		echo '<footer class="vh-adm__foot">';
+
+		if ( function_exists( 'vulnhub' ) && isset( vulnhub()->logger ) ) {
+			foreach ( $srcs as $id => $label ) {
+				$lr   = vulnhub()->logger->last_run( (string) $id );
+				$when = $lr && ! empty( $lr['finished_at'] )
+					? vh_ago( (string) $lr['finished_at'] )
+					: __( 'never', 'vulnhub' );
+
+				printf(
+					'<span><span class="src">%s</span> %s</span>',
+					esc_html( $label ),
+					esc_html( $when )
+				);
+			}
+		}
+
+		echo '<span class="vh-adm__spacer"></span>';
+
+		printf(
+			'<span>%s</span>',
+			esc_html(
+				sprintf(
+					/* translators: 1: core version, 2: database schema version. */
+					__( 'core %1$s · schema %2$s', 'vulnhub' ),
+					defined( 'VULNHUB_VERSION' ) ? VULNHUB_VERSION : '—',
+					(string) get_option( 'vulnhub_db_version', '—' )
+				)
+			)
+		);
+
+		echo '</footer>';
 	}
 }
 

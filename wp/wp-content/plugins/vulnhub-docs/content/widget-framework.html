@@ -1,0 +1,52 @@
+<p>A dashboard widget is three things: <em>data</em>, <em>a way to draw it</em>, and <em>a way to export it</em>. The framework in <code>class-vh-dash-widgets.php</code> gives you the frame, the drag handle, the export menu, per-user layout and a serve-stale cache for free. You provide a registry entry and one or two callbacks.</p>
+
+<h2>The registry entry</h2>
+
+<p>Widgets are registered through the <code>vulnhub_dashboard_widgets</code> filter. Each entry is keyed by a unique id:</p>
+
+<pre>add_filter( 'vulnhub_dashboard_widgets', function ( array $w ): array {
+    $w['my_widget'] = array(
+        'label'   =&gt; __( 'My widget', 'vulnhub' ),   // header title
+        'summary' =&gt; __( 'One line of what it shows.', 'vulnhub' ),
+        'group'   =&gt; 'exposure',   // a groups() key: exposure|lifecycle|coverage|endpoint|ownership|remediation
+        'width'   =&gt; 6,            // default span; must be one of 3,4,6,8,12
+        'depends' =&gt; array( 'findings' ),  // data sources it reads (drives cache invalidation)
+        'render'  =&gt; 'my_render_cb',       // REQUIRED: echoes the body
+        'data'    =&gt; 'my_data_cb',         // optional: enables CSV / Copy as TSV
+    );
+    return $w;
+} );</pre>
+
+<div class="vh-defs">
+  <div><span class="k">render</span><span class="v"><strong>Required.</strong> A callable that echoes the widget body. If the output contains an <code>&lt;svg&gt;</code>, the export menu automatically offers PNG/SVG.</span></div>
+  <div><span class="k">data</span><span class="v">Optional. Returns <code>['headers'=&gt;[…], 'rows'=&gt;[…]]</code> — the <em>same numbers the chart drew</em>, so the picture and the spreadsheet can never disagree. Its presence enables CSV and "Copy as TSV".</span></div>
+  <div><span class="k">depends</span><span class="v">Optional. The data sources this widget reads (<code>findings</code>, <code>assets</code>, <code>coverage</code>, <code>defender</code>, <code>tickets</code>, <code>threat</code>). Drives which syncs bust its cache. <strong>Declaring nothing means it depends on everything</strong> — safe, but it will be rebuilt on every sync.</span></div>
+</div>
+
+<h2>Surfacing it by default</h2>
+<p>Registering a widget adds it to the picker. To put it on new boards by default, append to <code>vulnhub_dashboard_default_layout</code>:</p>
+<pre>add_filter( 'vulnhub_dashboard_default_layout', function ( array $layout ): array {
+    $layout[] = array( 'id' =&gt; 'my_widget', 'width' =&gt; 6 );
+    return $layout;
+} );</pre>
+<p>Existing users pick it up automatically: the framework tracks which widgets a user has <em>seen</em> (distinct from <em>removed</em>), appends a newly shipped widget once, and leaves it off if they later remove it. This is exactly how the attack-path widget inserts itself right after the headline.</p>
+
+<h2>Widths &amp; groups</h2>
+<p>The grid is 12 columns. Legal widths are <strong>3, 4, 6, 8, 12</strong>; anything else is snapped back to the widget's default. The picker groups are <em>Exposure</em>, <em>End of life</em>, <em>Tenable coverage</em>, <em>Defender coverage</em>, <em>Ownership</em> and <em>Remediation</em> — the coverage groups are deliberately separate so their non-comparable percentages aren't mistaken for one number.</p>
+
+<h2>What the framework does for you</h2>
+<ul>
+  <li><strong>The frame &amp; header</strong> — title, summary, a keyboard-operable drag handle, and the export menu (PNG/SVG when there's an SVG, CSV/TSV when there's a <code>data</code> callback).</li>
+  <li><strong>Per-user layout</strong> — arrangement is saved to user meta and sanitised on save (unknown ids dropped, widths snapped), whether saved by drag (REST) or the JS-off Customise form (admin-post). A user can never store a widget they can't see.</li>
+  <li><strong>CSV export</strong> — served from a nonced <code>admin-post.php</code> endpoint, gated by <code>Caps::VIEW</code>, straight from your <code>data</code> callback.</li>
+</ul>
+
+<h2>The cache — read this before you wonder why a change didn't show</h2>
+<p>Rendered widget HTML is cached in a transient keyed <code>vh_w_&lt;md5(id|locale|home_url)&gt;</code> (the host is in the key because widget HTML carries absolute links and this app answers on two hostnames). There are two horizons: <strong>15-minute freshness</strong> and <strong>6-hour serve-stale</strong>. On render the board serves the cached copy immediately and, if stale, queues a background re-render — so a sync never makes a visitor wait.</p>
+
+<p>Invalidation is by <strong>epoch stamp</strong> travelling inside the cache entry, not in the key — so a bust marks markup stale rather than hiding it. Each widget's stamp is composed from its <code>depends</code> sources plus a global floor. When a connector finishes, <code>bust_for_connector()</code> maps it to the sources it moved (e.g. <code>tenable → findings, assets, coverage</code>; <code>jira → tickets</code>; <code>threat → threat, findings</code>) and ticks only those — so only the affected widgets rebuild. A whole-board <em>warm</em> job re-renders the default layout plus everyone's saved widgets on cron.</p>
+
+<div class="vh-warn"><p><strong>Consequence for development and content edits:</strong> editing a widget's PHP does not change what visitors see until its cache entry rolls or is busted. During development, flush the object cache (<code>wp cache flush</code>) after a change. In production, a connector sync busts the right widgets automatically.</p></div>
+
+<h2>A note on live vs cached data</h2>
+<p>Most widgets run their SQL live on each (uncached) render, so freshness tracks the last sync. Two add their own caching — <em>Exposure by product</em> (a materialised summary table plus a 6-hour transient) and <em>Patch availability</em> (a per-request memo). The <em>trend</em> widget is special: it reads a pre-aggregated nightly snapshot table, not live findings, because it is plotting history.</p>

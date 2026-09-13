@@ -1,0 +1,78 @@
+<p>The portal is a thin routing layer over WordPress pages. Every screen is a normal published page whose only content is a shortcode; the dashboard plugin swaps in its own template, renders the chrome, and dispatches to a per-view renderer. This page shows how to add a view, a nav link or an admin section — the three ways to put something new in front of a user. All references are in <code>vulnhub-dashboard</code>.</p>
+
+<div class="vh-note"><p>This docs section is itself a worked example: it is a contributed view (<code>docs</code>) with a nav link and an admin section, built entirely on the extension points below — no core files were edited.</p></div>
+
+<h2>Views</h2>
+
+<p>The registry is <code>vulnhub_dash_views()</code> in <code>vulnhub-dashboard.php</code>. Each entry is keyed by a view name and carries <code>title</code>, <code>slug</code>, <code>menu</code>, an SVG <code>icon</code> path, and optional <code>hidden</code>. On activation the dashboard creates one published page per view whose content is <code>[vulnhub_app view="&lt;view&gt;"]</code>, and records <em>view → page id</em> in the option <code>vulnhub_dash_pages</code> (the single source the nav reads to build links).</p>
+
+<p>A view is stronger than a mere nav link: it is a page the portal <em>owns and renders itself</em>. Add one with the <code>vulnhub_dash_views</code> filter, but note the doc contract — because the registry is read long after activation, a contributed view <strong>must also create its own page and answer its render action</strong>:</p>
+
+<pre>// 1) Register the view.
+add_filter( 'vulnhub_dash_views', function ( array $views ): array {
+    $views['runbook'] = array(
+        'title' =&gt; __( 'Runbook', 'vulnhub' ),
+        'slug'  =&gt; 'runbook',
+        'menu'  =&gt; __( 'Runbook', 'vulnhub' ),
+        'icon'  =&gt; 'M4 4h16v16H4z',   // an SVG path
+        // 'hidden' =&gt; true,          // routable, but not in the primary nav
+    );
+    return $views;
+} );
+
+// 2) Render it (echo the body; the shell chrome is already drawn).
+add_action( 'vulnhub_dash_render_view_runbook', function (): void {
+    echo '&lt;h1&gt;Runbook&lt;/h1&gt;…';
+} );
+
+// 3) Ensure its page exists and is mapped in vulnhub_dash_pages
+//    (create it on your plugin's activation, like the docs plugin does).</pre>
+
+<h3>How rendering is dispatched</h3>
+<p><code>VulnHub_Dash_App::render_view($view)</code> runs after access is checked. It looks for <code>vulnhub_dash_render_view_&lt;view&gt;</code> <em>first</em> — so a contributed view is drawn by its own action and can never be swallowed by the built-in switch. The built-in views (<code>vulnerabilities</code>, <code>assets</code>, <code>tickets</code>, …) fall through that switch. The <code>[vulnhub_app]</code> shortcode is the fallback path for block/theme contexts; the primary path is a <code>template_include</code> swap to <code>templates/app.php</code>, which renders the nav and then calls <code>render_view()</code> inside <code>&lt;main&gt;</code>.</p>
+
+<h2>Navigation</h2>
+
+<p><code>render_nav()</code> draws the top bar. The primary nav iterates <code>vulnhub_dash_views()</code>, skipping <code>hidden</code> views and any view without a page. For a link that is <em>not</em> a full view — an Elementor page, an external tool — use the <code>vulnhub_portal_nav_extra</code> filter:</p>
+
+<pre>add_filter( 'vulnhub_portal_nav_extra', function ( array $links ): array {
+    $links[] = array(
+        'label'  =&gt; 'Tenable',
+        'url'    =&gt; 'https://cloud.tenable.com',
+        'icon'   =&gt; 'M4 4h16v16H4z', // optional
+        'active' =&gt; false,           // optional
+    );
+    return $links;
+} );</pre>
+<p>An entry with no <code>url</code> or no <code>label</code> is dropped. The <strong>Administration</strong> link is rendered separately and only for users with the manage capability; the <code>admin</code> view is <code>hidden</code> so it never appears in the main loop.</p>
+
+<h2>Guarding &amp; access</h2>
+
+<p>Two layers protect the portal:</p>
+<ul>
+  <li><code>guard_portal()</code> (on <code>template_redirect</code>) sends a <em>logged-out</em> visitor on a portal page to the sign-in screen.</li>
+  <li><code>gate()</code> (inside <code>render_view()</code>) requires <code>Caps::VIEW</code> for every non-login view. A logged-in user without a VulnHub role gets an inline "not granted a role" notice rather than a redirect loop.</li>
+</ul>
+<p>The <code>admin</code> view additionally checks each section's own capability. A <strong>portal-only user</strong> is a runtime concept, not a role: logged in, holds <code>Caps::VIEW</code>, but lacks <code>manage_options</code> — such users are kept out of wp-admin entirely and the admin bar is hidden on portal pages. Roles and capabilities are covered in <a href="?doc=extending">Filters &amp; extension points</a> and defined in <code>vulnhub-core</code>'s <code>Caps</code> class.</p>
+
+<h2>Admin sections</h2>
+
+<p>The admin area's section list is <code>VulnHub_Dash_Portal::sections()</code>, filterable via <code>vulnhub_portal_sections</code>. A section has a <code>label</code>, a required <code>cap</code>, a <code>group</code> (<code>data</code> / <code>integrations</code> / <code>platform</code>), an <code>order</code>, and a <code>summary</code>. If it names a <code>screen</code>, core draws it; otherwise, if a local <code>admin-views/&lt;section&gt;.php</code> exists it is included; otherwise it falls through to <code>do_action('vulnhub_render_portal_section', $section)</code> — the seam for a plugin-owned section:</p>
+
+<pre>add_filter( 'vulnhub_portal_sections', function ( array $s ): array {
+    $s['runbook'] = array(
+        'label'   =&gt; __( 'Runbook', 'vulnhub' ),
+        'cap'     =&gt; \VulnHub\Core\Caps::VIEW,
+        'group'   =&gt; 'platform',
+        'order'   =&gt; 80,
+        'summary' =&gt; __( 'Operational runbook.', 'vulnhub' ),
+    );
+    return $s;
+} );
+
+add_action( 'vulnhub_render_portal_section', function ( string $section ): void {
+    if ( 'runbook' !== $section ) { return; }
+    echo '…section body…';
+} );</pre>
+
+<p>Integration plugins that register wp-admin screens via <code>vulnhub_admin_pages</code> are <em>mirrored</em> into portal sections automatically — they register once and appear in both places with no extra code. That is how Tenable, Intune, Jira, CMDB and Backup become configurable inside the portal.</p>

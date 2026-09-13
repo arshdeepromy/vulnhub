@@ -1,0 +1,56 @@
+<p>The words VulnHub uses, defined once. Where a term has a deeper page, it is linked.</p>
+
+<h2>Core objects</h2>
+<div class="vh-defs">
+  <div><span class="k">Asset</span><span class="v">A machine — server, workstation, mobile, network device, cloud instance or appliance. Merged from every system that knows about it into one record.</span></div>
+  <div><span class="k">Vulnerability (vuln)</span><span class="v">A scanner <em>definition</em> — one Tenable plugin, e.g. "RHEL 9 : kernel (RHSA-…)". A single definition can name many CVEs.</span></div>
+  <div><span class="k">Finding</span><span class="v">One vulnerability on one asset (per port/protocol). The unit VulnHub counts. Far more numerous than assets or vulns.</span></div>
+  <div><span class="k">CVE</span><span class="v">A single catalogued vulnerability identifier (e.g. CVE-2024-1234). A vuln definition rolls up one or more CVEs.</span></div>
+  <div><span class="k">Ticket</span><span class="v">A remediation task, tracked in Jira, linked to one or more findings.</span></div>
+  <div><span class="k">Exception</span><span class="v">A formally accepted risk — a decision, with a reason and an expiry, that removes findings from the counts. See <a href="?doc=lifecycle">lifecycle</a>.</span></div>
+</div>
+
+<h2>Finding states</h2>
+<div class="vh-defs">
+  <div><span class="k">open / reopened</span><span class="v">Currently detected (reopened = was fixed, then seen again). The only "live" states — everything counts these.</span></div>
+  <div><span class="k">fixed</span><span class="v">A scan no longer reports it. Closed; outside the counts.</span></div>
+  <div><span class="k">suppressed</span><span class="v">Informational severity — parked outside every count on purpose.</span></div>
+  <div><span class="k">archived</span><span class="v">Its asset left service; set aside, restorable if the machine returns.</span></div>
+</div>
+
+<h2>Severity &amp; scoring</h2>
+<div class="vh-defs">
+  <div><span class="k">Severity</span><span class="v">Critical / High / Medium / Low / Info — the scanner's category. Info is always suppressed.</span></div>
+  <div><span class="k">CVSS</span><span class="v">The industry 0–10 score. Its <em>vector</em> (attack vector, privileges, user interaction) is what VulnHub uses to place a finding on an attack route.</span></div>
+  <div><span class="k">VPR</span><span class="v">Tenable's Vulnerability Priority Rating — a 0–10 priority blending CVSS with threat intel. Feeds the risk score.</span></div>
+  <div><span class="k">EPSS</span><span class="v">FIRST's probability (0–1) that a CVE will be exploited in the next 30 days. Threshold default 0.10. See <a href="?doc=scoring">scoring</a>.</span></div>
+  <div><span class="k">KEV</span><span class="v">CISA's Known Exploited Vulnerabilities list — "being exploited in the wild right now". The highest-trust exploit signal.</span></div>
+  <div><span class="k">Risk score</span><span class="v">VulnHub's single 0–100 prioritisation number: severity × asset criticality × exploit × VPR.</span></div>
+  <div><span class="k">has_poc / exploitable</span><span class="v">A working exploit is plausible — the CVE is on KEV, has published exploit code, or is over the EPSS threshold.</span></div>
+</div>
+
+<h2>Attack path</h2>
+<div class="vh-defs">
+  <div><span class="k"><span class="vh-tag vh-tag--edge">edge</span></span><span class="v">Reachable straight from the internet — no account, no click — on an internet-facing machine.</span></div>
+  <div><span class="k"><span class="vh-tag vh-tag--user">user</span></span><span class="v">Delivered to a person who opens it, via email, website or download.</span></div>
+  <div><span class="k"><span class="vh-tag vh-tag--inside">inside</span></span><span class="v">Only usable once somebody already has a foothold (privilege escalation, lateral movement).</span></div>
+  <div><span class="k">delivery</span><span class="v">Within the user route: mail / web / file — how it reaches the person.</span></div>
+  <div><span class="k">Reachability</span><span class="v">Whether the internet can reach a machine: <em>Reachable</em> (observed evidence), <em>Ruled out</em> (scanned, nothing listening), or <em>Never looked</em> (no port scan yet). See <a href="?doc=classification">classification</a>.</span></div>
+</div>
+
+<h2>Estate &amp; coverage</h2>
+<div class="vh-defs">
+  <div><span class="k">Reportable / in service</span><span class="v">The default lifecycle scope: live and unknown-status machines someone can act on. See <a href="?doc=lifecycle">lifecycle scoping</a>.</span></div>
+  <div><span class="k">Coverage gap</span><span class="v">An asset a system knows about that Tenable (or Defender) has no current record of — a scanning blind spot.</span></div>
+  <div><span class="k">Owner / team / location</span><span class="v">Who is accountable for an asset. Resolved by ownership mapping from Intune/CMDB signals.</span></div>
+  <div><span class="k">Criticality</span><span class="v">How much a machine matters (critical/high/medium/low) — multiplies risk.</span></div>
+  <div><span class="k">Component class / product kind</span><span class="v">Whether a finding is an OS package, OS update, a library or an application. Drives the product roll-ups.</span></div>
+</div>
+
+<h2>Plumbing</h2>
+<div class="vh-defs">
+  <div><span class="k">Connector</span><span class="v">A plugin that ingests from an external system (Tenable, Intune, CMDB, AWS). See <a href="?doc=data-sources">data sources</a>.</span></div>
+  <div><span class="k">Sync run</span><span class="v">One execution of a connector, recorded with counts and a log under Admin → Sync activity.</span></div>
+  <div><span class="k">Widget</span><span class="v">One card on the dashboard. Registered by a plugin, cached, and (usually) exportable.</span></div>
+  <div><span class="k">Portal</span><span class="v">The front-end application you are in — as opposed to WordPress's own wp-admin.</span></div>
+</div>

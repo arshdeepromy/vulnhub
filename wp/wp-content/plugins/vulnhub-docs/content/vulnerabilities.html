@@ -1,0 +1,45 @@
+<p>The <strong>Vulnerabilities</strong> screen is the findings list — one row per open (or closed) finding. It is where every dashboard drill-down lands, and every filter it offers is expressible in the URL, so a link can carry an exact query. This page explains what each filter selects.</p>
+
+<div class="vh-note"><p><strong>Findings, not vulnerabilities.</strong> Despite the name, each row is a <em>finding</em> — one vulnerability on one asset. The same vulnerability appearing on 40 machines is 40 rows. Filter by a vulnerability (<code>vuln_id</code>) to see all its findings at once.</p></div>
+
+<h2>The default view</h2>
+<p>Out of the box the list shows <strong>reportable, open</strong> findings — live findings (open or reopened), not excepted, on in-scope assets (see <a href="?doc=lifecycle">lifecycle scoping</a>). That is the set a reported number is about. Widen it with the lifecycle and state controls below.</p>
+
+<h2>The filters</h2>
+
+<h3>State &amp; lifecycle</h3>
+<div class="vh-defs">
+  <div><span class="k">State</span><span class="v">Open (the default, = open + reopened), or a specific state. Dashboard links pass <code>state=open_any</code>.</span></div>
+  <div><span class="k">Lifecycle scope</span><span class="v"><strong>Reportable</strong> (default), <strong>In service (all)</strong>, <strong>All</strong>, or a specific lifecycle status — how much of the estate to include.</span></div>
+  <div><span class="k">Excepted</span><span class="v">Whether to include, exclude or show only findings covered by an approved exception.</span></div>
+  <div><span class="k">Overdue</span><span class="v">Only findings past their SLA due date. (The dashboard's "Past SLA" tile links here.)</span></div>
+</div>
+
+<h3>Severity &amp; age</h3>
+<div class="vh-defs">
+  <div><span class="k">Severity</span><span class="v">One or more of Critical / High / Medium / Low / Info. There is also an "exclude" form (used by the Downloads widget to say "not info").</span></div>
+  <div><span class="k">Age</span><span class="v">By how long a finding has been open: <em>new</em> (under 30 days), <em>mid</em> (30–90), <em>old</em> (over 90). The severity-and-age matrix links here.</span></div>
+  <div><span class="k">Patch available</span><span class="v">Whether the vendor has published a fix. "No patch available" is the set that needs a decision rather than a patch window.</span></div>
+</div>
+
+<h3>Attack path (from the threat widget)</h3>
+<div class="vh-defs">
+  <div><span class="k">Route</span><span class="v"><span class="vh-tag vh-tag--edge">edge</span>, <span class="vh-tag vh-tag--user">user</span> or <span class="vh-tag vh-tag--inside">inside</span> — see <a href="?doc=classification">Routes, delivery &amp; reachability</a>. The <em>edge</em> filter additionally restricts to internet-facing assets; <em>inside</em> also folds in edge findings on unreachable machines.</span></div>
+  <div><span class="k">Delivery</span><span class="v">Within the user route: email, website or download.</span></div>
+  <div><span class="k">Exploit (poc)</span><span class="v"><code>poc=1</code> restricts to findings with a working exploit — what the attack-path widget counts.</span></div>
+  <div><span class="k">Zone / platform</span><span class="v">Install-path zone (e.g. <em>downloads</em>) and OS platform (windows/linux/macos) — used by the Downloads-folder widget.</span></div>
+</div>
+
+<h3>Where &amp; who</h3>
+<div class="vh-defs">
+  <div><span class="k">Product</span><span class="v">A software product slug — every finding for that product (the <em>Exposure by product</em> drill-down).</span></div>
+  <div><span class="k">Vulnerability</span><span class="v"><code>vuln_id</code> — all findings of one scanner definition (the "Most widespread" drill-down).</span></div>
+  <div><span class="k">Team</span><span class="v">Findings on assets owned by a team (the <em>Exposure by team</em> drill-down).</span></div>
+  <div><span class="k">Asset type</span><span class="v">Workstation / server / mobile / network / cloud / appliance.</span></div>
+  <div><span class="k">Search</span><span class="v">Free-text across the finding, its vulnerability and its asset.</span></div>
+</div>
+
+<h2>Reading a row</h2>
+<p>Each row shows the finding's severity, the vulnerability title, the asset it is on, its state, age and risk score, and any attached ticket or exception. Opening a finding shows the scanner's output (the evidence), the solution, the CVEs and exploit evidence, and the actions available to you — <strong>raise a ticket</strong> or <strong>request an exception</strong> (subject to your role). See <a href="?doc=tickets-exceptions">Tickets &amp; exceptions</a>.</p>
+
+<div class="vh-tip"><p><strong>Filters compose, and they live in the URL.</strong> Because every filter is a query parameter, you can bookmark or share a precise view — "open, exploitable, edge-route findings on servers" is just a link. That is exactly how the dashboard hands you a pre-filtered list when you click a number.</p></div>
