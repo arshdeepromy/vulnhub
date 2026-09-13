@@ -61,9 +61,9 @@ final class VulnHub_Threat_Classify {
 
 	/** Which assets the rule treats as reachable from the internet. */
 	public static function exposure_rule(): string {
-		$rule = (string) get_option( 'vulnhub_threat_exposure_rule', 'servers_and_cloud' );
+		$rule = (string) get_option( 'vulnhub_threat_exposure_rule', 'observed' );
 
-		return in_array( $rule, array( 'servers_and_cloud', 'cloud_only', 'tagged', 'all' ), true ) ? $rule : 'servers_and_cloud';
+		return in_array( $rule, array( 'observed', 'servers_and_cloud', 'cloud_only', 'tagged', 'all' ), true ) ? $rule : 'observed';
 	}
 
 	/* =================================================================
@@ -391,7 +391,18 @@ final class VulnHub_Threat_Classify {
 		$rule = self::exposure_rule();
 		$now  = gmdate( 'Y-m-d H:i:s' );
 
-		$rows = (array) $wpdb->get_results( "SELECT id, asset_type, cloud_provider, environment, tags_json FROM {$a}", ARRAY_A ); // phpcs:ignore
+		$rows = (array) $wpdb->get_results( "SELECT id, asset_type, cloud_provider, environment, tags_json, ipv4, ipv4s FROM {$a}", ARRAY_A ); // phpcs:ignore
+
+		/*
+		 * Observed evidence, gathered once rather than per asset. `publishable`
+		 * is the set listening on a web or mail service; `scanned` is the set
+		 * we have any listening data for at all, which is what lets a verdict
+		 * distinguish "nothing is listening" from "nobody has looked".
+		 */
+		$listening = array(
+			'publishable' => array_flip( VulnHub_Threat_Ports::publishable_ids() ),
+			'scanned'     => array_flip( VulnHub_Threat_Ports::scanned_ids() ),
+		);
 
 		$manual = array_map(
 			'intval',
@@ -410,11 +421,11 @@ final class VulnHub_Threat_Classify {
 				continue;
 			}
 
-			[ $yes, $why ] = self::exposure_for( $row, $rule );
+			[ $yes, $why, $basis ] = self::exposure_for( $row, $rule, $listening );
 
 			$facing  += $yes ? 1 : 0;
-			$values[] = '(%d,%d,%s,%s,%s)';
-			array_push( $params, $id, $yes ? 1 : 0, 'rule', $why, $now );
+			$values[] = '(%d,%d,%s,%s,%s,%s)';
+			array_push( $params, $id, $yes ? 1 : 0, 'rule', $basis, $why, $now );
 
 			if ( count( $values ) >= 400 ) {
 				self::write_exposure( $expo, $values, $params );
@@ -439,9 +450,16 @@ final class VulnHub_Threat_Classify {
 	/**
 	 * @param array<string,mixed> $row  Asset row.
 	 * @param string              $rule Which rule is in force.
-	 * @return array{0:bool,1:string} Verdict and the reason to show a person.
+	 * @return array{0:bool,1:string,2:string} Verdict, the reason to show a
+	 *         person, and what that verdict rests on: `evidence` (something was
+	 *         observed), `ruled_out` (we looked and found nothing published),
+	 *         or `unknown` (nobody has looked). The third value is the whole
+	 *         point -- a `false` that means "checked, clear" and a `false` that
+	 *         means "never scanned" are not the same answer, and collapsing
+	 *         them into one boolean is how 330 unscanned servers would come to
+	 *         be reported as safe.
 	 */
-	private static function exposure_for( array $row, string $rule ): array {
+	private static function exposure_for( array $row, string $rule, array $listening = array() ): array {
 		$type  = (string) $row['asset_type'];
 		$cloud = (string) $row['cloud_provider'];
 		$tags  = strtolower( (string) $row['tags_json'] );
@@ -455,34 +473,62 @@ final class VulnHub_Threat_Classify {
 		}
 
 		switch ( $rule ) {
+			case 'observed':
+				/*
+				 * Evidence first, label never. An asset is called reachable
+				 * because somebody tagged it so, because it answers on a
+				 * routable address, or because the scanner watched it listen
+				 * on the kind of service that gets published. Being typed
+				 * `server` earns nothing -- that was the old rule, and on this
+				 * estate it called 313 machines internet-facing on the
+				 * strength of a word in a column.
+				 */
+				if ( '' !== $hit ) {
+					return array( true, sprintf( /* translators: %s: matched tag. */ __( 'tagged %s', 'vulnhub' ), $hit ), 'evidence' );
+				}
+
+				if ( self::has_public_address( $row ) ) {
+					return array( true, __( 'answers on a public IP address', 'vulnhub' ), 'evidence' );
+				}
+
+				if ( isset( $listening['publishable'][ (int) $row['id'] ] ) ) {
+					return array( true, __( 'listening on a web or mail service', 'vulnhub' ), 'evidence' );
+				}
+
+				if ( ! isset( $listening['scanned'][ (int) $row['id'] ] ) ) {
+					return array( false, __( 'no listening-port scan has run against it', 'vulnhub' ), 'unknown' );
+				}
+
+				return array( false, __( 'nothing published is listening on it', 'vulnhub' ), 'ruled_out' );
+
 			case 'all':
-				return array( true, __( 'every asset, by setting', 'vulnhub' ) );
+				return array( true, __( 'every asset, by setting', 'vulnhub' ), 'asserted' );
 
 			case 'cloud_only':
 				if ( '' !== $cloud ) {
-					return array( true, sprintf( /* translators: %s: cloud provider. */ __( 'hosted on %s', 'vulnhub' ), $cloud ) );
+					return array( true, sprintf( /* translators: %s: cloud provider. */ __( 'hosted on %s', 'vulnhub' ), $cloud ), 'asserted' );
 				}
 				if ( 'cloud' === $type ) {
-					return array( true, __( 'cloud asset', 'vulnhub' ) );
+					return array( true, __( 'cloud asset', 'vulnhub' ), 'asserted' );
 				}
 				break;
 
 			case 'tagged':
 				if ( '' !== $hit ) {
-					return array( true, sprintf( /* translators: %s: matched tag. */ __( 'tagged %s', 'vulnhub' ), $hit ) );
+					return array( true, sprintf( /* translators: %s: matched tag. */ __( 'tagged %s', 'vulnhub' ), $hit ), 'evidence' );
 				}
 				break;
 
 			case 'servers_and_cloud':
 			default:
 				if ( '' !== $hit ) {
-					return array( true, sprintf( /* translators: %s: matched tag. */ __( 'tagged %s', 'vulnhub' ), $hit ) );
+					return array( true, sprintf( /* translators: %s: matched tag. */ __( 'tagged %s', 'vulnhub' ), $hit ), 'evidence' );
 				}
 				if ( '' !== $cloud ) {
-					return array( true, sprintf( /* translators: %s: cloud provider. */ __( 'hosted on %s', 'vulnhub' ), $cloud ) );
+					return array( true, sprintf( /* translators: %s: cloud provider. */ __( 'hosted on %s', 'vulnhub' ), $cloud ), 'asserted' );
 				}
 				if ( in_array( $type, array( 'server', 'cloud' ), true ) ) {
-					return array( true, __( 'server or cloud instance', 'vulnhub' ) );
+					return array( true, __( 'server or cloud instance', 'vulnhub' ), 'asserted' );
 				}
 				break;
 		}
@@ -491,8 +537,56 @@ final class VulnHub_Threat_Classify {
 			false,
 			'' === $type
 				? __( 'nothing says the internet can open a socket to it', 'vulnhub' )
-				: sprintf( /* translators: %s: asset type. */ __( '%s — no inbound path from the internet', 'vulnhub' ), $type )
+				: sprintf( /* translators: %s: asset type. */ __( '%s — no inbound path from the internet', 'vulnhub' ), $type ),
+			'asserted'
 		);
+	}
+
+	/**
+	 * Does this asset answer on an address the internet can route to?
+	 *
+	 * RFC1918 is the easy half. The traps are 100.64.0.0/10, which is carrier
+	 * NAT and on this estate is Tailscale, and 198.18.0.0/15, which is the
+	 * benchmarking range and turns up inside SD-WAN overlays -- both look
+	 * public to a naive check and neither is reachable from the internet.
+	 *
+	 * @param array<string,mixed> $row Asset row with ipv4 / ipv4s.
+	 */
+	private static function has_public_address( array $row ): bool {
+		foreach ( array( (string) ( $row['ipv4'] ?? '' ), (string) ( $row['ipv4s'] ?? '' ) ) as $blob ) {
+			if ( '' === trim( $blob ) ) {
+				continue;
+			}
+
+			foreach ( preg_split( '/[\s,;]+/', $blob ) ?: array() as $ip ) {
+				$ip = trim( $ip );
+
+				if ( '' === $ip || ! filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 ) ) {
+					continue;
+				}
+
+				$long = ip2long( $ip );
+
+				if ( false === $long ) {
+					continue;
+				}
+
+				// 100.64.0.0/10 carrier NAT, 198.18.0.0/15 benchmarking.
+				if ( ( $long & 0xFFC00000 ) === ( ip2long( '100.64.0.0' ) & 0xFFC00000 ) ) {
+					continue;
+				}
+
+				if ( ( $long & 0xFFFE0000 ) === ( ip2long( '198.18.0.0' ) & 0xFFFE0000 ) ) {
+					continue;
+				}
+
+				if ( filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE ) ) {
+					return true;
+				}
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -504,8 +598,8 @@ final class VulnHub_Threat_Classify {
 
 		$wpdb->query( // phpcs:ignore
 			$wpdb->prepare(
-				"INSERT INTO {$expo} (asset_id,internet_facing,source,reason,updated_at) VALUES " . implode( ',', $values ) . // phpcs:ignore
-				' ON DUPLICATE KEY UPDATE internet_facing=VALUES(internet_facing), source=VALUES(source), reason=VALUES(reason), updated_at=VALUES(updated_at)',
+				"INSERT INTO {$expo} (asset_id,internet_facing,source,basis,reason,updated_at) VALUES " . implode( ',', $values ) . // phpcs:ignore
+				' ON DUPLICATE KEY UPDATE internet_facing=VALUES(internet_facing), source=VALUES(source), basis=VALUES(basis), reason=VALUES(reason), updated_at=VALUES(updated_at)',
 				...$params
 			)
 		);
