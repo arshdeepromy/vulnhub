@@ -162,7 +162,14 @@
 .vh-flow__box--user   .vh-flow__n { fill: var(--vh-sev-high); }
 .vh-flow__box--inside .vh-flow__n { fill: var(--vh-series-1); }
 
-.vh-flow__n-unit    { font-size: 11.5px; fill: var(--vh-muted); }
+.vh-flow__n-unit    { font-size: 11.5px; fill: var(--vh-muted); letter-spacing: .02em; }
+
+/* The machine count is the same order of information as the finding count,
+   so it gets the same type -- one step down in size and weight, and in ink
+   rather than the lane colour, so the lane still reads as one figure with a
+   qualifier and not as two competing headlines. */
+.vh-flow__n--assets { font-size: 24px; fill: var(--vh-ink); }
+.vh-flow__box-rule  { stroke: var(--vh-line); stroke-width: 1; opacity: .55; }
 .vh-flow__box-label { font-size: 14.5px; font-weight: 650; fill: var(--vh-ink); }
 .vh-flow__box-sub   { font-size: 11.5px; fill: var(--vh-muted); }
 .vh-flow__box-cta   { font-size: 11.5px; font-weight: 600; fill: var(--vh-link); }
@@ -240,4 +247,90 @@
 	 */
 	.vh-flow__stage { display: none; }
 	.vh-flow__cards { grid-template-columns: 1fr; }
+}
+
+
+/* ---------------------------------------------------------------- reach. */
+/* Three states, not two. "Never looked" is given the same weight as the
+   other two on purpose: it is the largest of them here, and the one a
+   boolean would have hidden. It is toned amber rather than green or red
+   because it is neither -- it is work nobody has done yet. */
+
+.vh-flow__exposure { margin: 18px 0 0; }
+
+.vh-flow__exposure-h {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--vh-muted);
+}
+
+.vh-flow__states {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vh-flow__state {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas: "n label" "note note";
+  align-items: baseline;
+  column-gap: 10px;
+  row-gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--vh-line);
+  border-left-width: 3px;
+  border-radius: 10px;
+  background: var(--vh-surface);
+}
+
+.vh-flow__state-n {
+  grid-area: n;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.vh-flow__state-label {
+  grid-area: label;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--vh-ink);
+}
+
+.vh-flow__state-note {
+  grid-area: note;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--vh-muted);
+}
+
+.vh-flow__state--confirmed { border-left-color: var(--vh-sev-critical); }
+.vh-flow__state--confirmed .vh-flow__state-n { color: var(--vh-sev-critical); }
+.vh-flow__state--unknown   { border-left-color: var(--vh-sev-medium, #e0a33e); }
+.vh-flow__state--unknown .vh-flow__state-n   { color: var(--vh-sev-medium, #e0a33e); }
+.vh-flow__state--ruled_out { border-left-color: var(--vh-line); }
+.vh-flow__state--ruled_out .vh-flow__state-n { color: var(--vh-ink); }
+
+.vh-flow__gap {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--vh-ink-2, var(--vh-muted));
+}
+
+/* The machine count on the narrow-screen cards, matching the diagram. */
+.vh-flow__card-unit {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--vh-muted);
+  letter-spacing: .02em;
 }
