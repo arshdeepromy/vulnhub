@@ -1589,9 +1589,18 @@ document.addEventListener( 'click', function ( e ) {
 
 			if ( offset >= total ) { done = true; observer.disconnect(); return; }
 
+			/*
+			 * Never toggle `hidden` here. The sentinel used to be rendered
+			 * hidden and unhidden at this point -- but `[hidden]` is
+			 * display:none, a display:none element has no box, and an element
+			 * with no box never intersects, so this function was the only
+			 * thing that could reveal the sentinel and the observer was the
+			 * only thing that could call this function. Neither ever ran. The
+			 * pager underneath quietly carried the table instead, which is why
+			 * nothing looked broken.
+			 */
 			loading = true;
-			sentinel.hidden = false;
-			sentinel.textContent = '';
+			sentinel.classList.add( 'is-loading' );
 
 			var params = new URLSearchParams( window.location.search );
 			params.delete( 'vp' );
@@ -1607,7 +1616,7 @@ document.addEventListener( 'click', function ( e ) {
 				}
 				sentinel.setAttribute( 'data-offset', String( d.offset ) );
 				sentinel.setAttribute( 'data-total', String( d.total ) );
-				sentinel.hidden = true;
+				sentinel.classList.remove( 'is-loading' );
 				loading = false;
 				if ( d.offset >= d.total || ! d.count ) {
 					done = true;
@@ -1616,6 +1625,7 @@ document.addEventListener( 'click', function ( e ) {
 			} ).catch( function () {
 				// Leave the classic pager visible/functional; just stop
 				// trying to auto-load further pages.
+				sentinel.classList.remove( 'is-loading' );
 				loading = false;
 				done = true;
 				observer.disconnect();
