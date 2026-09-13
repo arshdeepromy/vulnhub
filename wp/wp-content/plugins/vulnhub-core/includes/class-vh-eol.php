@@ -965,10 +965,17 @@ final class Eol {
 	 *
 	 * @return array<string,int>
 	 */
-	public static function summary(): array {
+	/**
+	 * @param array<int,array<string,mixed>>|null $rows Estate rows already in
+	 *        hand. Pass them whenever the caller is also drawing those rows:
+	 *        estate() re-reads the asset table, and a connector sync writing
+	 *        to it between the two reads leaves the summary tiles disagreeing
+	 *        with the chart printed directly beneath them.
+	 */
+	public static function summary( ?array $rows = null ): array {
 		$out = array( 'past' => 0, 'soon' => 0, 'supported' => 0, 'unknown' => 0 );
 
-		foreach ( self::estate() as $row ) {
+		foreach ( $rows ?? self::estate() as $row ) {
 			$out[ $row['status'] ] += (int) $row['assets'];
 		}
 

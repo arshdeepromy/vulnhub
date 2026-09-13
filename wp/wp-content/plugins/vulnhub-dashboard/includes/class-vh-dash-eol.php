@@ -53,38 +53,119 @@ final class VulnHub_Dash_Eol {
 			return;
 		}
 
-		self::headline( Eol::summary() );
+		// The four tiles stay: they are the denominator, and each is labelled.
+		// Summed from the rows already read, not from a second scan -- see
+		// Eol::summary().
+		self::headline( Eol::summary( $rows ) );
 
-		echo VulnHub_Dash_Charts::segment_bars( // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-			self::bars( array_slice( $rows, 0, self::SHOWN ) ),
-			array(
-				'unit'   => __( 'assets', 'vulnhub' ),
-				'legend' => self::legend(),
+		/*
+		 * The bars are only the releases that have run out, or are about to.
+		 *
+		 * They used to be every release in the estate ordered by population,
+		 * so a widget titled "past end of life" led with Windows 11 24H2 --
+		 * 473 assets, supported until 2029 -- and the releases that had
+		 * actually expired sat below it, or below the cut entirely. The
+		 * supported and unrecorded counts are still on the tiles above, where
+		 * they say what they are.
+		 */
+		$expired = array_values(
+			array_filter(
+				$rows,
+				static fn( array $r ): bool => in_array( (string) $r['status'], array( 'past', 'soon' ), true )
 			)
 		);
 
-		if ( count( $rows ) > self::SHOWN ) {
+		if ( ! $expired ) {
+			echo VulnHub_Dash_Charts::empty_state( // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+				esc_html__( 'No in-scope asset is running a release that has passed end of life or ends within six months.', 'vulnhub' )
+			);
+		} else {
+			$drawn = array_values( array_unique( array_column( $expired, 'status' ) ) );
+
+			echo VulnHub_Dash_Charts::segment_bars( // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+				self::bars( array_slice( $expired, 0, self::SHOWN ) ),
+				array(
+					'unit'   => __( 'assets', 'vulnhub' ),
+					'legend' => self::legend( $drawn ),
+				)
+			);
+		}
+
+		/*
+		 * An unmatched release is not a clean bill of health, and saying so
+		 * matters: 74 Red Hat machines sat in this bucket until the lifecycle
+		 * table gained RHEL 5 and 6, and every one of them was years past end
+		 * of life while the widget reported nothing.
+		 */
+		$unknown = 0;
+		foreach ( $rows as $vh_row ) {
+			if ( 'unknown' === (string) $vh_row['status'] ) {
+				$unknown += (int) $vh_row['assets'];
+			}
+		}
+
+		if ( $unknown > 0 ) {
+			printf(
+				'<p class="vh-w__note">%s</p>',
+				esc_html(
+					sprintf(
+						/* translators: %s: number of assets whose release could not be matched. */
+						_n(
+							'%s asset reports an operating system with no release the lifecycle table recognises, so it is neither counted as supported nor as expired. Check it rather than assume it is fine.',
+							'%s assets report an operating system with no release the lifecycle table recognises, so they are neither counted as supported nor as expired. Check them rather than assume they are fine.',
+							$unknown,
+							'vulnhub'
+						),
+						number_format_i18n( $unknown )
+					)
+				)
+			);
+		}
+
+		if ( count( $expired ) > self::SHOWN ) {
 			printf(
 				'<p class="vh-w__note">%s</p>',
 				esc_html(
 					sprintf(
 						/* translators: %s: number of releases. */
 						_n(
-							'%s further release is in the estate; the full list is in the table below.',
-							'%s further releases are in the estate; the full list is in the table below.',
-							count( $rows ) - self::SHOWN,
+							'%s further expired release is in the estate; the full list is in the table below.',
+							'%s further expired releases are in the estate; the full list is in the table below.',
+							count( $expired ) - self::SHOWN,
 							'vulnhub'
 						),
-						number_format_i18n( count( $rows ) - self::SHOWN )
+						number_format_i18n( count( $expired ) - self::SHOWN )
 					)
 				)
 			);
 		}
 
+		/*
+		 * The table carries the same scope as the chart, plus the unmatched
+		 * releases -- which are the ones worth reading a list for, because
+		 * each is a release nobody has confirmed either way. Releases still
+		 * in support are a count on the tiles, not forty rows to scroll past
+		 * under a heading that says "past end of life".
+		 */
 		echo VulnHub_Dash_Charts::table_view( // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			self::headers(),
-			self::table_rows( $rows ),
-			__( 'In-service assets only. A release with no published date is counted but not judged.', 'vulnhub' )
+			self::table_rows( self::reportable( $rows ) ),
+			__( 'In-service assets only. Releases past end of life, ending within six months, and those the lifecycle table could not match. Supported releases are counted above.', 'vulnhub' )
+		);
+	}
+
+	/**
+	 * Everything this widget is about: expired, expiring, or unjudged.
+	 *
+	 * @param array<int,array<string,mixed>> $rows Estate rows.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private static function reportable( array $rows ): array {
+		return array_values(
+			array_filter(
+				$rows,
+				static fn( array $r ): bool => in_array( (string) $r['status'], array( 'past', 'soon', 'unknown' ), true )
+			)
 		);
 	}
 
@@ -94,7 +175,7 @@ final class VulnHub_Dash_Eol {
 	public static function data(): array {
 		return array(
 			'headers' => self::headers(),
-			'rows'    => self::table_rows( Eol::estate() ),
+			'rows'    => self::table_rows( self::reportable( Eol::estate() ) ),
 		);
 	}
 
@@ -380,10 +461,20 @@ final class VulnHub_Dash_Eol {
 	/**
 	 * @return array<int,array{label:string,colour:string}>
 	 */
-	private static function legend(): array {
+	/**
+	 * @param array<int,string> $only Statuses to key, or all of them when empty.
+	 *                                A key for a colour that is not on the
+	 *                                chart just invites the reader to hunt for
+	 *                                a band that was filtered out.
+	 */
+	private static function legend( array $only = array() ): array {
 		$out = array();
 
 		foreach ( Eol::statuses() as $key => $def ) {
+			if ( $only && ! in_array( (string) $key, $only, true ) ) {
+				continue;
+			}
+
 			$out[] = array(
 				'label'  => (string) $def['label'],
 				'colour' => self::tone_colour( (string) $key ),
