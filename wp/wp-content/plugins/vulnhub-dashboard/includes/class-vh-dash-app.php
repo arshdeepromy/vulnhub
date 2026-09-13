@@ -685,7 +685,7 @@ final class VulnHub_Dash_App {
 	 * A sortable column header: a link that toggles direction, and tells a
 	 * screen reader which way the table is currently ordered.
 	 */
-	private static function sort_th( string $key, string $label, string $orderby, string $order, string $page = 'vulnerabilities' ): void {
+	private static function sort_th( string $key, string $label, string $orderby, string $order, string $page = 'vulnerabilities', string $suffix = '' ): void {
 		$active = $orderby === $key;
 		$next   = $active
 			? ( 'ASC' === $order ? 'DESC' : 'ASC' )
@@ -702,13 +702,39 @@ final class VulnHub_Dash_App {
 		$aria = $active ? ( 'ASC' === $order ? 'ascending' : 'descending' ) : 'none';
 
 		printf(
-			'<th aria-sort="%s"><a class="vh-sort%s" href="%s">%s<span class="vh-sort__mark" aria-hidden="true">%s</span></a></th>',
+			'<th aria-sort="%s"><a class="vh-sort%s" href="%s">%s<span class="vh-sort__mark" aria-hidden="true">%s</span></a>%s</th>',
 			esc_attr( $aria ),
 			$active ? ' is-active' : '',
 			esc_url( self::page_url( $page, $params ) ),
 			esc_html( $label ),
-			$active ? ( 'ASC' === $order ? '&#9650;' : '&#9660;' ) : ''
+			$active ? ( 'ASC' === $order ? '&#9650;' : '&#9660;' ) : '',
+			$suffix // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- trusted markup (e.g. the owner-privacy toggle).
 		);
+	}
+
+	/**
+	 * The eye toggle that reveals masked owner names in a list header.
+	 *
+	 * Rendered in any table that masks the Owner column; app.js finds it,
+	 * flips the mask on that table, and remembers the choice per viewer.
+	 * Masked is the default, so a screenshot or screen-share never leaks names.
+	 */
+	public static function owner_eye_html(): string {
+		return sprintf(
+			'<button type="button" class="vh-eye" data-vh-owner-toggle aria-pressed="false" title="%1$s" aria-label="%1$s">'
+			. '<svg class="vh-eye__on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>'
+			. '<svg class="vh-eye__off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M10.6 10.6a3 3 0 004.2 4.2M9.9 5.1A9.9 9.9 0 0112 5c6.5 0 10 7 10 7a13.3 13.3 0 01-2.2 2.8M6.3 6.3A13.3 13.3 0 002 12s3.5 7 10 7a9.8 9.8 0 003.6-.7"/></svg>'
+			. '</button>',
+			esc_attr__( 'Show owner names', 'vulnhub' )
+		);
+	}
+
+	/**
+	 * Wrap a person's name so the Owner column can mask it by default.
+	 */
+	public static function owner_mask_html( string $name ): string {
+		return '<span class="vh-mask" data-vh-mask><span class="vh-mask__dots" aria-hidden="true">••••••••</span><span class="vh-mask__real">'
+			. esc_html( $name ) . '</span></span>';
 	}
 
 	/* ------------------------------------------------ vulnerabilities. */
@@ -884,7 +910,7 @@ final class VulnHub_Dash_App {
 							<th><?php esc_html_e( 'Type', 'vulnhub' ); ?></th>
 							<th><?php esc_html_e( 'App', 'vulnhub' ); ?></th>
 							<th><?php esc_html_e( 'Install path', 'vulnhub' ); ?></th>
-							<th><?php esc_html_e( 'Owner', 'vulnhub' ); ?></th>
+							<th><?php esc_html_e( 'Owner', 'vulnhub' ); ?><?php echo self::owner_eye_html(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></th>
 							<th><?php esc_html_e( 'State', 'vulnhub' ); ?></th>
 							<th><?php esc_html_e( 'First found', 'vulnhub' ); ?></th>
 							<th><?php esc_html_e( 'Due', 'vulnhub' ); ?></th>
@@ -919,7 +945,7 @@ final class VulnHub_Dash_App {
 								</td>
 								<td>
 									<?php if ( ! empty( $f['owner_name'] ) ) : ?>
-										<?php echo esc_html( (string) $f['owner_name'] ); ?>
+										<?php echo self::owner_mask_html( (string) $f['owner_name'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 										<span class="vh-meta"><?php echo esc_html( (string) ( $f['team_name'] ?: '' ) ); ?></span>
 									<?php elseif ( ! empty( $f['team_name'] ) ) : ?>
 										<?php echo esc_html( (string) $f['team_name'] ); ?>
@@ -1232,7 +1258,15 @@ final class VulnHub_Dash_App {
 							<?php endif; ?>
 							<th><?php esc_html_e( 'Location', 'vulnhub' ); ?></th>
 							<th><?php esc_html_e( 'File path', 'vulnhub' ); ?></th>
-							<th><?php esc_html_e( 'Owner', 'vulnhub' ); ?></th>
+							<th>
+								<?php esc_html_e( 'Owner', 'vulnhub' ); ?>
+								<button type="button" class="vh-eye" data-vh-owner-toggle aria-pressed="false"
+									title="<?php esc_attr_e( 'Show owner names', 'vulnhub' ); ?>"
+									aria-label="<?php esc_attr_e( 'Show owner names', 'vulnhub' ); ?>">
+									<svg class="vh-eye__on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+									<svg class="vh-eye__off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M10.6 10.6a3 3 0 004.2 4.2M9.9 5.1A9.9 9.9 0 0112 5c6.5 0 10 7 10 7a13.3 13.3 0 01-2.2 2.8M6.3 6.3A13.3 13.3 0 002 12s3.5 7 10 7a9.8 9.8 0 003.6-.7"/></svg>
+								</button>
+							</th>
 							<?php self::sort_th( 'due_at', __( 'Due', 'vulnhub' ), $orderby, $order ); ?>
 							<th><?php esc_html_e( 'Ticket', 'vulnhub' ); ?></th>
 							<th></th>
@@ -1451,7 +1485,7 @@ final class VulnHub_Dash_App {
 					?></td>
 					<td data-th="<?php esc_attr_e( 'Owner', 'vulnhub' ); ?>">
 						<?php if ( $owner ) : ?>
-							<?php echo esc_html( (string) $owner['display_name'] ); ?>
+							<?php echo self::owner_mask_html( (string) $owner['display_name'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 						<?php elseif ( $needs ) : ?>
 							<span class="vh-chip vh-chip--warn"><?php esc_html_e( 'Missing', 'vulnhub' ); ?></span>
 						<?php else : ?>—<?php endif; ?>
@@ -1496,6 +1530,7 @@ final class VulnHub_Dash_App {
 			'severity'   => self::q( 'severity' ),
 			'age'        => self::q( 'age' ),
 			'route'      => self::q( 'route' ),
+			'delivery'   => self::q( 'delivery' ),
 			'poc'        => self::q( 'poc' ),
 			'asset_type' => self::q( 'asset_type' ),
 			'team_id'    => self::qi( 'team_id' ),
@@ -1680,7 +1715,10 @@ final class VulnHub_Dash_App {
 			</td>
 			<td data-th="<?php esc_attr_e( 'Owner', 'vulnhub' ); ?>">
 				<?php if ( ! empty( $f['owner_name'] ) ) : ?>
-					<?php echo esc_html( (string) $f['owner_name'] ); ?>
+					<span class="vh-mask" data-vh-mask>
+						<span class="vh-mask__dots" aria-hidden="true">••••••••</span>
+						<span class="vh-mask__real"><?php echo esc_html( (string) $f['owner_name'] ); ?></span>
+					</span>
 					<span class="vh-meta"><?php echo esc_html( (string) ( $f['team_name'] ?: '' ) ); ?></span>
 				<?php elseif ( ! empty( $f['team_name'] ) ) : ?>
 					<?php echo esc_html( (string) $f['team_name'] ); ?>
@@ -2774,7 +2812,7 @@ final class VulnHub_Dash_App {
 					<th><?php esc_html_e( 'Known by', 'vulnhub' ); ?></th>
 					<?php self::sort_th( 'asset_type', __( 'Type', 'vulnhub' ), $orderby, $order, 'assets' ); ?>
 					<th><?php esc_html_e( 'Operating system', 'vulnhub' ); ?></th>
-					<?php self::sort_th( 'owner_person_id', __( 'Owner', 'vulnhub' ), $orderby, $order, 'assets' ); ?>
+					<?php self::sort_th( 'owner_person_id', __( 'Owner', 'vulnhub' ), $orderby, $order, 'assets', self::owner_eye_html() ); ?>
 					<th><?php esc_html_e( 'Team', 'vulnhub' ); ?></th>
 					<?php self::sort_th( 'risk_score', __( 'Open exposure', 'vulnhub' ), $orderby, $order, 'assets' ); ?>
 				</tr></thead>

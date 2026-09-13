@@ -1,0 +1,368 @@
+/**
+ * VulnHub Docs — the in-portal wiki.
+ *
+ * Every colour is a portal token (--vh-*), so the wiki inherits the light and
+ * dark palettes the rest of the app already defines and never needs its own.
+ */
+
+.vh-docs {
+	display: grid;
+	grid-template-columns: 250px minmax(0, 1fr) 200px;
+	gap: 32px;
+	align-items: start;
+	max-width: 1280px;
+	margin: 0 auto;
+	padding: 8px 0 64px;
+}
+
+/* ---------------------------------------------------------- the sidebar. */
+
+.vh-docs__sidebar {
+	position: sticky;
+	top: 84px;
+	align-self: start;
+	max-height: calc(100vh - 104px);
+	overflow-y: auto;
+	padding-right: 8px;
+}
+
+.vh-docs__search { margin-bottom: 16px; }
+
+.vh-docs__search input {
+	width: 100%;
+	box-sizing: border-box;
+	padding: 8px 12px;
+	font: inherit;
+	font-size: 13px;
+	color: var(--vh-ink);
+	background: var(--vh-plane);
+	border: 1px solid var(--vh-line);
+	border-radius: var(--vh-radius-sm, 8px);
+}
+
+.vh-docs__search input:focus-visible {
+	outline: none;
+	border-color: var(--vh-accent);
+	box-shadow: 0 0 0 3px rgba(var(--vh-accent-rgb, 60 130 246), .25);
+}
+
+.vh-docs__group {
+	margin: 18px 0 6px;
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: .06em;
+	text-transform: uppercase;
+	color: var(--vh-muted);
+}
+
+.vh-docs__toclist ul {
+	list-style: none;
+	margin: 0 0 4px;
+	padding: 0;
+}
+
+.vh-docs__link {
+	display: block;
+	padding: 6px 10px;
+	margin: 1px 0;
+	font-size: 13.5px;
+	line-height: 1.35;
+	color: var(--vh-ink-2, var(--vh-ink));
+	text-decoration: none;
+	border-radius: var(--vh-radius-sm, 8px);
+	border-left: 2px solid transparent;
+}
+
+.vh-docs__link:hover { background: var(--vh-plane); color: var(--vh-ink); }
+
+.vh-docs__link.is-active {
+	background: var(--vh-plane);
+	color: var(--vh-link);
+	border-left-color: var(--vh-accent);
+	font-weight: 600;
+}
+
+.vh-docs__nomatch { padding: 8px 10px; font-size: 13px; color: var(--vh-muted); }
+
+/* ------------------------------------------------------------ the body. */
+
+.vh-docs__body { min-width: 0; }
+
+.vh-docs__crumbs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: center;
+	margin-bottom: 12px;
+	font-size: 12.5px;
+	color: var(--vh-muted);
+}
+
+.vh-docs__crumbs a { color: var(--vh-muted); text-decoration: none; }
+.vh-docs__crumbs a:hover { color: var(--vh-link); }
+.vh-docs__crumbs [aria-current] { color: var(--vh-ink); }
+
+.vh-docs__head { margin-bottom: 24px; }
+
+.vh-docs__head h1 {
+	margin: 0 0 8px;
+	font-size: 30px;
+	line-height: 1.15;
+	letter-spacing: -.01em;
+	color: var(--vh-ink);
+}
+
+.vh-docs__lede {
+	margin: 0;
+	font-size: 16px;
+	line-height: 1.5;
+	color: var(--vh-muted);
+}
+
+/* Article prose. Scoped tightly so it cannot leak into embedded widgets. */
+
+.vh-docs__article { color: var(--vh-ink); font-size: 15px; line-height: 1.68; }
+
+.vh-docs__article > h2 {
+	margin: 40px 0 12px;
+	padding-top: 12px;
+	font-size: 22px;
+	line-height: 1.25;
+	letter-spacing: -.01em;
+	color: var(--vh-ink);
+	border-top: 1px solid var(--vh-line);
+}
+
+.vh-docs__article > h2:first-of-type { border-top: none; padding-top: 0; margin-top: 8px; }
+
+.vh-docs__article h3 {
+	margin: 28px 0 8px;
+	font-size: 17px;
+	line-height: 1.3;
+	color: var(--vh-ink);
+}
+
+.vh-docs__article h4 {
+	margin: 20px 0 6px;
+	font-size: 14px;
+	text-transform: uppercase;
+	letter-spacing: .05em;
+	color: var(--vh-muted);
+}
+
+.vh-docs__article p { margin: 0 0 16px; }
+.vh-docs__article a { color: var(--vh-link); text-decoration: none; }
+.vh-docs__article a:hover { color: var(--vh-link-hover, var(--vh-link)); text-decoration: underline; }
+
+.vh-docs__article ul,
+.vh-docs__article ol { margin: 0 0 16px; padding-left: 22px; }
+.vh-docs__article li { margin: 4px 0; }
+
+.vh-docs__article strong { color: var(--vh-ink); font-weight: 650; }
+
+.vh-docs__article code {
+	font-family: var(--vh-mono, ui-monospace, monospace);
+	font-size: .88em;
+	padding: 1px 5px;
+	color: var(--vh-ink);
+	background: var(--vh-plane);
+	border: 1px solid var(--vh-line);
+	border-radius: 5px;
+}
+
+.vh-docs__article pre {
+	margin: 0 0 18px;
+	padding: 14px 16px;
+	overflow-x: auto;
+	font-family: var(--vh-mono, ui-monospace, monospace);
+	font-size: 13px;
+	line-height: 1.55;
+	color: var(--vh-ink);
+	background: var(--vh-plane);
+	border: 1px solid var(--vh-line);
+	border-radius: var(--vh-radius, 10px);
+}
+
+.vh-docs__article pre code { padding: 0; border: 0; background: none; }
+
+/* Anchor offset so a jumped-to heading is not hidden under the sticky topbar. */
+.vh-docs__article [id] { scroll-margin-top: 80px; }
+
+/* Callouts: <div class="vh-note">, .vh-tip, .vh-warn */
+.vh-note, .vh-tip, .vh-warn {
+	margin: 0 0 18px;
+	padding: 12px 16px;
+	border: 1px solid var(--vh-line);
+	border-left-width: 3px;
+	border-radius: var(--vh-radius-sm, 8px);
+	background: var(--vh-plane);
+	font-size: 14px;
+}
+
+.vh-note { border-left-color: var(--vh-accent); }
+.vh-tip  { border-left-color: var(--vh-good, #2f9e5f); }
+.vh-warn { border-left-color: var(--vh-warn, #d08700); }
+.vh-note > :last-child, .vh-tip > :last-child, .vh-warn > :last-child { margin-bottom: 0; }
+
+/* Tables. */
+.vh-docs__article table {
+	width: 100%;
+	margin: 0 0 20px;
+	border-collapse: collapse;
+	font-size: 13.5px;
+}
+
+.vh-docs__article th,
+.vh-docs__article td {
+	padding: 8px 12px;
+	text-align: left;
+	vertical-align: top;
+	border-bottom: 1px solid var(--vh-line);
+}
+
+.vh-docs__article thead th {
+	font-size: 11.5px;
+	text-transform: uppercase;
+	letter-spacing: .04em;
+	color: var(--vh-muted);
+	border-bottom: 1px solid var(--vh-line-strong, var(--vh-line));
+}
+
+.vh-docs__article tbody tr:hover { background: var(--vh-plane); }
+
+/* A definition-style grid, used for "what each field means" blocks. */
+.vh-defs { margin: 0 0 20px; }
+.vh-defs > div {
+	display: grid;
+	grid-template-columns: 200px 1fr;
+	gap: 4px 20px;
+	padding: 10px 0;
+	border-bottom: 1px solid var(--vh-line);
+}
+.vh-defs dt, .vh-defs .k {
+	margin: 0;
+	font-family: var(--vh-mono, ui-monospace, monospace);
+	font-size: 13px;
+	color: var(--vh-ink);
+	font-weight: 600;
+}
+.vh-defs dd, .vh-defs .v { margin: 0; color: var(--vh-ink-2, var(--vh-ink)); }
+
+/* Small coloured tag used inline, e.g. severities and routes. */
+.vh-tag {
+	display: inline-block;
+	padding: 1px 8px;
+	font-size: 11.5px;
+	font-weight: 650;
+	line-height: 1.6;
+	border-radius: 999px;
+	border: 1px solid var(--vh-line);
+	color: var(--vh-ink);
+}
+.vh-tag--critical { color: var(--vh-sev-critical); border-color: var(--vh-sev-critical); }
+.vh-tag--high     { color: var(--vh-sev-high); border-color: var(--vh-sev-high); }
+.vh-tag--medium   { color: var(--vh-sev-medium); border-color: var(--vh-sev-medium); }
+.vh-tag--low      { color: var(--vh-sev-low); border-color: var(--vh-sev-low); }
+.vh-tag--edge     { color: var(--vh-sev-critical); border-color: var(--vh-sev-critical); }
+.vh-tag--user     { color: var(--vh-sev-high); border-color: var(--vh-sev-high); }
+.vh-tag--inside   { color: var(--vh-series-1, var(--vh-accent)); border-color: var(--vh-series-1, var(--vh-accent)); }
+
+.vh-docs__empty { color: var(--vh-muted); font-style: italic; }
+
+/* ------------------------------------------------------------ the pager. */
+
+.vh-docs__pager {
+	display: flex;
+	gap: 16px;
+	justify-content: space-between;
+	margin-top: 48px;
+	padding-top: 24px;
+	border-top: 1px solid var(--vh-line);
+}
+
+.vh-docs__pager-link {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	max-width: 48%;
+	padding: 12px 16px;
+	text-decoration: none;
+	border: 1px solid var(--vh-line);
+	border-radius: var(--vh-radius, 10px);
+	background: var(--vh-plane);
+}
+.vh-docs__pager-link:hover { border-color: var(--vh-accent); }
+.vh-docs__pager-link--next { text-align: right; margin-left: auto; }
+.vh-docs__pager-link span { font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--vh-muted); }
+.vh-docs__pager-link strong { font-size: 14.5px; color: var(--vh-link); }
+
+/* --------------------------------------------------- on-this-page rail. */
+
+.vh-docs__toc {
+	position: sticky;
+	top: 84px;
+	align-self: start;
+	max-height: calc(100vh - 104px);
+	overflow-y: auto;
+}
+
+.vh-docs__toc-h {
+	margin: 0 0 8px;
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: .06em;
+	text-transform: uppercase;
+	color: var(--vh-muted);
+}
+
+.vh-docs__toc nav a {
+	display: block;
+	padding: 4px 10px;
+	font-size: 12.5px;
+	line-height: 1.35;
+	color: var(--vh-muted);
+	text-decoration: none;
+	border-left: 2px solid var(--vh-line);
+}
+.vh-docs__toc nav a.lvl-3 { padding-left: 22px; }
+.vh-docs__toc nav a:hover { color: var(--vh-ink); }
+.vh-docs__toc nav a.is-active { color: var(--vh-link); border-left-color: var(--vh-accent); }
+
+/* --------------------------------------------------- mobile behaviour. */
+
+.vh-docs__menu-toggle {
+	display: none;
+	margin-bottom: 16px;
+	padding: 8px 14px;
+	font: inherit;
+	font-size: 13px;
+	color: var(--vh-ink);
+	background: var(--vh-plane);
+	border: 1px solid var(--vh-line);
+	border-radius: var(--vh-radius-sm, 8px);
+	cursor: pointer;
+}
+
+@media (max-width: 1080px) {
+	.vh-docs { grid-template-columns: 240px minmax(0, 1fr); }
+	.vh-docs__toc { display: none; }
+}
+
+@media (max-width: 782px) {
+	.vh-docs { grid-template-columns: minmax(0, 1fr); gap: 0; }
+	.vh-docs__menu-toggle { display: inline-block; }
+	.vh-docs__sidebar {
+		position: static;
+		max-height: none;
+		margin-bottom: 24px;
+		padding: 16px;
+		border: 1px solid var(--vh-line);
+		border-radius: var(--vh-radius, 10px);
+	}
+	.vh-docs__sidebar[hidden] { display: none; }
+	.vh-docs__head h1 { font-size: 25px; }
+}
+
+/* Admin-section teaser. */
+.vh-docs-admin__list { list-style: none; margin: 20px 0 0; padding: 0; }
+.vh-docs-admin__list li { padding: 10px 0; border-top: 1px solid var(--vh-line); font-size: 14px; color: var(--vh-ink-2, var(--vh-ink)); }

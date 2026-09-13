@@ -1,0 +1,94 @@
+<p>Every open finding in VulnHub is placed on a single <strong>attack path</strong>: the shortest way somebody could actually reach and use it. This is what turns a list of 200,000 findings into a picture you can act on — most of that list can only be used by someone who is already inside, and the handful that a stranger can reach from the internet is the part that should keep you up at night. This page explains exactly how that placement is decided, so you can trust the numbers and, as a developer, reproduce them.</p>
+
+<div class="vh-note"><p><strong>Where this is computed.</strong> Route, delivery and reachability all live in the <code>vulnhub-threat</code> plugin. The nightly refresh pulls CVE intelligence (NVD, CISA KEV, FIRST EPSS), then <code>VulnHub_Threat_Classify::rebuild_all()</code> rebuilds the <code>vulnhub_vuln_paths</code> table that every attack-path number reads from.</p></div>
+
+<h2>The three routes (and the honest fourth)</h2>
+
+<p>A finding is sorted into the order an intrusion actually runs:</p>
+
+<div class="vh-defs">
+  <div><span class="k"><span class="vh-tag vh-tag--edge">edge</span></span><span class="v"><strong>Reached straight from the internet.</strong> A stranger opens a socket to something you publish — no account, no user, no click. This is the lane where the number should be zero.</span></div>
+  <div><span class="k"><span class="vh-tag vh-tag--user">user</span></span><span class="v"><strong>Delivered to one of your people.</strong> A stranger sends something a person opens — an email attachment, a link, a download. It is split three ways (email / website / download) because the countermeasures belong to three different teams.</span></div>
+  <div><span class="k"><span class="vh-tag vh-tag--inside">inside</span></span><span class="v"><strong>Only usable once somebody is already in.</strong> Privilege escalation and lateral movement. Not a third door — it is what waits on the other side of the first two.</span></div>
+  <div><span class="k"><span class="vh-tag">unknown</span></span><span class="v"><strong>No route could be inferred.</strong> The CVE published no CVSS v3 vector, so there is nothing to reason from. These are counted and shown, never hidden or guessed onto a lane.</span></div>
+</div>
+
+<h3>How a CVE is assigned a route</h3>
+
+<p>The route comes entirely from the CVE's CVSS v3 vector — the <em>attack vector</em>, <em>privileges required</em> and <em>user interaction</em> fields that NVD publishes. No human judgement is added. The rule, evaluated in this exact order:</p>
+
+<pre>route = CASE
+  WHEN attack_vector = ''                                         THEN 'unknown'
+  WHEN user_interaction IN ('REQUIRED','PASSIVE','ACTIVE')        THEN 'user'
+  WHEN attack_vector = 'NETWORK' AND privileges_required = 'NONE' THEN 'edge'
+  ELSE 'inside'
+END</pre>
+
+<p>The order matters:</p>
+<ul>
+  <li><strong>User interaction wins over everything.</strong> If a bug needs someone to open a file, it is <em>delivered to a person</em> regardless of its network vector.</li>
+  <li><strong>"Network + no privileges" is the only unauthenticated-stranger combination</strong> — that is <span class="vh-tag vh-tag--edge">edge</span>.</li>
+  <li><strong>Everything else needs a foothold first</strong> — adjacent-network, local or physical vectors, or anything that requires some privilege — so it falls to <span class="vh-tag vh-tag--inside">inside</span>.</li>
+</ul>
+
+<div class="vh-warn"><p><strong>CVSS v2 cannot answer this.</strong> Version 2 has no user-interaction or privileges field, so a v2-only CVE keeps its score but has a blank vector and is routed <span class="vh-tag">unknown</span>. Vectors are read from NVD preferring v3.1 → v3.0 → v4.0. Also note "adjacent network" is normalised to <code>ADJACENT_NETWORK</code>, which is <em>not</em> <code>NETWORK</code> — so adjacent-network CVEs are <span class="vh-tag vh-tag--inside">inside</span>, not <span class="vh-tag vh-tag--edge">edge</span>.</p></div>
+
+<h3>From a CVE to a scanner definition</h3>
+
+<p>The dashboard does not count CVEs — it counts <strong>findings</strong>, and each finding points at a scanner <strong>definition</strong> (one Tenable plugin, such as "RHEL 9 : kernel (RHSA-…)"). A single definition can name thirty CVEs. VulnHub rolls the CVEs up to the definition and keeps its <strong>most reachable</strong> route, because patching is per-package: a kernel advisory bundling thirty CVEs is exactly as exposed as its worst one. Two roll-ups are stored per definition:</p>
+
+<div class="vh-defs">
+  <div><span class="k">route</span><span class="v">The most reachable route among <em>all</em> the definition's CVEs.</span></div>
+  <div><span class="k">poc_route</span><span class="v">The most reachable route considering <em>only CVEs that have a working exploit</em> (<code>has_poc = 1</code>). This is the column the "How an attacker gets in" widget filters on, because it only counts exploitable findings.</span></div>
+</div>
+
+<h2>Delivery channels: email, website, download</h2>
+
+<p>Within the <span class="vh-tag vh-tag--user">user</span> route, each finding is further tagged with <em>how</em> it reaches the person. This is a refinement of a lane the CVSS vector already decided — a wrong guess moves a finding between email/website/download, never between routes.</p>
+
+<div class="vh-defs">
+  <div><span class="k">mail</span><span class="v">Arrives through an email client (Outlook, Thunderbird, SMTP/IMAP, S/MIME, a calendar invite, message preview).</span></div>
+  <div><span class="k">web</span><span class="v">Arrives by visiting a page or link (a browser, JavaScript engine, HTML/CSS, XSS). This is the catch-all: any user-route finding that is not clearly mail or file counts as web.</span></div>
+  <div><span class="k">file</span><span class="v">Arrives as a downloaded, opened document or archive (a crafted file, Office document, PDF, zip, font, installer, macro).</span></div>
+</div>
+
+<p>The channel is decided by keyword-matching the CVE's English description, tested in the fixed order <strong>mail → file → web</strong> (mail clients also render web content and open attachments, so mail must be tested first). If nothing matches, a <code>NETWORK</code> vector falls back to <em>web</em> (a network click is a link) and anything else to <em>file</em> (a local thing handed over and opened).</p>
+
+<h2>Reachability: is this asset actually on the internet?</h2>
+
+<p>The <span class="vh-tag vh-tag--edge">edge</span> lane is only as honest as the answer to "can the internet really reach this machine?" — and that has <strong>three</strong> answers, not two. VulnHub records a verdict and, just as importantly, the <em>basis</em> for it:</p>
+
+<div class="vh-defs">
+  <div><span class="k">Reachable <span style="font-weight:400">(confirmed)</span></span><span class="v">Something was actually observed — a perimeter tag, a public routable IP address, a cloud network that answered, or a web/mail service listening. Basis: <code>evidence</code>.</span></div>
+  <div><span class="k">Ruled out</span><span class="v">We have listening-port data for this machine and nothing publishable was listening. Basis: <code>ruled_out</code>.</span></div>
+  <div><span class="k">Never looked</span><span class="v">No listening-port scan has ever run against it. It is neither confirmed reachable nor confirmed safe — a coverage gap, not an all-clear. Basis: <code>unknown</code>.</span></div>
+</div>
+
+<div class="vh-note"><p><strong>Why "never looked" is printed at all.</strong> Before the listening-port inventory existed, exposure was decided by asset <em>type</em> — hundreds of machines were called "internet-facing" for being labelled <code>server</code>, and the widget reported thousands of findings as reachable with no account and no click. The evidence supported a couple of dozen. Printing "we have not looked at N of them" is the difference between an honest floor and a false all-clear, which is why the edge lane is described as "a floor, not a total" whenever unscanned servers remain.</p></div>
+
+<h3>The default rule is evidence-first (<code>observed</code>)</h3>
+
+<p>Under the default <code>observed</code> exposure rule, a machine is judged reachable only on observed evidence, decided in this precedence:</p>
+
+<ol>
+  <li>A <strong>perimeter tag</strong> on the asset (<code>internet-facing</code>, <code>dmz</code>, <code>public-facing</code>, <code>edge</code>, <code>perimeter</code>).</li>
+  <li>A <strong>cloud provider</strong> that reports the instance as reachable (only available when a cloud connector is configured — the one source that sees the network, not the host).</li>
+  <li>A <strong>public routable IP address</strong>. Private ranges (RFC1918), carrier-grade NAT / Tailscale (<code>100.64.0.0/10</code>) and SD-WAN/benchmarking overlays (<code>198.18.0.0/15</code>) are explicitly <em>not</em> counted as internet-reachable.</li>
+  <li>A <strong>publishable service listening</strong> — a web or mail port answering.</li>
+  <li>Otherwise, if the machine was <strong>never port-scanned</strong> → "never looked".</li>
+  <li>Otherwise → "ruled out".</li>
+</ol>
+
+<p>Being <em>typed</em> a server earns nothing under <code>observed</code>. Verdicts a person set by hand are left untouched by a rule pass. Administrators can switch the rule (to <code>all</code>, <code>cloud_only</code>, <code>tagged</code> or the legacy <code>servers_and_cloud</code>) under <strong>Admin → Rules</strong>, but <code>observed</code> is the honest default.</p>
+
+<h3>The listening-port evidence</h3>
+
+<p>The "what is listening" inventory is built from two Tenable Netstat Portscanner plugins (34220 over WMI, 14272 over SSH) — informational findings that are otherwise suppressed, so the data was invisible until this plugin surfaced it. Of the ports another machine could connect to, only <strong>web and mail</strong> listeners count as evidence of a plausible perimeter host. This inventory answers "is something listening"; it can never answer "can the internet route to it" — no scanner supplies firewall or routing rules, and VulnHub never pretends otherwise.</p>
+
+<h3>What happens to edge findings on unreachable machines</h3>
+
+<p>An <span class="vh-tag vh-tag--edge">edge</span>-route finding on a machine the internet <em>cannot</em> reach is not thrown away — it is moved to the <span class="vh-tag vh-tag--inside">inside</span> lane, because that is where it can actually be used (by someone who already has a foothold). This is why the inside lane's total is larger than "purely local" bugs alone, and the widget labels this the "borrowed" portion.</p>
+
+<h2>Putting it together</h2>
+
+<p>So, reading the attack-path widget from left to right: a finding starts as one or more CVEs, each routed purely from its CVSS vector; the CVEs roll up to a scanner definition keeping the worst exploitable route; the definition's findings are then split by whether the machine is genuinely reachable (edge) or not (moved inside), and user-route findings are fanned out across email/website/download. Every number is a link into the exact findings it counted — see <a href="?doc=dashboard">The dashboard, widget by widget</a> for how to drill in, and <a href="?doc=scoring">Severity, KEV, EPSS &amp; VPR</a> for what "exploitable" is built from.</p>

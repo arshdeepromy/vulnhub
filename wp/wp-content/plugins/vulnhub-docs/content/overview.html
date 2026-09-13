@@ -1,0 +1,33 @@
+<p><strong>VulnHub is a vulnerability-management hub.</strong> It does not scan anything itself. It pulls together the systems you already run — your vulnerability scanner (Tenable), your device manager (Intune), your CMDB, your cloud (AWS) and your endpoint protection (Defender) — reconciles them into one asset register, enriches every vulnerability with public threat intelligence, and turns the result into a picture you can act on: <em>what is exposed, who owns it, how bad it is, and which handful of things a real attacker could actually use today.</em></p>
+
+<div class="vh-note"><p><strong>New here?</strong> Read this page, then <a href="?doc=portal-tour">A tour of the portal</a> and the <a href="?doc=glossary">Glossary</a>. To understand the numbers, the two pages that matter most are <a href="?doc=dashboard">The dashboard, widget by widget</a> and <a href="?doc=classification">Routes, delivery &amp; reachability</a>.</p></div>
+
+<h2>The problem it solves</h2>
+
+<p>A raw scanner tells you there are, say, 200,000 open findings. That number is useless for deciding what to do on Monday. Most of those findings can only be exploited by somebody who is already inside your network; a smaller set needs a user to open something; and a tiny set can be reached by a stranger on the internet with no account and no click. VulnHub's job is to <strong>separate those</strong>, attach an owner and a business context to each, and show you the short list that actually matters — without ever pretending to know more than it does.</p>
+
+<h2>How it thinks about the data</h2>
+
+<p>Three ideas run through the whole product:</p>
+
+<div class="vh-defs">
+  <div><span class="k">Asset → Vuln → Finding</span><span class="v">An <strong>asset</strong> is a machine. A <strong>vulnerability</strong> is a scanner definition (one Tenable plugin, which can name many CVEs). A <strong>finding</strong> is one vulnerability on one asset — the unit everything counts. There are far more findings than assets or vulnerabilities.</span></div>
+  <div><span class="k">Reachability, honestly</span><span class="v">VulnHub decides whether a machine is really reachable from the internet on <em>observed evidence</em> — a listening service, a public address, a perimeter tag — and, crucially, admits when it has never looked. It never calls a machine exposed just because of its type.</span></div>
+  <div><span class="k">Every number is a door</span><span class="v">Almost every figure on the dashboard links straight to the exact list of findings or assets behind it. A number you can't open is a number nobody can act on.</span></div>
+</div>
+
+<h2>What it does, end to end</h2>
+
+<ol>
+  <li><strong>Ingests</strong> assets and findings from your connectors on a schedule, merging the same machine seen by several systems into one record.</li>
+  <li><strong>Classifies</strong> each asset (environment, criticality, owner, team, location) with a rules engine and ownership mapping, and each vulnerability into an attack route using its CVSS vector and public exploit intelligence.</li>
+  <li><strong>Surfaces</strong> the result as a dashboard of widgets, a filterable findings list, an asset register with coverage gaps, and product/vendor roll-ups.</li>
+  <li><strong>Drives the work</strong>: raises and tracks remediation tickets in Jira, verifies that "closed" tickets are actually fixed by re-scanning, and records formal risk exceptions with expiry dates.</li>
+  <li><strong>Watches for what's new</strong>: an advisory/zero-day feed reports which fresh advisories can actually reach your estate.</li>
+</ol>
+
+<h2>How it is built</h2>
+
+<p>VulnHub is a set of WordPress plugins around a core, running as a Docker stack. Each plugin owns one concern and they talk through WordPress hooks rather than calling each other directly. The whole application lives inside a <em>portal</em> — the front-end you are reading this in — which most users never leave for wp-admin. If you are a developer, start with <a href="?doc=architecture">Architecture &amp; plugins</a>.</p>
+
+<div class="vh-tip"><p><strong>The one-sentence version.</strong> VulnHub answers "of everything that's open, what can somebody actually reach, who owns it, and what should we fix first" — and lets you click any number to see exactly which findings it means.</p></div>

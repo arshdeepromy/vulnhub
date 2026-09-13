@@ -61,6 +61,43 @@ final class VulnHub_Threat_Repo {
 		return array_map( 'intval', (array) $wpdb->get_col( $sql ) ); // phpcs:ignore
 	}
 
+	/**
+	 * Definition ids on the user route, narrowed to one delivery channel.
+	 *
+	 * The three doors on the widget -- email, website, download -- are the same
+	 * user-route population as {@see delivery_split()}, sliced by how it reaches
+	 * a person. 'web' is the catch-all, so it is every user-route definition
+	 * whose delivery is neither mail nor file; that keeps these three lists
+	 * summing to exactly the counts the doors drew, even if a future row lands
+	 * on the user route with an unrecognised delivery.
+	 *
+	 * @param string $channel 'mail', 'web' or 'file'.
+	 * @param bool   $poc     Only definitions with a working exploit.
+	 * @return int[]
+	 */
+	public static function delivery_ids( string $channel, bool $poc = true ): array {
+		global $wpdb;
+
+		$paths  = VulnHub_Threat_Install::table( 'vuln_paths' );
+		$column = $poc ? 'poc_route' : 'route';
+		$where  = array( "{$column} = 'user'" );
+
+		if ( $poc ) {
+			$where[] = 'has_poc = 1';
+		}
+
+		if ( 'mail' === $channel || 'file' === $channel ) {
+			$where[] = $wpdb->prepare( 'delivery = %s', $channel ); // phpcs:ignore
+		} else {
+			// 'web' is the catch-all, matching the fold in delivery_split().
+			$where[] = "( delivery NOT IN ('mail','file') OR delivery IS NULL )";
+		}
+
+		$sql = "SELECT vuln_id FROM {$paths} WHERE " . implode( ' AND ', $where );
+
+		return array_map( 'intval', (array) $wpdb->get_col( $sql ) ); // phpcs:ignore
+	}
+
 	/** Assets the exposure rule says the internet can reach. @return int[] */
 	public static function internet_asset_ids(): array {
 		global $wpdb;
@@ -322,14 +359,28 @@ final class VulnHub_Threat_Repo {
 	 * @return array<string,mixed>
 	 */
 	public static function findings_query( array $ext, array $args ): array {
-		$route = sanitize_key( (string) ( $args['route'] ?? '' ) );
-		$poc   = '' !== (string) ( $args['poc'] ?? '' ) && (bool) $args['poc'];
+		$route    = sanitize_key( (string) ( $args['route'] ?? '' ) );
+		$delivery = sanitize_key( (string) ( $args['delivery'] ?? '' ) );
+		$poc      = '' !== (string) ( $args['poc'] ?? '' ) && (bool) $args['poc'];
 
-		if ( '' === $route && ! $poc ) {
+		if ( '' === $route && '' === $delivery && ! $poc ) {
 			return $ext;
 		}
 
-		$only_poc = $poc || '' !== $route;
+		$only_poc = $poc || '' !== $route || '' !== $delivery;
+
+		/*
+		 * A delivery channel is a slice of the user route, so it is already
+		 * user-scoped and self-contained: it wins over the coarser `route`
+		 * filter rather than stacking with it. This is what makes each door
+		 * -- email, website, download -- drill into exactly its own rows.
+		 */
+		if ( in_array( $delivery, array( 'mail', 'web', 'file' ), true ) ) {
+			$ids            = self::delivery_ids( $delivery, $only_poc );
+			$ext['where'][] = $ids ? 'f.vuln_id IN (' . implode( ',', $ids ) . ')' : '1=0';
+
+			return $ext;
+		}
 
 		if ( '' === $route ) {
 			$ids                = self::vuln_ids( '', true );
@@ -393,6 +444,31 @@ final class VulnHub_Threat_Repo {
 				'state' => 'open_any',
 				'route' => $route,
 				'poc'   => '1',
+			)
+		);
+	}
+
+	/**
+	 * Portal link to the findings behind one delivery door.
+	 *
+	 * `route=user` rides along so the drill-down reads as "user route, this
+	 * channel" wherever the filter surfaces to the reader, even though
+	 * findings_query() resolves it from `delivery` alone.
+	 *
+	 * @param string $channel 'mail', 'web' or 'file'.
+	 */
+	public static function delivery_url( string $channel ): string {
+		if ( ! class_exists( 'VulnHub_Dash_Portal' ) ) {
+			return '';
+		}
+
+		return VulnHub_Dash_Portal::portal_url(
+			'vulnerabilities',
+			array(
+				'state'    => 'open_any',
+				'route'    => 'user',
+				'delivery' => $channel,
+				'poc'      => '1',
 			)
 		);
 	}

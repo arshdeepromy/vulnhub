@@ -1,0 +1,84 @@
+<p>VulnHub's plugins never call into each other directly. A connector fires an action; the threat plugin, the rules engine, the widget cache and Jira all <em>listen</em>. To add behaviour, hook an existing extension point rather than editing another plugin. This page catalogues the ones worth knowing, plus the capability model and the CLI.</p>
+
+<div class="vh-note"><p><strong>The golden rule.</strong> If you find yourself editing another plugin's file, stop and look for a filter or action first — there almost always is one. New tables, connectors, widgets, views and filters are all additive.</p></div>
+
+<h2>Actions — the events to listen on</h2>
+<div class="vh-defs">
+  <div><span class="k">vulnhub_sync_complete</span><span class="v">Fired after any connector finishes (with status + connector id). The main integration seam — asset classification (pri 10), ownership mapping (pri 20), reachability rebuild and cache-busting all hang off it.</span></div>
+  <div><span class="k">vulnhub_import_complete</span><span class="v">A CSV import finished; triggers the same housekeeping cascade as a sync.</span></div>
+  <div><span class="k">vulnhub_coverage_recalculated</span><span class="v">Coverage states were recomputed.</span></div>
+  <div><span class="k">vulnhub_register_connectors</span><span class="v">Register a new connector object.</span></div>
+  <div><span class="k">vulnhub_dash_render_view_&lt;view&gt;</span><span class="v">Render a contributed portal view.</span></div>
+  <div><span class="k">vulnhub_render_portal_section</span><span class="v">Render a plugin-owned admin section.</span></div>
+  <div><span class="k">vulnhub_render_admin_page</span><span class="v">Render a wp-admin screen registered via <code>vulnhub_admin_pages</code>.</span></div>
+  <div><span class="k">vulnhub_run_automations / vulnhub_verify_closures</span><span class="v">Ticket automation and closure-verification passes (Jira listens).</span></div>
+</div>
+
+<h2>Filters — the data and UI to extend</h2>
+
+<h3>Portal &amp; navigation</h3>
+<div class="vh-defs">
+  <div><span class="k">vulnhub_dash_views</span><span class="v">Add a portal view (page + nav). See <a href="?doc=portal-framework">Portal framework</a>.</span></div>
+  <div><span class="k">vulnhub_portal_nav_extra</span><span class="v">Add a primary-nav link (<code>label</code>, <code>url</code>, optional <code>icon</code>/<code>active</code>).</span></div>
+  <div><span class="k">vulnhub_portal_sections</span><span class="v">Add an admin section.</span></div>
+  <div><span class="k">vulnhub_admin_pages</span><span class="v">Register a wp-admin screen (auto-mirrored into the portal admin).</span></div>
+</div>
+
+<h3>Widgets &amp; cache</h3>
+<div class="vh-defs">
+  <div><span class="k">vulnhub_dashboard_widgets</span><span class="v">Register a widget. See <a href="?doc=widget-framework">Building a widget</a>.</span></div>
+  <div><span class="k">vulnhub_dashboard_default_layout</span><span class="v">Add a widget to the default board.</span></div>
+  <div><span class="k">vulnhub_widget_connector_sources</span><span class="v">Map a new connector to the widget cache sources it should bust.</span></div>
+  <div><span class="k">vulnhub_widget_cache_ttl / vulnhub_widget_stale_ttl</span><span class="v">Tune the freshness (15 min) and serve-stale (6 h) horizons.</span></div>
+</div>
+
+<h3>The findings query — how the attack-path filters are built</h3>
+<p><code>vulnhub_findings_query</code> is the extension point that lets a plugin add <code>WHERE</code> clauses, bound parameters and joins to the central findings query. It receives an array (<code>where</code> / <code>params</code> / <code>need_asset</code> / <code>need_vuln</code>) and the query args. This is exactly how the threat plugin teaches the findings list about <code>route</code>, <code>delivery</code> and <code>poc</code>:</p>
+<pre>add_filter( 'vulnhub_findings_query', function ( array $ext, array $args ): array {
+    if ( ! empty( $args['my_flag'] ) ) {
+        $ext['where'][] = 'f.risk_score &gt;= 50';
+    }
+    return $ext;
+}, 10, 2 );</pre>
+<p>Add the corresponding request key to the findings screen's arg builder so a URL parameter reaches your filter.</p>
+
+<h3>Classification, scoring &amp; reachability</h3>
+<div class="vh-defs">
+  <div><span class="k">vulnhub_cloud_reachable_assets</span><span class="v">Contribute asset ids a cloud connector has proven reachable (the AWS connector feeds this).</span></div>
+  <div><span class="k">vulnhub_asset_risk_score</span><span class="v">Adjust the per-asset risk expression (the rules engine multiplies by priority weight here).</span></div>
+  <div><span class="k">vulnhub_reportable_statuses / vulnhub_user_bound_asset_types</span><span class="v">Redefine which lifecycle statuses are "reportable", and which asset types must resolve to a person.</span></div>
+  <div><span class="k">option vulnhub_threat_epss_min</span><span class="v">The EPSS threshold (default 0.10). Also <code>vulnhub_threat_exposure_rule</code> selects the reachability rule.</span></div>
+</div>
+
+<h3>Products, icons &amp; integrations</h3>
+<div class="vh-defs">
+  <div><span class="k">vulnhub_product_icons / vulnhub_product_colours</span><span class="v">Add inline icon motifs / brand colours for product slugs.</span></div>
+  <div><span class="k">vulnhub_create_ticket / vulnhub_refresh_ticket</span><span class="v">The ticketing seam (Jira implements these).</span></div>
+  <div><span class="k">vulnhub_mcp_tools</span><span class="v">Add a tool to the MCP server's catalogue.</span></div>
+  <div><span class="k">vulnhub_docs_groups / vulnhub_docs_body_&lt;slug&gt;</span><span class="v">Add pages or groups to <em>this</em> wiki, or override a page's body.</span></div>
+</div>
+
+<h2>Capabilities &amp; roles</h2>
+<p>Capabilities live in <code>\VulnHub\Core\Caps</code>. Gate your features on these, not on WordPress's <code>manage_options</code>.</p>
+<table>
+  <thead><tr><th>Capability</th><th>Grants</th></tr></thead>
+  <tbody>
+    <tr><td><code>Caps::VIEW</code></td><td>Read the portal.</td></tr>
+    <tr><td><code>Caps::TRIAGE</code></td><td>Triage findings.</td></tr>
+    <tr><td><code>Caps::RAISE_TICKET</code></td><td>Raise remediation tickets.</td></tr>
+    <tr><td><code>Caps::REQUEST_EXCEPTION</code> / <code>APPROVE_EXCEPTION</code></td><td>Request / approve risk exceptions.</td></tr>
+    <tr><td><code>Caps::RUN_SYNC</code></td><td>Trigger connector syncs.</td></tr>
+    <tr><td><code>Caps::VIEW_AUDIT</code></td><td>Read the audit trail.</td></tr>
+    <tr><td><code>Caps::MANAGE</code></td><td>Configure everything.</td></tr>
+  </tbody>
+</table>
+<p>Four roles bundle these: <strong>vulnhub_viewer</strong> (VIEW), <strong>vulnhub_analyst</strong> (view, triage, raise, request, run sync, audit), <strong>vulnhub_approver</strong> (view, request &amp; approve exceptions, audit) and <strong>vulnhub_admin</strong> (everything). WordPress administrators additionally hold every VulnHub capability. SSO-provisioned users default to viewer, with group→role mapping configurable.</p>
+
+<h2>Cron &amp; CLI</h2>
+<p>WordPress cron is driven by a container running <code>wp cron event run --due-now</code> every 60 seconds. Connectors schedule themselves on custom intervals (5 min → weekly); the threat feeds refresh nightly. Heavy jobs are also WP-CLI commands so they can run without a request timeout:</p>
+<pre>wp vulnhub threat refresh     # re-pull NVD / KEV / EPSS and rebuild attack paths
+wp vulnhub threat classify    # re-place every definition on a route
+wp vulnhub threat status      # feed freshness and counts</pre>
+<p>Connector syncs, imports, coverage recomputation and product classification have their own commands and admin controls. Watch any run under <strong>Admin → Sync activity</strong>.</p>
+
+<div class="vh-tip"><p><strong>Adding a whole new data source?</strong> Extend the abstract <code>Connector</code>, register it on <code>vulnhub_register_connectors</code>, write assets/findings through Core's <code>Repo</code> (so fingerprinting, dedup, lifecycle and roll-ups come for free), store secrets through the encrypted settings store, and let <code>vulnhub_sync_complete</code> do the rest. See <a href="?doc=data-sources">Where the data comes from</a> and <a href="?doc=data-model">the schema</a>.</p></div>

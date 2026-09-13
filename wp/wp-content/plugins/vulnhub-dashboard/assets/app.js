@@ -1777,3 +1777,235 @@ document.addEventListener( 'click', function ( e ) {
 		init();
 	}
 }() );
+
+/* ============================================================
+   Portal admin redesign — progressive enhancement.
+   Nav filter, Settings sub-tabs, help popovers, scope chips,
+   dirty tracking and the unsaved-changes save bar. All optional:
+   with JS off the nav is a plain list, all panels and help are
+   visible, and the save bar is always shown.
+   ============================================================ */
+( function () {
+	'use strict';
+
+	// Signals to the stylesheet that enhancements are live (hides bubbles and
+	// inactive tab panels until opened; hides the always-on save bar).
+	document.documentElement.classList.add( 'vh-js' );
+
+	function ready( fn ) {
+		if ( 'loading' === document.readyState ) { document.addEventListener( 'DOMContentLoaded', fn ); }
+		else { fn(); }
+	}
+
+	ready( function () {
+		adminNavFilter();
+		settings();
+		ownerPrivacy();
+	} );
+
+	/* ---- Owner column: mask personal names by default, eye toggle reveals ---- */
+	function ownerPrivacy() {
+		var KEY = 'vh-owners-shown';
+		var shown = false;
+		try { shown = '1' === localStorage.getItem( KEY ); } catch ( e ) {}
+
+		function apply() {
+			[].slice.call( document.querySelectorAll( '[data-vh-owner-toggle]' ) ).forEach( function ( b ) {
+				var t = b.closest( 'table' );
+				if ( t ) { t.classList.toggle( 'vh-owners-shown', shown ); }
+				b.setAttribute( 'aria-pressed', shown ? 'true' : 'false' );
+				var lbl = shown ? 'Hide owner names' : 'Show owner names';
+				b.setAttribute( 'title', lbl );
+				b.setAttribute( 'aria-label', lbl );
+			} );
+		}
+
+		document.addEventListener( 'click', function ( e ) {
+			if ( ! e.target.closest( '[data-vh-owner-toggle]' ) ) { return; }
+			shown = ! shown;
+			try { localStorage.setItem( KEY, shown ? '1' : '0' ); } catch ( err ) {}
+			apply();
+		} );
+
+		apply();
+	}
+
+	/* ---- Admin section nav: client-side filter ---- */
+	function adminNavFilter() {
+		var nav = document.querySelector( '[data-vh-adm-nav]' );
+		if ( ! nav ) { return; }
+		var input = nav.querySelector( '[data-vh-adm-filter]' );
+		var nomatch = nav.querySelector( '[data-vh-adm-nomatch]' );
+		if ( ! input ) { return; }
+		var items = [].slice.call( nav.querySelectorAll( '[data-vh-adm-item]' ) );
+
+		input.addEventListener( 'input', function () {
+			var q = input.value.trim().toLowerCase();
+			var any = false;
+			items.forEach( function ( a ) {
+				var label = ( a.querySelector( '.vh-adm__label' ) || a ).textContent.toLowerCase();
+				var hit = '' === q || label.indexOf( q ) !== -1;
+				var li = a.closest( 'li' );
+				if ( li ) { li.hidden = ! hit; }
+				if ( hit ) { any = true; }
+			} );
+			nav.querySelectorAll( '.vh-adm__group' ).forEach( function ( h ) {
+				var ul = h.nextElementSibling;
+				var shown = ul ? ul.querySelectorAll( 'li:not([hidden])' ).length : 0;
+				h.hidden = 0 === shown;
+				if ( ul ) { ul.hidden = 0 === shown; }
+			} );
+			if ( nomatch ) { nomatch.hidden = any; }
+		} );
+	}
+
+	/* ---- Settings screen ---- */
+	function settings() {
+		var form = document.querySelector( '[data-vh-settings]' );
+		if ( ! form ) { return; }
+		settingsTabs( form );
+		settingsHelp( form );
+		settingsScopes( form );
+		settingsDirty( form );
+	}
+
+	function settingsTabs( form ) {
+		var strip = form.querySelector( '[data-vh-tabs]' );
+		if ( ! strip ) { return; }
+		var tabButtons = [].slice.call( strip.querySelectorAll( '[data-vh-tab]' ) );
+		var panels = [].slice.call( form.querySelectorAll( '[data-vh-tabpanel]' ) );
+
+		function show( key ) {
+			tabButtons.forEach( function ( b ) {
+				var on = b.getAttribute( 'data-vh-tab' ) === key;
+				b.classList.toggle( 'is-active', on );
+				b.setAttribute( 'aria-selected', on ? 'true' : 'false' );
+			} );
+			panels.forEach( function ( p ) {
+				p.classList.toggle( 'is-active', p.getAttribute( 'data-vh-tabpanel' ) === key );
+			} );
+		}
+		tabButtons.forEach( function ( b ) {
+			b.addEventListener( 'click', function () { show( b.getAttribute( 'data-vh-tab' ) ); } );
+		} );
+	}
+
+	function settingsHelp( form ) {
+		var toggles = [].slice.call( form.querySelectorAll( '.vh-help' ) );
+		function closeAll( except ) {
+			toggles.forEach( function ( t ) { if ( t !== except ) { t.setAttribute( 'aria-expanded', 'false' ); } } );
+		}
+		toggles.forEach( function ( t ) {
+			t.addEventListener( 'click', function () {
+				var open = 'true' === t.getAttribute( 'aria-expanded' );
+				closeAll( t );
+				t.setAttribute( 'aria-expanded', open ? 'false' : 'true' );
+			} );
+		} );
+		document.addEventListener( 'keydown', function ( e ) {
+			if ( 'Escape' === e.key ) { closeAll( null ); }
+		} );
+		document.addEventListener( 'click', function ( e ) {
+			if ( ! e.target.closest( '.vh-help' ) && ! e.target.closest( '.vh-bubble' ) ) { closeAll( null ); }
+		} );
+	}
+
+	function settingsScopes( form ) {
+		[].slice.call( form.querySelectorAll( '[data-vh-scope-grid]' ) ).forEach( function ( grid ) {
+			var key = grid.getAttribute( 'data-vh-scope-grid' );
+			var sum = form.querySelector( '[data-vh-scope-sum="' + key + '"]' );
+			var chips = [].slice.call( grid.querySelectorAll( '.vh-scope' ) );
+
+			function recompute() {
+				var on = 0, assets = 0;
+				chips.forEach( function ( c ) {
+					var box = c.querySelector( 'input' );
+					var isOn = box && box.checked;
+					c.classList.toggle( 'is-on', !! isOn );
+					if ( isOn ) { on++; assets += parseInt( c.getAttribute( 'data-n' ) || '0', 10 ); }
+				} );
+				if ( sum ) {
+					var total = sum.getAttribute( 'data-total' ) || String( chips.length );
+					var mode = sum.getAttribute( 'data-vh-scope-mode' );
+					sum.textContent = on + ' OF ' + total + ' STATUSES · ' + assets.toLocaleString() + ' ASSETS ' + ( 'report' === mode ? 'COUNTED' : 'IN SCOPE' );
+				}
+			}
+			grid.addEventListener( 'change', recompute );
+			recompute();
+		} );
+	}
+
+	function settingsDirty( form ) {
+		var fields = [].slice.call( form.querySelectorAll( '.vh-field' ) );
+		var bar = form.querySelector( '[data-vh-savebar]' );
+		var barN = form.querySelector( '[data-vh-savebar-n]' );
+		var barNames = form.querySelector( '[data-vh-savebar-names]' );
+		var discard = form.querySelector( '[data-vh-discard]' );
+		var guard = false;
+
+		function controls( field ) { return [].slice.call( field.querySelectorAll( 'input, select, textarea' ) ); }
+		function snap( c ) { return 'checkbox' === c.type ? ( c.checked ? '1' : '0' ) : c.value; }
+
+		fields.forEach( function ( f ) {
+			controls( f ).forEach( function ( c ) { c.setAttribute( 'data-vh-snap', snap( c ) ); } );
+		} );
+
+		function evaluate() {
+			var changed = [];
+			fields.forEach( function ( f ) {
+				var isDirty = controls( f ).some( function ( c ) { return c.getAttribute( 'data-vh-snap' ) !== snap( c ); } );
+				f.classList.toggle( 'is-dirty', isDirty );
+				if ( isDirty ) { changed.push( f.getAttribute( 'data-vh-field' ) || '' ); }
+			} );
+			form.querySelectorAll( '[data-vh-tabpanel]' ).forEach( function ( panel ) {
+				var tab = form.querySelector( '[data-vh-tab="' + panel.getAttribute( 'data-vh-tabpanel' ) + '"]' );
+				if ( tab ) { tab.classList.toggle( 'is-dirty', !! panel.querySelector( '.is-dirty' ) ); }
+			} );
+			var navItem = document.querySelector( '[data-vh-adm-item="settings"]' );
+			if ( navItem ) {
+				var pill = navItem.querySelector( '.vh-adm__count' );
+				if ( changed.length && ! pill ) {
+					pill = document.createElement( 'span' );
+					pill.className = 'vh-adm__count';
+					navItem.appendChild( pill );
+				}
+				if ( pill ) {
+					if ( changed.length ) { pill.textContent = String( changed.length ); }
+					else { pill.remove(); }
+				}
+			}
+			if ( bar ) {
+				bar.classList.toggle( 'is-shown', changed.length > 0 );
+				if ( barN ) { barN.textContent = 1 === changed.length ? '1 unsaved change' : changed.length + ' unsaved changes'; }
+				if ( barNames ) { barNames.textContent = changed.join( ' · ' ); }
+			}
+			guard = changed.length > 0;
+		}
+
+		form.addEventListener( 'input', evaluate );
+		form.addEventListener( 'change', evaluate );
+
+		if ( discard ) {
+			discard.addEventListener( 'click', function () {
+				fields.forEach( function ( f ) {
+					controls( f ).forEach( function ( c ) {
+						var s = c.getAttribute( 'data-vh-snap' );
+						if ( 'checkbox' === c.type ) { c.checked = '1' === s; }
+						else { c.value = s; }
+					} );
+				} );
+				form.querySelectorAll( '[data-vh-scope-grid]' ).forEach( function ( g ) {
+					g.dispatchEvent( new Event( 'change', { bubbles: true } ) );
+				} );
+				evaluate();
+			} );
+		}
+
+		form.addEventListener( 'submit', function () { guard = false; } );
+		window.addEventListener( 'beforeunload', function ( e ) {
+			if ( guard ) { e.preventDefault(); e.returnValue = ''; return ''; }
+		} );
+
+		evaluate();
+	}
+}() );

@@ -1,0 +1,47 @@
+<p>Two workflows turn findings into decisions: <strong>tickets</strong> (do the work) and <strong>exceptions</strong> (formally accept the risk). Both attach to findings and both move the numbers.</p>
+
+<h2>Tickets — driving remediation</h2>
+
+<p>A <strong>ticket</strong> is a remediation task, tracked in Jira, linked to one or more findings. You can raise one from a finding (or a group of findings), and VulnHub keeps it in step with Jira.</p>
+
+<h3>How tickets flow</h3>
+<div class="vh-defs">
+  <div><span class="k">Raise</span><span class="v">From a finding, VulnHub creates a Jira issue (routed to the owning team's project) and links the findings to it. The finding then shows its ticket.</span></div>
+  <div><span class="k">Sync</span><span class="v">Ticket status is pulled back from Jira. The <em>Ticket flow</em> widget shows the split by status category — To do / In progress / Done.</span></div>
+  <div><span class="k">Reopen</span><span class="v">If a still-detected issue was closed, the reopener flags it — a closed ticket is a <em>claim</em>, not proof.</span></div>
+  <div><span class="k">Verify</span><span class="v">When a ticket closes, VulnHub waits a settling period then re-runs a narrowed scan to <em>prove</em> the finding is gone.</span></div>
+</div>
+
+<h3>Verification — "closed" vs "actually fixed"</h3>
+<p>This is the point of the <em>Closure verification</em> widget. After a ticket is marked done, the finding's verification state moves through:</p>
+<div class="vh-defs">
+  <div><span class="k">Pending</span><span class="v">Closed in Jira; not yet re-checked.</span></div>
+  <div><span class="k">Confirmed fixed</span><span class="v">A rescan confirms the finding is gone. The good outcome.</span></div>
+  <div><span class="k">Still detected</span><span class="v">Tenable still sees it — a false closure. The finding is flipped back to <em>reopened</em>.</span></div>
+  <div><span class="k">Cannot verify</span><span class="v">The rescan was inconclusive.</span></div>
+</div>
+<p>The dashboard's "Closed but still detected" headline tile counts the <em>still detected</em> tickets — the closures you cannot trust.</p>
+
+<h3>SLAs</h3>
+<p>Each team has per-severity SLA targets (by default: Critical 7 days, High 30, Medium 90, Low 180). A finding's <strong>due date</strong> is set from its team's SLA, and the "Past SLA" / "Findings within SLA" figures are computed against it.</p>
+
+<h3>Automations</h3>
+<p>Ticket creation can be automated: rules match on finding attributes and raise (grouped) tickets on events, with throttles and per-run caps, so a flood of new findings doesn't create a flood of tickets. Automations are configured in the admin area.</p>
+
+<h2>Exceptions — accepting a risk on purpose</h2>
+
+<p>Sometimes the right answer is not "fix it" but "accept it, with a reason, for now". An <strong>exception</strong> records that decision and removes the affected findings from the live counts — visibly, with an audit trail, never silently.</p>
+
+<h3>Raising one</h3>
+<p>From a finding, request an exception. You choose:</p>
+<div class="vh-defs">
+  <div><span class="k">Scope</span><span class="v"><strong>This finding</strong> (one finding on one asset), <strong>this asset</strong> (all its findings), <strong>this vulnerability</strong> (across all assets), or <strong>a team</strong> (one vulnerability across a team).</span></div>
+  <div><span class="k">Reason</span><span class="v">False positive, compensating control, no fix available, business impact, end of life, not exploitable, accepted risk, or other.</span></div>
+  <div><span class="k">Justification</span><span class="v">Required, and at least 20 characters — the record an auditor will read.</span></div>
+  <div><span class="k">Expiry</span><span class="v">Mandatory, and in the future. Exceptions are temporary, reviewed decisions.</span></div>
+</div>
+
+<h3>The lifecycle of an exception</h3>
+<p>An exception moves <em>draft → pending → approved</em> (or <em>rejected</em>). Approval requires the approver capability. On approval it stamps the matching open findings, which immediately drop out of the live counts (a separate "excepted" figure keeps them visible). Each night, approved exceptions past their expiry flip to <em>expired</em> and their findings return to the counts — which is what the <em>Exceptions expiring</em> widget is warning you about. <strong>Revoking</strong> one clears its findings straight away. Every exception carries a reference (<code>EXC-0001</code>, …) so decisions are citable.</p>
+
+<div class="vh-note"><p><strong>Why this matters for the numbers.</strong> An excepted finding is not deleted and not ignored — it is <em>accounted for</em>. That is the difference between a dashboard you can defend in an audit and one you can't. See <a href="?doc=lifecycle">Finding lifecycle &amp; scoping</a> for exactly how exceptions interact with counts.</p></div>
