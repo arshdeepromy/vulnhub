@@ -209,56 +209,91 @@ YAML;
 	/**
 	 * The setup steps.
 	 *
-	 * Two routes, because the obvious one does not work for everybody. The
-	 * CloudFormation template creates an IAM user, and the AWS SSO PowerUser
-	 * permission set -- which is what most people are signed in as -- allows
-	 * every service except IAM. The stack fails at CreateUser with
-	 * AccessDenied, which reads like a broken template rather than a policy
-	 * boundary working as designed.
+	 * Two routes, and the ordering matters more than the wording. The
+	 * CloudFormation template creates an IAM user; the AWS SSO PowerUser
+	 * permission set allows every service except IAM, so for most people the
+	 * stack fails at CreateUser with AccessDenied. That reads as a broken
+	 * template rather than a policy boundary working as designed, and somebody
+	 * who has just watched a stack fail will reasonably try it again.
 	 *
-	 * So the short-term route is offered first and on equal footing: it needs
-	 * no IAM permission at all, works in the next two minutes, and is honest
-	 * about expiring. The permanent route is there for whoever can run it.
+	 * So the route that needs no IAM permission leads, and the one that does
+	 * is folded away behind a disclosure that names the requirement in its
+	 * summary. A route presented as an equal option is a route people will
+	 * pick; a route labelled "needs an administrator" is one they will hand to
+	 * an administrator.
 	 */
 	public static function instructions( string $region ): string {
-		$short = sprintf(
-			'<h4 class="vh-aws-h">%1$s</h4>
-			<p class="vh-aws-lede">%2$s</p>
-			<ol class="vh-aws-steps">
-				<li>%3$s</li>
-				<li>%4$s</li>
-				<li>%5$s</li>
-			</ol>',
-			esc_html__( 'Quickest: short-term credentials from your AWS login', 'vulnhub' ),
-			esc_html__( 'Needs no IAM permissions — it reuses the access you already have. They expire within a few hours, so use this to connect and sync now, and set up the permanent route when somebody with IAM access is available.', 'vulnhub' ),
-			esc_html__( 'Open your AWS access portal and find the account and role you normally use.', 'vulnhub' ),
-			esc_html__( 'Choose “Access keys”, then the “Environment variables” tab. It shows three values: an access key ID, a secret access key and a session token.', 'vulnhub' ),
-			esc_html__( 'Paste all three into the fields below — including the session token — then press Test connection.', 'vulnhub' )
+		$quick = sprintf(
+			'<div class="vh-aws-route vh-aws-route--now">
+				<h4 class="vh-aws-h">%1$s</h4>
+				<p class="vh-aws-lede">%2$s</p>
+				<ol class="vh-aws-steps">
+					<li>%3$s</li>
+					<li>%4$s</li>
+					<li>%5$s</li>
+				</ol>
+				<p class="vh-aws-note">%6$s</p>
+			</div>',
+			esc_html__( 'Connect now — no AWS permissions needed', 'vulnhub' ),
+			esc_html__( 'Reuses the access you already have. Takes about two minutes and creates nothing in your account.', 'vulnhub' ),
+			esc_html__( 'Open your AWS access portal and find the account and role you normally sign in with.', 'vulnhub' ),
+			esc_html__( 'Click “Access keys”, then the “Environment variables” tab. It shows three values: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and AWS_SESSION_TOKEN.', 'vulnhub' ),
+			esc_html__( 'Paste all three into the fields below — the session token included — and press Test connection.', 'vulnhub' ),
+			esc_html__( 'These expire after a few hours. That is long enough to connect and sync; it is not long enough to hold a schedule, which is what the second route is for.', 'vulnhub' )
+		);
+
+		$ask = sprintf(
+			"Please create a read-only AWS user for our vulnerability dashboard.
+
+"
+			. "Account: %s
+"
+			. "Stack name: %s
+
+"
+			. "The CloudFormation template is attached. It creates one IAM user with %d
+"
+			. "permissions, every one of them a Describe or a Get -- it cannot change,
+"
+			. "start, stop or delete anything. Send me the three stack Outputs when done.
+
+"
+			. "I could not run it myself: our SSO role allows every service except IAM.",
+			'<account id>',
+			self::STACK,
+			count( self::actions() )
 		);
 
 		$permanent = sprintf(
-			'<h4 class="vh-aws-h">%1$s</h4>
-			<p class="vh-aws-lede">%2$s</p>
-			<ol class="vh-aws-steps">
-				<li>%3$s <a href="%4$s" download="vulnhub-aws-readonly.yaml"><strong>%5$s</strong></a></li>
-				<li>%6$s <a href="%7$s" target="_blank" rel="noopener noreferrer"><strong>%8$s</strong></a> %9$s</li>
-				<li>%10$s</li>
-			</ol>
-			<p class="vh-aws-note">%11$s</p>',
-			esc_html__( 'Permanent: a read-only user that can hold a schedule', 'vulnhub' ),
-			esc_html__( 'Creates an IAM user, so it needs someone with IAM permissions to run it once. The AWS SSO PowerUser role cannot — it allows every service except IAM, and the stack will stop at CreateUser with AccessDenied. That is the policy working correctly, not a broken template.', 'vulnhub' ),
-			esc_html__( 'Download the read-only CloudFormation template:', 'vulnhub' ),
+			'<details class="vh-aws-route vh-aws-route--later">
+				<summary><strong>%1$s</strong> — %2$s</summary>
+				<p class="vh-aws-lede">%3$s</p>
+				<ol class="vh-aws-steps">
+					<li>%4$s <a href="%5$s" download="vulnhub-aws-readonly.yaml"><strong>%6$s</strong></a></li>
+					<li>%7$s <a href="%8$s" target="_blank" rel="noopener noreferrer"><strong>%9$s</strong></a> %10$s</li>
+					<li>%11$s</li>
+				</ol>
+				<p class="vh-aws-note">%12$s</p>
+				<p class="vh-aws-note">%13$s</p>
+				<textarea class="vh-aws-ask" rows="7" readonly>%14$s</textarea>
+			</details>',
+			esc_html__( 'Permanent access, for scheduled syncs', 'vulnhub' ),
+			esc_html__( 'needs an AWS administrator', 'vulnhub' ),
+			esc_html__( 'This creates an IAM user, so it can only be run by someone with IAM permissions. If your role came from SSO and is called PowerUser or similar, it allows every service except IAM and this stack will stop at CreateUser with AccessDenied — that is the policy working correctly, not a fault in the template.', 'vulnhub' ),
+			esc_html__( 'Download the read-only template:', 'vulnhub' ),
 			esc_url( self::template_url() ),
 			esc_html__( 'vulnhub-aws-readonly.yaml', 'vulnhub' ),
 			esc_html__( 'Open', 'vulnhub' ),
 			esc_url( self::console_url( $region ) ),
 			esc_html__( 'CloudFormation → Create stack', 'vulnhub' ),
-			esc_html__( 'in your AWS account, upload the file, and name the stack anything you like.', 'vulnhub' ),
-			esc_html__( 'When it finishes, open the stack’s Outputs tab and copy the three values into the fields below. Leave the session token blank.', 'vulnhub' ),
-			esc_html__( 'If a stack already failed, delete it before trying again — a failed stack keeps the name reserved.', 'vulnhub' )
+			esc_html__( 'in the AWS account, and upload the file.', 'vulnhub' ),
+			esc_html__( 'Copy the three stack Outputs into the fields below, leaving the session token blank.', 'vulnhub' ),
+			esc_html__( 'Delete any stack that already failed before retrying — CloudFormation keeps the name reserved, so a second attempt fails for a different and less obvious reason.', 'vulnhub' ),
+			esc_html__( 'To hand this to an administrator, send them the template with:', 'vulnhub' ),
+			esc_textarea( $ask )
 		);
 
-		return '<div class="vh-aws-setup">' . $short . $permanent
+		return '<div class="vh-aws-setup">' . $quick . $permanent
 			. '<p class="vh-aws-note">' . esc_html__( 'Either way, everything granted is a Describe or a Get. Nothing this connector can do will change, start, stop or delete anything in your account.', 'vulnhub' ) . '</p>'
 			. '</div>';
 	}
