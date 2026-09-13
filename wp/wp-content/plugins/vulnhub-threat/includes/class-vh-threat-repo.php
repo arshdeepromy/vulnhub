@@ -112,10 +112,18 @@ final class VulnHub_Threat_Repo {
 			),
 			'inside'    => array(
 				'findings' => $inside['findings'] + $edge_hidden['findings'],
-				'assets'   => max( $inside['assets'], $edge_hidden['assets'] ),
-				'vulns'    => count( $inside_ids ) + count( $edge_ids ),
+				/*
+				 * A real distinct count over the union of both sets. This was
+				 * max() of the two, which is only correct when one set of
+				 * machines contains the other -- otherwise it silently reports
+				 * the larger half and loses every machine that appears solely
+				 * in the smaller one.
+				 */
+				'assets'   => self::union_assets( $inside_ids, $edge_ids, $facing ),
+				'vulns'    => count( array_unique( array_merge( $inside_ids, $edge_ids ) ) ),
 				'borrowed' => $edge_hidden['findings'],
 			),
+			'exposure'  => self::exposure_split(),
 			'totals'    => $totals,
 			'evidence'  => array(
 				'kev'         => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$intel} WHERE kev = 1" ), // phpcs:ignore
@@ -126,6 +134,91 @@ final class VulnHub_Threat_Repo {
 			'as_of'     => (string) ( VulnHub_Threat_Feeds::status()['last_run'] ?? '' ),
 			'threshold' => VulnHub_Threat_Classify::epss_threshold(),
 		);
+	}
+
+	/**
+	 * Distinct assets across the inside lane's two halves.
+	 *
+	 * The lane is "definitions that only work once somebody is inside" plus
+	 * "edge definitions on a machine the internet cannot reach", and those two
+	 * sets of machines overlap without either containing the other.
+	 *
+	 * @param int[] $inside_ids Inside-route definitions.
+	 * @param int[] $edge_ids   Edge-route definitions.
+	 * @param int[] $facing     Assets the internet can reach.
+	 */
+	private static function union_assets( array $inside_ids, array $edge_ids, array $facing ): int {
+		global $wpdb;
+
+		$f    = vh_table( 'findings' );
+		$open = "f.state IN ('open','reopened') AND f.exception_id = 0";
+		$or   = array();
+
+		if ( $inside_ids ) {
+			$or[] = 'f.vuln_id IN (' . implode( ',', $inside_ids ) . ')';
+		}
+
+		if ( $edge_ids ) {
+			$hidden = 'f.vuln_id IN (' . implode( ',', $edge_ids ) . ')';
+
+			// The unreachable half only. With nothing facing, that is all of it.
+			if ( $facing ) {
+				$hidden .= ' AND f.asset_id NOT IN (' . implode( ',', $facing ) . ')';
+			}
+
+			$or[] = '(' . $hidden . ')';
+		}
+
+		if ( ! $or ) {
+			return 0;
+		}
+
+		return (int) $wpdb->get_var( // phpcs:ignore
+			"SELECT COUNT(DISTINCT f.asset_id) FROM {$f} f WHERE {$open} AND ( " . implode( ' OR ', $or ) . ' )' // phpcs:ignore
+		);
+	}
+
+	/**
+	 * How the estate splits across the three things we can actually say about
+	 * whether the internet can reach a machine.
+	 *
+	 * `unknown` is the number that matters and the one a boolean would hide:
+	 * machines nothing has port-scanned, which are neither confirmed reachable
+	 * nor confirmed safe. Reporting them alongside the other two is the
+	 * difference between a dashboard that says "23 reachable" and one that
+	 * says "23 reachable, and we have not looked at 687".
+	 *
+	 * @return array<string,int>
+	 */
+	private static function exposure_split(): array {
+		global $wpdb;
+
+		$expo = VulnHub_Threat_Install::table( 'asset_exposure' );
+		$a    = vh_table( 'assets' );
+
+		$out = array( 'confirmed' => 0, 'ruled_out' => 0, 'unknown' => 0, 'asserted' => 0, 'unknown_servers' => 0 );
+
+		foreach ( (array) $wpdb->get_results( "SELECT basis, internet_facing, COUNT(*) c FROM {$expo} GROUP BY basis, internet_facing", ARRAY_A ) as $row ) { // phpcs:ignore
+			$basis = (string) $row['basis'];
+			$n     = (int) $row['c'];
+
+			if ( 'evidence' === $basis || ( 'asserted' === $basis && (int) $row['internet_facing'] === 1 ) ) {
+				$out[ 'evidence' === $basis ? 'confirmed' : 'asserted' ] += $n;
+				continue;
+			}
+
+			if ( isset( $out[ $basis ] ) ) {
+				$out[ $basis ] += $n;
+			}
+		}
+
+		// Servers we have never looked at are the actionable half of `unknown`.
+		$out['unknown_servers'] = (int) $wpdb->get_var( // phpcs:ignore
+			"SELECT COUNT(*) FROM {$expo} e INNER JOIN {$a} s ON s.id = e.asset_id
+			  WHERE e.basis = 'unknown' AND s.asset_type IN ('server','cloud')" // phpcs:ignore
+		);
+
+		return $out;
 	}
 
 	/**
