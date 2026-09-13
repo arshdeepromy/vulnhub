@@ -1,0 +1,68 @@
+[
+ {
+  "name": "iam ListUsers POST",
+  "method": "POST",
+  "url": "https://iam.amazonaws.com/",
+  "body": "Action=ListUsers&Version=2010-05-08",
+  "headers": {
+   "Content-Type": "application/x-www-form-urlencoded; charset=utf-8"
+  },
+  "service": "iam",
+  "region": "us-east-1",
+  "token": "",
+  "stamp": "20260913T042555Z",
+  "auth": "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260913/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=a275992d9eccdce5d4ebb8ea2144e4503a13153e6eed9e8d9a0c049d80da293b"
+ },
+ {
+  "name": "ec2 query unsorted",
+  "method": "GET",
+  "url": "https://ec2.us-east-1.amazonaws.com/?b=2&a=1",
+  "body": "",
+  "headers": {},
+  "service": "ec2",
+  "region": "us-east-1",
+  "token": "",
+  "stamp": "20260913T042555Z",
+  "auth": "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260913/us-east-1/ec2/aws4_request, SignedHeaders=host;x-amz-date, Signature=22449b24e9ab43a7388a1f8c762dc593e0c1db92239a9d2d792f03924f766214"
+ },
+ {
+  "name": "ec2 query with encoded space",
+  "method": "GET",
+  "url": "https://ec2.us-east-1.amazonaws.com/?x=a%20b",
+  "body": "",
+  "headers": {},
+  "service": "ec2",
+  "region": "us-east-1",
+  "token": "",
+  "stamp": "20260913T042555Z",
+  "auth": "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260913/us-east-1/ec2/aws4_request, SignedHeaders=host;x-amz-date, Signature=58815f62bd672c59fff95d18fee53aacfa9fa886ad99b4bdf1a73e074beef68d"
+ },
+ {
+  "name": "inspector2 json + token",
+  "method": "POST",
+  "url": "https://inspector2.ap-southeast-2.amazonaws.com/status/batch/get",
+  "body": "{}",
+  "headers": {
+   "Content-Type": "application/json"
+  },
+  "service": "inspector2",
+  "region": "ap-southeast-2",
+  "token": "FwoGZXIvYXdzEBcaDA",
+  "stamp": "20260913T042555Z",
+  "auth": "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260913/ap-southeast-2/inspector2/aws4_request, SignedHeaders=content-type;host;x-amz-date;x-amz-security-token, Signature=07ec4590a52d4c15f51593cea0e4a7c2719677555153dcad26f5d6807f738d4c"
+ },
+ {
+  "name": "inspector2 findings path",
+  "method": "POST",
+  "url": "https://inspector2.ap-southeast-2.amazonaws.com/findings/list",
+  "body": "{\"maxResults\":100}",
+  "headers": {
+   "Content-Type": "application/json"
+  },
+  "service": "inspector2",
+  "region": "ap-southeast-2",
+  "token": "",
+  "stamp": "20260913T042555Z",
+  "auth": "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260913/ap-southeast-2/inspector2/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=b10bb6c363802280d7ce5d123ee80731ec0c147ccb42f11346ac086775d9a3c6"
+ }
+]
