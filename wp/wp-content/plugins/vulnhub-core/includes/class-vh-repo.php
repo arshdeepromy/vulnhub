@@ -3480,6 +3480,12 @@ final class Repo {
 		$need_a = $need_a || ! empty( $ext['need_asset'] );
 		$need_v = $need_v || ! empty( $ext['need_vuln'] );
 
+		// The product breakdown reads the vulns table for its grouping columns.
+		$group_by = (string) ( $args['group'] ?? '' );
+		if ( 'product' === $group_by ) {
+			$need_v = true;
+		}
+
 		$where_sql = implode( ' AND ', $where );
 
 		$allowed = array(
@@ -3509,6 +3515,50 @@ final class Repo {
 			. ( $need_a ? " INNER JOIN {$a} a ON a.id = f.asset_id" : '' )
 			. ( $need_v ? " INNER JOIN {$v} v ON v.id = f.vuln_id" : '' )
 			. " WHERE {$where_sql}";
+
+		/*
+		 * Product breakdown of exactly this filtered set. Reuses the whole
+		 * WHERE above -- state, severity, asset, department, hosting, the
+		 * vulnhub_findings_query extension, everything -- so the "By product"
+		 * tab on the vulnerabilities list can never drift from the findings it
+		 * groups. A bundled library is attributed to the app that ships it, the
+		 * same grouping the Exposure-by-product widget and its drill-through
+		 * use, so clicking a product row lands on the matching findings.
+		 *
+		 * Each row's group is pinned in a derived table first: grouping
+		 * straight on a CASE alias let MariaDB collapse two products together
+		 * (see rebuild_product_summary()'s product_rows_live()).
+		 */
+		if ( 'product' === $group_by ) {
+			$grp_slug = "CASE WHEN v.product_kind IN ( 'library', 'os_package' ) AND f.bundle_app <> '' THEN f.bundle_app_slug ELSE v.product_slug END";
+			$grp_name = "CASE WHEN v.product_kind IN ( 'library', 'os_package' ) AND f.bundle_app <> '' THEN f.bundle_app ELSE v.product END";
+			$glimit   = max( 1, min( 200, (int) ( $args['limit'] ?? 60 ) ) );
+
+			$psql = "SELECT product_slug,
+						MAX( product ) AS product,
+						MAX( product_kind ) AS product_kind,
+						MAX( component_class ) AS component_class,
+						COUNT( DISTINCT asset_id ) AS assets,
+						COUNT( * ) AS findings
+					 FROM ( SELECT {$grp_slug} AS product_slug,
+								   {$grp_name} AS product,
+								   v.product_kind AS product_kind,
+								   v.component_class AS component_class,
+								   f.asset_id AS asset_id
+							{$narrow} ) t
+					 WHERE product_slug <> ''
+					 GROUP BY product_slug
+					 ORDER BY assets DESC, findings DESC, product ASC
+					 LIMIT %d";
+
+			$pp   = $params;
+			$pp[] = $glimit;
+
+			return array(
+				'products' => (array) $wpdb->get_results( $wpdb->prepare( $psql, ...$pp ), ARRAY_A ), // phpcs:ignore
+				'total'    => 0,
+			);
+		}
 
 		$total = (int) ( $params
 			? $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) {$narrow}", ...$params ) ) // phpcs:ignore
