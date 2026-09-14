@@ -100,6 +100,9 @@
 <h3>Exposure by team</h3>
 <p>A severity-stacked bar per team (top 8 by critical→high→total) — who currently carries the open findings. "Unassigned" is findings on assets with no team. The team label links to that team's findings; each severity segment links to that severity within the team.</p>
 
+<h3>Vulnerabilities by department</h3>
+<p>The same shape as Exposure by team, but grouped by the <strong>department</strong> that owns the device (finding → asset → owner → department), largest first. Selecting a bar opens that department's findings; a coloured segment opens it filtered to one severity. Departments come from an Entra export you upload under Admin → Departments — see <a href="?doc=departments">Departments</a>. (Present once at least one person has a department.)</p>
+
 <h3>Ownership gaps</h3>
 <p>Workstations and mobiles, in scope, with <em>no owner person</em> — highest-risk first, so you know who has nobody to chase. Hostnames link to the asset; the footer opens the full "needs a user" list.</p>
 

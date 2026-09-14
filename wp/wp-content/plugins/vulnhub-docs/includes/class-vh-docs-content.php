@@ -81,6 +81,10 @@ final class VulnHub_Docs_Content {
 						'title'   => __( 'Products & vendors', 'vulnhub' ),
 						'summary' => __( 'Exposure grouped by the software that carries it.', 'vulnhub' ),
 					),
+					'departments' => array(
+						'title'   => __( 'Departments', 'vulnhub' ),
+						'summary' => __( 'Enrich people from an Entra export, then filter and chart by department.', 'vulnhub' ),
+					),
 				),
 			),
 			array(
