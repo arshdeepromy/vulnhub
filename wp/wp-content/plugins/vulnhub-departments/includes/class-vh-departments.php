@@ -25,9 +25,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 final class VulnHub_Departments {
 
 	public const SECTION    = 'departments';
+	public const VIEW       = 'departments';
 	public const WIDGET     = 'department_exposure';
-	public const IMPORT_ACT = 'vulnhub_dept_import';
-	public const OPT_LAST   = 'vulnhub_dept_last_import';
+	public const IMPORT_ACT  = 'vulnhub_dept_import';
+	public const CSV_ACT     = 'vulnhub_dept_devices_csv';
+	public const OPT_LAST      = 'vulnhub_dept_last_import';
+	public const OPT_ALIASES   = 'vulnhub_dept_aliases';
+	public const OPT_OVERRIDES = 'vulnhub_dept_overrides';
 
 	public static function init(): void {
 		// Department as a findings filter (list + CSV export both route here).
@@ -37,10 +41,16 @@ final class VulnHub_Departments {
 		add_filter( 'vulnhub_portal_sections', array( __CLASS__, 'register_section' ) );
 		add_action( 'vulnhub_render_portal_section', array( __CLASS__, 'render_section' ) );
 		add_action( 'admin_post_' . self::IMPORT_ACT, array( __CLASS__, 'handle_import' ) );
+		add_action( 'admin_post_' . self::CSV_ACT, array( __CLASS__, 'handle_devices_csv' ) );
 
 		// The dashboard widget.
 		add_filter( 'vulnhub_dashboard_widgets', array( __CLASS__, 'register_widget' ) );
 		add_filter( 'vulnhub_dashboard_default_layout', array( __CLASS__, 'place_widget' ) );
+
+		// A full "all departments" page, reached from the widget's button.
+		add_filter( 'vulnhub_dash_views', array( __CLASS__, 'register_view' ) );
+		add_action( 'vulnhub_dash_render_view_' . self::VIEW, array( __CLASS__, 'render_view' ) );
+		add_action( 'admin_init', array( __CLASS__, 'ensure_page' ) );
 	}
 
 	/* =================================================================
@@ -142,7 +152,7 @@ final class VulnHub_Departments {
 			'label'   => __( 'Vulnerabilities by department', 'vulnhub' ),
 			'summary' => __( 'Open findings by the department that owns the device, coloured by severity.', 'vulnhub' ),
 			'group'   => 'ownership',
-			'width'   => 6,
+			'width'   => 12,
 			'depends' => array( 'findings', 'assets' ),
 			'render'  => array( __CLASS__, 'render_widget' ),
 			'data'    => array( __CLASS__, 'data_widget' ),
@@ -168,7 +178,7 @@ final class VulnHub_Departments {
 		foreach ( $layout as $entry ) {
 			$out[] = $entry;
 			if ( 'team_exposure' === ( $entry['id'] ?? '' ) ) {
-				$out[] = array( 'id' => self::WIDGET, 'width' => 6 );
+				$out[] = array( 'id' => self::WIDGET, 'width' => 12 );
 			}
 		}
 
@@ -230,30 +240,43 @@ final class VulnHub_Departments {
 		return VulnHub_Dash_Portal::portal_url( 'vulnerabilities', $args );
 	}
 
-	public static function render_widget(): void {
-		$rows = self::widget_rows();
+	/**
+	 * The severity-stacked bar list for the top-$limit departments (or the
+	 * empty state). Shared by the dashboard widget and the full page.
+	 */
+	private static function stack_html( int $limit, string $caption ): string {
+		$rows = self::widget_rows( $limit );
 
 		if ( ! $rows ) {
 			$msg = self::has_departments()
 				? __( 'No open findings resolve to a department yet.', 'vulnhub' )
 				: __( 'No departments recorded. Upload an Entra user export under Admin → Departments.', 'vulnhub' );
 
-			echo class_exists( 'VulnHub_Dash_Charts' )
-				? VulnHub_Dash_Charts::empty_state( $msg ) // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			return class_exists( 'VulnHub_Dash_Charts' )
+				? VulnHub_Dash_Charts::empty_state( $msg )
 				: '<p class="vh-chart-empty">' . esc_html( $msg ) . '</p>';
-
-			return;
 		}
 
-		echo VulnHub_Dash_Charts::severity_stack( // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		return '<div class="vh-deptstack">' . VulnHub_Dash_Charts::severity_stack(
 			array_map(
 				static function ( array $r ): array {
-					$dept = (string) $r['label'];
+					$dept   = (string) $r['label'];
+					$assets = (int) $r['assets'];
 
 					return array(
-						'label'     => vh_trim( $dept, 24 ),
-						'href'      => self::dept_url( $dept ),
-						'seg_hrefs' => array(
+						'label'      => vh_trim( $dept, 32 ),
+						'href'       => self::dept_url( $dept ),
+						// The findings total links to that department's finding list.
+						'value_href' => self::dept_url( $dept ),
+						// Trailing column: how many devices carry these findings,
+						// linking to the per-device report for the department.
+						'extra'      => sprintf(
+							/* translators: %s: number of devices. */
+							_n( '%s device', '%s devices', $assets, 'vulnhub' ),
+							number_format_i18n( $assets )
+						),
+						'extra_href' => self::view_url( array( 'dept' => $dept ) ),
+						'seg_hrefs'  => array(
 							'critical' => self::dept_url( $dept, 'critical' ),
 							'high'     => self::dept_url( $dept, 'high' ),
 							'medium'   => self::dept_url( $dept, 'medium' ),
@@ -271,8 +294,48 @@ final class VulnHub_Departments {
 				},
 				$rows
 			),
-			array( 'caption' => __( 'Open findings by owning department. Select a bar for the devices and vulnerabilities behind it.', 'vulnhub' ) )
+			array( 'caption' => $caption )
+		) . '</div>';
+	}
+
+	/** Departments that carry at least one open finding. */
+	private static function department_count(): int {
+		global $wpdb;
+
+		$f = vh_table( 'findings' );
+		$a = vh_table( 'assets' );
+		$p = vh_table( 'people' );
+
+		return (int) $wpdb->get_var( // phpcs:ignore WordPress.DB
+			"SELECT COUNT(DISTINCT p.department)
+			 FROM {$f} f
+			 INNER JOIN {$a} a ON a.id = f.asset_id
+			 INNER JOIN {$p} p ON p.id = a.owner_person_id
+			 WHERE f.state IN ('open','reopened') AND f.exception_id = 0 AND p.department <> ''" // phpcs:ignore WordPress.DB
 		);
+	}
+
+	public static function render_widget(): void {
+		echo self::stack_html( // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			14,
+			__( 'Open findings by owning department. Select a bar for the devices and vulnerabilities behind it.', 'vulnhub' )
+		);
+
+		$total = self::department_count();
+
+		if ( $total > 14 ) {
+			printf(
+				'<p class="vh-prodlist__more"><a class="vh-btn vh-btn--ghost vh-btn--sm" href="%s">%s</a></p>',
+				esc_url( self::view_url() ),
+				esc_html(
+					sprintf(
+						/* translators: %s: total number of departments. */
+						__( 'View all %s departments →', 'vulnhub' ),
+						number_format_i18n( $total )
+					)
+				)
+			);
+		}
 	}
 
 	/**
@@ -312,6 +375,277 @@ final class VulnHub_Departments {
 		$p = vh_table( 'people' );
 
 		return (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$p} WHERE department <> ''" ) > 0; // phpcs:ignore WordPress.DB
+	}
+
+	/* =================================================================
+	 * The "all departments" page (reached from the widget)
+	 * ============================================================== */
+
+	/**
+	 * @param array<string,array<string,mixed>> $views Portal views.
+	 * @return array<string,array<string,mixed>>
+	 */
+	public static function register_view( array $views ): array {
+		$views[ self::VIEW ] = array(
+			'title'  => __( 'Vulnerabilities by department', 'vulnhub' ),
+			'slug'   => self::VIEW,
+			'menu'   => __( 'Departments', 'vulnhub' ),
+			'icon'   => 'M3 21h18M5 21V7l7-4 7 4v14M9 21v-4h6v4M9 10h.01M15 10h.01M12 13h.01',
+			'hidden' => true, // Reached from the widget, like the products page.
+		);
+
+		return $views;
+	}
+
+	/** URL of the full department page. */
+	public static function view_url( array $args = array() ): string {
+		return VulnHub_Dash_Portal::portal_url( self::VIEW, $args );
+	}
+
+	/**
+	 * Create the page that hosts the full list, mapped in `vulnhub_dash_pages`
+	 * so the navigation and portal_url() can find it — the same contract every
+	 * other view follows.
+	 */
+	public static function ensure_page(): void {
+		$map = (array) get_option( 'vulnhub_dash_pages', array() );
+
+		$existing = ! empty( $map[ self::VIEW ] ) ? get_post( (int) $map[ self::VIEW ] ) : null;
+		if ( $existing && 'trash' !== $existing->post_status ) {
+			return;
+		}
+
+		$page = get_page_by_path( self::VIEW );
+
+		if ( $page ) {
+			$id = (int) $page->ID;
+		} else {
+			$id = wp_insert_post(
+				array(
+					'post_title'     => __( 'Departments', 'vulnhub' ),
+					'post_name'      => self::VIEW,
+					'post_content'   => '<!-- wp:shortcode -->[vulnhub_app view="' . self::VIEW . '"]<!-- /wp:shortcode -->',
+					'post_status'    => 'publish',
+					'post_type'      => 'page',
+					'comment_status' => 'closed',
+					'ping_status'    => 'closed',
+				)
+			);
+		}
+
+		if ( ! is_wp_error( $id ) && $id ) {
+			$map[ self::VIEW ] = (int) $id;
+			update_option( 'vulnhub_dash_pages', $map, false );
+		}
+	}
+
+	public static function render_view(): void {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$dept = isset( $_GET['dept'] ) ? sanitize_text_field( wp_unslash( (string) $_GET['dept'] ) ) : '';
+
+		if ( '' !== $dept ) {
+			self::render_devices( $dept );
+			return;
+		}
+
+		$total = self::department_count();
+		?>
+		<div class="vh-stack">
+			<div class="vh-page-head">
+				<div>
+					<h1><?php esc_html_e( 'Vulnerabilities by department', 'vulnhub' ); ?></h1>
+					<p class="vh-sub"><?php
+						/* translators: %s: number of departments with open findings. */
+						echo esc_html( sprintf( __( 'Open findings across %s departments, by the department that owns the device. Select the findings number for the finding list, or the device count for the devices behind it.', 'vulnhub' ), number_format_i18n( $total ) ) );
+					?></p>
+				</div>
+				<a class="vh-btn vh-btn--ghost vh-btn--sm" href="<?php echo esc_url( VulnHub_Dash_Portal::portal_url( 'dashboard' ) ); ?>"><?php esc_html_e( 'Back to dashboard', 'vulnhub' ); ?></a>
+			</div>
+			<div class="vh-card">
+				<?php
+				echo self::stack_html( // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+					1000,
+					__( 'Every department with an open finding, largest first. The number is open findings; the right column is devices affected.', 'vulnhub' )
+				);
+				?>
+			</div>
+		</div>
+		<?php
+	}
+
+	/**
+	 * The per-device report for one department: a severity bar per device, the
+	 * owner in the right column, and a CSV export.
+	 */
+	private static function render_devices( string $dept ): void {
+		$rows     = self::device_rows( $dept );
+		$findings = 0;
+		foreach ( $rows as $r ) {
+			$findings += (int) $r['total'];
+		}
+		?>
+		<div class="vh-stack">
+			<div class="vh-page-head">
+				<div>
+					<h1><?php echo esc_html( sprintf( /* translators: %s: department name. */ __( 'Devices in %s', 'vulnhub' ), $dept ) ); ?></h1>
+					<p class="vh-sub"><?php
+						echo esc_html(
+							sprintf(
+								/* translators: 1: device count, 2: open findings. */
+								_n( '%1$s device carrying %2$s open findings. Select a device for its vulnerabilities.', '%1$s devices carrying %2$s open findings. Select a device for its vulnerabilities.', count( $rows ), 'vulnhub' ),
+								number_format_i18n( count( $rows ) ),
+								number_format_i18n( $findings )
+							)
+						);
+					?></p>
+				</div>
+				<div class="vh-actions">
+					<a class="vh-btn vh-btn--ghost vh-btn--sm" href="<?php echo esc_url( self::view_url() ); ?>"><?php esc_html_e( 'All departments', 'vulnhub' ); ?></a>
+					<a class="vh-btn vh-btn--ghost vh-btn--sm" href="<?php echo esc_url( self::devices_csv_url( $dept ) ); ?>"><?php esc_html_e( 'Export CSV', 'vulnhub' ); ?></a>
+					<a class="vh-btn vh-btn--primary vh-btn--sm" href="<?php echo esc_url( self::dept_url( $dept ) ); ?>"><?php esc_html_e( 'View findings list', 'vulnhub' ); ?></a>
+				</div>
+			</div>
+			<div class="vh-card">
+				<?php echo self::device_stack_html( $rows ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+			</div>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Open findings per device for one department, with the device owner.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	public static function device_rows( string $dept ): array {
+		global $wpdb;
+
+		$f = vh_table( 'findings' );
+		$a = vh_table( 'assets' );
+		$p = vh_table( 'people' );
+
+		return (array) $wpdb->get_results( // phpcs:ignore WordPress.DB
+			$wpdb->prepare(
+				"SELECT a.id AS asset_id, a.hostname, a.ipv4, a.asset_type, p.display_name AS owner,
+					SUM(f.severity = 'critical') AS critical,
+					SUM(f.severity = 'high')     AS high,
+					SUM(f.severity = 'medium')   AS medium,
+					SUM(f.severity = 'low')      AS low,
+					SUM(f.severity = 'info')     AS info,
+					COUNT(*)                     AS total
+				 FROM {$f} f
+				 INNER JOIN {$a} a ON a.id = f.asset_id
+				 INNER JOIN {$p} p ON p.id = a.owner_person_id
+				 WHERE f.state IN ('open','reopened') AND f.exception_id = 0 AND p.department = %s
+				 GROUP BY a.id
+				 ORDER BY critical DESC, high DESC, total DESC", // phpcs:ignore WordPress.DB
+				$dept
+			),
+			ARRAY_A
+		);
+	}
+
+	/** @param array<int,array<string,mixed>> $rows */
+	private static function device_stack_html( array $rows ): string {
+		if ( ! $rows ) {
+			return class_exists( 'VulnHub_Dash_Charts' )
+				? VulnHub_Dash_Charts::empty_state( __( 'No open findings on any device in this department.', 'vulnhub' ) )
+				: '';
+		}
+
+		$asset_url = static function ( int $id, string $sev = '' ): string {
+			return VulnHub_Dash_Portal::portal_url(
+				'vulnerabilities',
+				array_filter( array( 'asset' => $id, 'severity' => $sev, 'state' => 'open_any' ) )
+			);
+		};
+
+		return '<div class="vh-deptstack">' . VulnHub_Dash_Charts::severity_stack(
+			array_map(
+				static function ( array $r ) use ( $asset_url ): array {
+					$id    = (int) $r['asset_id'];
+					$host  = '' !== (string) $r['hostname'] ? (string) $r['hostname'] : 'asset ' . $id;
+					$owner = '' !== (string) $r['owner'] ? (string) $r['owner'] : '—';
+
+					return array(
+						'label'      => vh_trim( $host, 32 ),
+						'href'       => $asset_url( $id ),
+						'value_href' => $asset_url( $id ),
+						'extra'      => vh_trim( $owner, 24 ),
+						'extra_href' => VulnHub_Dash_Portal::portal_url( 'assets', array( 'asset' => $id ) ),
+						'seg_hrefs'  => array(
+							'critical' => $asset_url( $id, 'critical' ),
+							'high'     => $asset_url( $id, 'high' ),
+							'medium'   => $asset_url( $id, 'medium' ),
+							'low'      => $asset_url( $id, 'low' ),
+							'info'     => $asset_url( $id, 'info' ),
+						),
+						'counts'     => array(
+							'critical' => (int) $r['critical'],
+							'high'     => (int) $r['high'],
+							'medium'   => (int) $r['medium'],
+							'low'      => (int) $r['low'],
+							'info'     => (int) $r['info'],
+						),
+					);
+				},
+				$rows
+			),
+			array( 'caption' => __( 'Open findings per device, coloured by severity. The right column is the device owner.', 'vulnhub' ) )
+		) . '</div>';
+	}
+
+	/** Nonced CSV export URL for a department's devices. */
+	public static function devices_csv_url( string $dept ): string {
+		return wp_nonce_url(
+			add_query_arg(
+				array(
+					'action'     => self::CSV_ACT,
+					'department' => rawurlencode( $dept ),
+				),
+				admin_url( 'admin-post.php' )
+			),
+			self::CSV_ACT
+		);
+	}
+
+	public static function handle_devices_csv(): void {
+		if ( ! current_user_can( Caps::VIEW ) ) {
+			wp_die( esc_html__( 'You do not have permission to do that.', 'vulnhub' ) );
+		}
+
+		check_admin_referer( self::CSV_ACT );
+
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$dept = isset( $_GET['department'] ) ? sanitize_text_field( rawurldecode( wp_unslash( (string) $_GET['department'] ) ) ) : '';
+		$rows = self::device_rows( $dept );
+
+		nocache_headers();
+		header( 'Content-Type: text/csv; charset=utf-8' );
+		header( 'Content-Disposition: attachment; filename="devices-' . sanitize_file_name( '' !== $dept ? $dept : 'department' ) . '.csv"' );
+
+		$out = fopen( 'php://output', 'w' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		fputcsv( $out, array( 'Device', 'IP', 'Owner', 'Type', 'Critical', 'High', 'Medium', 'Low', 'Info', 'Open findings' ) );
+
+		foreach ( $rows as $r ) {
+			fputcsv(
+				$out,
+				array(
+					(string) $r['hostname'],
+					(string) $r['ipv4'],
+					(string) $r['owner'],
+					(string) $r['asset_type'],
+					(int) $r['critical'],
+					(int) $r['high'],
+					(int) $r['medium'],
+					(int) $r['low'],
+					(int) $r['info'],
+					(int) $r['total'],
+				)
+			);
+		}
+		fclose( $out ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		exit;
 	}
 
 	/* =================================================================
@@ -466,6 +800,117 @@ final class VulnHub_Departments {
 	 *
 	 * @return array<string,mixed>
 	 */
+	/**
+	 * Canonical alias map for department names that mean the same team.
+	 *
+	 * Keys are matched case-insensitively (against the trimmed source value);
+	 * the value is the canonical name we store. Extend by saving more pairs to
+	 * the OPT_ALIASES option, or via the 'vulnhub_department_aliases' filter.
+	 *
+	 * @return array<string,string> lower-cased source name => canonical name.
+	 */
+	public static function aliases(): array {
+		$defaults = array(
+			'platform and services' => 'Platform and Operations',
+		);
+
+		$stored = get_option( self::OPT_ALIASES, array() );
+		if ( is_array( $stored ) ) {
+			foreach ( $stored as $from => $to ) {
+				$from = strtolower( trim( (string) $from ) );
+				$to   = trim( (string) $to );
+				if ( '' !== $from && '' !== $to ) {
+					$defaults[ $from ] = $to;
+				}
+			}
+		}
+
+		/** Allow other code to register department aliases. */
+		$map = apply_filters( 'vulnhub_department_aliases', $defaults );
+
+		return is_array( $map ) ? $map : $defaults;
+	}
+
+	/**
+	 * Collapse a source department name onto its canonical alias, if any.
+	 *
+	 * @param string $dep Raw (already trimmed) department name.
+	 * @return string Canonical department name.
+	 */
+	public static function normalize_department( string $dep ): string {
+		$key     = strtolower( $dep );
+		$aliases = self::aliases();
+
+		return $aliases[ $key ] ?? $dep;
+	}
+
+	/**
+	 * Per-person department pins, keyed by lower-cased UPN.
+	 *
+	 * Unlike aliases (which rename a whole department), an override forces a
+	 * specific individual onto a department no matter what the Entra export
+	 * says for them -- so it survives every re-import. Stored in the
+	 * OPT_OVERRIDES option; also filterable via 'vulnhub_department_overrides'.
+	 *
+	 * @return array<string,string> lower-cased UPN => canonical department.
+	 */
+	public static function overrides(): array {
+		$stored = get_option( self::OPT_OVERRIDES, array() );
+		$out    = array();
+
+		if ( is_array( $stored ) ) {
+			foreach ( $stored as $upn => $dep ) {
+				$upn = strtolower( trim( (string) $upn ) );
+				$dep = trim( (string) $dep );
+				if ( '' !== $upn && '' !== $dep ) {
+					$out[ $upn ] = self::normalize_department( $dep );
+				}
+			}
+		}
+
+		$out = apply_filters( 'vulnhub_department_overrides', $out );
+
+		return is_array( $out ) ? $out : array();
+	}
+
+	/**
+	 * Force every pinned person onto their assigned department.
+	 *
+	 * Runs across ALL existing people (not just those present in an import),
+	 * so a pin still applies to someone the latest Entra export omitted.
+	 *
+	 * @return int Number of people whose department row was changed.
+	 */
+	public static function apply_overrides(): int {
+		global $wpdb;
+		$ov = self::overrides();
+		if ( ! $ov ) {
+			return 0;
+		}
+
+		$p       = vh_table( 'people' );
+		$people  = (array) $wpdb->get_results( "SELECT id, upn, department FROM {$p} WHERE upn <> ''", ARRAY_A ); // phpcs:ignore WordPress.DB
+		$changed = 0;
+
+		foreach ( $people as $person ) {
+			$upn = strtolower( trim( (string) $person['upn'] ) );
+			if ( ! isset( $ov[ $upn ] ) ) {
+				continue;
+			}
+			$dep = $ov[ $upn ];
+			if ( (string) $person['department'] !== $dep ) {
+				$wpdb->update( // phpcs:ignore WordPress.DB
+					$p,
+					array( 'department' => $dep, 'last_synced_at' => vh_now() ),
+					array( 'id' => (int) $person['id'] )
+				);
+				++$changed;
+			}
+		}
+
+		return $changed;
+	}
+
 	public static function enrich_from_file( string $path, string $name = '' ): array {
 		$map  = array();
 		$rows = 0;
@@ -499,7 +944,7 @@ final class VulnHub_Departments {
 		while ( ( $row = fgetcsv( $fh ) ) !== false ) {
 			++$rows;
 			$upn = strtolower( trim( (string) ( $row[ $upn_col ] ?? '' ) ) );
-			$dep = trim( (string) ( $row[ $dep_col ] ?? '' ) );
+			$dep = self::normalize_department( trim( (string) ( $row[ $dep_col ] ?? '' ) ) );
 
 			if ( '' !== $upn && '' !== $dep ) {
 				$map[ $upn ] = $dep;
@@ -511,6 +956,7 @@ final class VulnHub_Departments {
 		global $wpdb;
 		$p       = vh_table( 'people' );
 		$people  = (array) $wpdb->get_results( "SELECT id, upn, department FROM {$p} WHERE upn <> ''", ARRAY_A ); // phpcs:ignore WordPress.DB
+		$ov      = self::overrides();
 		$matched = 0;
 		$updated = 0;
 
@@ -522,7 +968,8 @@ final class VulnHub_Departments {
 			}
 
 			++$matched;
-			$dep = $map[ $upn ];
+			// A per-person pin always wins over whatever the export lists.
+			$dep = $ov[ $upn ] ?? $map[ $upn ];
 
 			if ( (string) $person['department'] !== $dep ) {
 				$wpdb->update( // phpcs:ignore WordPress.DB
@@ -533,6 +980,9 @@ final class VulnHub_Departments {
 				++$updated;
 			}
 		}
+
+		// Pin anyone whose UPN was overridden but not present in this export.
+		$updated += self::apply_overrides();
 
 		$summary = array(
 			'at'      => vh_now(),
