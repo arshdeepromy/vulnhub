@@ -855,6 +855,7 @@ final class VulnHub_Dash_Export {
 				'age'             => self::get( 'age' ),
 				'asset_type'      => self::get( 'asset_type' ),
 				'team_id'         => self::get_int( 'team_id' ),
+				'department'      => self::get( 'department' ),
 				'location_id'     => self::get( 'location_id' ),
 				'search'          => self::get( 'search' ),
 				'overdue'         => self::get( 'overdue' ),

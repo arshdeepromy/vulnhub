@@ -1,0 +1,32 @@
+<p><strong>Department</strong> is a dimension layered on top of your people: which part of the organisation a user belongs to. Once your people carry a department, VulnHub can group, filter and export vulnerabilities by it — because a device's vulnerabilities belong to whoever owns the device, and that person belongs to a department.</p>
+
+<div class="vh-note"><p><strong>The attribution chain.</strong> A finding sits on an <em>asset</em>; the asset has an <em>owner</em> (a person); the person has a <em>department</em>. So a finding's department is the department of the device's owner: <code>finding → asset → owner → department</code>. A device with no owner, or an owner with no department, is simply not attributed to any department.</p></div>
+
+<h2>Where the department comes from</h2>
+
+<p>Departments are filled in from an <strong>Entra / Azure AD user export</strong> — the standard CSV with a <code>userPrincipalName</code> column and a <code>department</code> column. Upload it under <strong>Admin → Departments</strong>. Two rules make this safe to run against a live estate:</p>
+
+<div class="vh-defs">
+  <div><span class="k">Existing users only</span><span class="v">Each row is matched to a person you <em>already have</em>, by UPN. A row for someone not in your data is skipped — the import never creates users.</span></div>
+  <div><span class="k">Department only</span><span class="v">Nothing else in the file is imported. It reads the department for matched people and leaves every other field alone.</span></div>
+</div>
+
+<p>The Departments screen shows how many of your people now carry a department, how many distinct departments that is, and a summary of the last import (rows read, existing people matched, departments set, rows skipped). Re-run it whenever you have a fresh export; only changed departments are written.</p>
+
+<div class="vh-tip"><p>Because ownership comes from Intune's primary-user link, the people who get a department are the ones who already own devices — which is exactly the set that makes the vulnerability attribution meaningful.</p></div>
+
+<h2>Using department across the app</h2>
+
+<h3>Filter the vulnerability list</h3>
+<p>The <strong>Vulnerabilities</strong> list gains a <strong>Department</strong> dropdown alongside Team. Pick one to narrow the findings to devices owned by that department's people. It composes with every other filter, lives in the URL like the others, and the <strong>Export CSV</strong> button carries it — so you can export exactly one department's findings. See <a href="?doc=vulnerabilities">The Vulnerabilities list</a>.</p>
+
+<h3>The "Vulnerabilities by department" widget</h3>
+<p>A dashboard widget (in the Ownership group) draws one severity-stacked bar per department — critical → info, largest first — over open, non-excepted findings. It answers "which parts of the business are carrying the exposure". Selecting a bar opens that department's findings; selecting a coloured segment opens that department filtered to one severity. The widget exports its own table (department × severity × device counts) too.</p>
+
+<h3>Drill down to devices and vulnerabilities</h3>
+<p>Every department number links into the findings list filtered to that department, where each row is a <strong>device</strong> and the <strong>vulnerability</strong> on it, with the owner, due date and ticket — and the export button hands you that exact set as a CSV.</p>
+
+<h2>Department vs Team</h2>
+<p>Department is a <em>separate, non-destructive</em> dimension: it sits beside the existing <a href="?doc=glossary">Team</a> concept rather than replacing it. Team is the remediation-owning group (with its SLAs and Jira routing); department is the organisational unit a device's user belongs to. You can filter and chart by either.</p>
+
+<div class="vh-note"><p><strong>For developers.</strong> The feature is a self-contained plugin. It registers a <code>department</code> argument on the central findings query (<code>vulnhub_findings_query</code>), resolving it to the asset ids owned by that department's people; a <code>department_exposure</code> widget via <code>vulnhub_dashboard_widgets</code>; and an admin section via <code>vulnhub_portal_sections</code>. See <a href="?doc=extending">Filters &amp; extension points</a>.</p></div>

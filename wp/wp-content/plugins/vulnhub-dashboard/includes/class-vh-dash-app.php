@@ -1173,7 +1173,7 @@ final class VulnHub_Dash_App {
 			 * servers threw the libcurl part away.
 			 */
 			self::hidden_filters(
-				array( 'search', 'patch_available', 'severity', 'asset_type', 'team_id', 'age', 'overdue', 'life' )
+				array( 'search', 'patch_available', 'severity', 'asset_type', 'team_id', 'department', 'age', 'overdue', 'life' )
 			);
 			?>
 			<label><?php esc_html_e( 'Search', 'vulnhub' ); ?>
@@ -1210,6 +1210,13 @@ final class VulnHub_Dash_App {
 					<?php endforeach; ?>
 				</select>
 			</label>
+			<?php if ( class_exists( 'VulnHub_Departments' ) ) : ?>
+				<label><?php esc_html_e( 'Department', 'vulnhub' ); ?>
+					<select name="department">
+						<?php echo VulnHub_Departments::filter_options( self::q( 'department' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+					</select>
+				</label>
+			<?php endif; ?>
 			<label><?php esc_html_e( 'Age', 'vulnhub' ); ?>
 				<select name="age">
 					<option value=""><?php esc_html_e( 'Any age', 'vulnhub' ); ?></option>
@@ -1534,6 +1541,7 @@ final class VulnHub_Dash_App {
 			'poc'        => self::q( 'poc' ),
 			'asset_type' => self::q( 'asset_type' ),
 			'team_id'    => self::qi( 'team_id' ),
+			'department' => self::q( 'department' ),
 			'search'     => self::q( 'search' ),
 			'overdue'    => self::q( 'overdue' ),
 			'patch_available' => self::q( 'patch_available' ),
