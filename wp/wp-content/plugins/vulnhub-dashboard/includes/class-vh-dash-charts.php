@@ -341,7 +341,25 @@ final class VulnHub_Dash_Charts {
 			}
 
 			$out .= '</span>';
-			$out .= '<span class="vh-stack__value">' . esc_html( number_format_i18n( $total ) ) . '</span>';
+
+			// The total value, optionally a link to the rows behind it.
+			$value = esc_html( number_format_i18n( $total ) );
+			if ( ! empty( $row['value_href'] ) ) {
+				$value = '<a href="' . esc_url( (string) $row['value_href'] ) . '">' . $value . '</a>';
+			}
+			$out .= '<span class="vh-stack__value">' . $value . '</span>';
+
+			// Optional trailing column, e.g. a device count or an owner, itself
+			// optionally a link. Callers that set neither get the usual
+			// three-column row unchanged.
+			if ( isset( $row['extra'] ) && '' !== (string) $row['extra'] ) {
+				$extra = esc_html( (string) $row['extra'] );
+				if ( ! empty( $row['extra_href'] ) ) {
+					$extra = '<a href="' . esc_url( (string) $row['extra_href'] ) . '">' . $extra . '</a>';
+				}
+				$out .= '<span class="vh-stack__extra">' . $extra . '</span>';
+			}
+
 			$out .= '</div>';
 		}
 		$out .= '</div>';

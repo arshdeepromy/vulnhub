@@ -1542,6 +1542,7 @@ final class VulnHub_Dash_App {
 			'asset_type' => self::q( 'asset_type' ),
 			'team_id'    => self::qi( 'team_id' ),
 			'department' => self::q( 'department' ),
+			'hosting'    => self::q( 'hosting' ),
 			'search'     => self::q( 'search' ),
 			'overdue'    => self::q( 'overdue' ),
 			'patch_available' => self::q( 'patch_available' ),
