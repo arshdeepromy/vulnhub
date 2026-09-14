@@ -1541,6 +1541,7 @@ final class VulnHub_Dash_App {
 			'poc'        => self::q( 'poc' ),
 			'asset_type' => self::q( 'asset_type' ),
 			'team_id'    => self::qi( 'team_id' ),
+			'asset_id'   => self::qi( 'asset' ),
 			'department' => self::q( 'department' ),
 			'hosting'    => self::q( 'hosting' ),
 			'search'     => self::q( 'search' ),

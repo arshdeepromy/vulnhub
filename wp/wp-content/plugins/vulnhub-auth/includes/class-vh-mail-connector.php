@@ -94,7 +94,7 @@ final class VulnHub_Mail_Connector extends \VulnHub\Core\Connector {
 				'label'       => __( 'From address', 'vulnhub' ),
 				'type'        => 'email',
 				'required'    => true,
-				'placeholder' => 'no-reply@' . (string) wp_parse_url( home_url(), PHP_URL_HOST ),
+				'placeholder' => 'no-reply@example.com',
 				'help'        => __( 'Must be a real address at a domain this mail server is authorised to send for. A mismatch here is why invitations land in spam — or are refused outright.', 'vulnhub' ),
 			),
 			array(
