@@ -1737,8 +1737,10 @@ dialog.vh-modal {
   flex: 1 1 120px; height: 34px; border-radius: 8px; border: 1px solid transparent;
   background: transparent; color: var(--vh-ink-2); font: 600 12.5px var(--vh-font); cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  text-decoration: none;
   transition: background .15s, color .15s, border-color .15s;
 }
+.vh-tabs__tab:hover { text-decoration: none; }
 .vh-tabs__tab:hover { color: var(--vh-ink); }
 .vh-tabs__tab.is-active { background: var(--vh-raised-solid); border-color: var(--vh-line-2); color: var(--vh-ink); box-shadow: var(--vh-shadow); }
 .vh-tabs__dot { width: 5px; height: 5px; border-radius: 50%; background: var(--vh-accent); opacity: 0; }

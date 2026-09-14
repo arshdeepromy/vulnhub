@@ -204,6 +204,23 @@ final class VulnHub_Departments {
 	 * @return array<int,array<string,mixed>>
 	 */
 	public static function widget_rows( int $limit = 12 ): array {
+		/*
+		 * The aggregate below groups every open finding by owning department --
+		 * a three-table join over hundreds of thousands of rows. The widget
+		 * markup is host-cached, but the full "all departments" page and any
+		 * cold render run this live, so the result is memoised in an
+		 * epoch-keyed transient the way Exposure-by-product caches its rows:
+		 * one query per data epoch, shared across hosts and drill-downs, and
+		 * rotated automatically whenever a sync or import calls bust().
+		 */
+		$epoch = class_exists( 'VulnHub_Dash_Widgets' ) ? VulnHub_Dash_Widgets::epoch() : '';
+		$ck    = 'vh_dept_rows_' . md5( (string) $limit . '|' . $epoch );
+		$hit   = get_transient( $ck );
+
+		if ( is_array( $hit ) ) {
+			return $hit;
+		}
+
 		global $wpdb;
 
 		$f = vh_table( 'findings' );
@@ -226,7 +243,12 @@ final class VulnHub_Departments {
 			ORDER BY critical DESC, high DESC, total DESC
 			LIMIT %d";
 
-		return (array) $wpdb->get_results( $wpdb->prepare( $sql, $limit ), ARRAY_A ); // phpcs:ignore WordPress.DB
+		$rows = (array) $wpdb->get_results( $wpdb->prepare( $sql, $limit ), ARRAY_A ); // phpcs:ignore WordPress.DB
+
+		$ttl = class_exists( 'VulnHub_Dash_Widgets' ) ? VulnHub_Dash_Widgets::stale_ttl() : HOUR_IN_SECONDS;
+		set_transient( $ck, $rows, $ttl );
+
+		return $rows;
 	}
 
 	/** Portal URL to the findings of one department (+ optional severity). */
@@ -300,19 +322,32 @@ final class VulnHub_Departments {
 
 	/** Departments that carry at least one open finding. */
 	private static function department_count(): int {
+		$epoch = class_exists( 'VulnHub_Dash_Widgets' ) ? VulnHub_Dash_Widgets::epoch() : '';
+		$ck    = 'vh_dept_count_' . md5( $epoch );
+		$hit   = get_transient( $ck );
+
+		if ( false !== $hit ) {
+			return (int) $hit;
+		}
+
 		global $wpdb;
 
 		$f = vh_table( 'findings' );
 		$a = vh_table( 'assets' );
 		$p = vh_table( 'people' );
 
-		return (int) $wpdb->get_var( // phpcs:ignore WordPress.DB
+		$n = (int) $wpdb->get_var( // phpcs:ignore WordPress.DB
 			"SELECT COUNT(DISTINCT p.department)
 			 FROM {$f} f
 			 INNER JOIN {$a} a ON a.id = f.asset_id
 			 INNER JOIN {$p} p ON p.id = a.owner_person_id
 			 WHERE f.state IN ('open','reopened') AND f.exception_id = 0 AND p.department <> ''" // phpcs:ignore WordPress.DB
 		);
+
+		$ttl = class_exists( 'VulnHub_Dash_Widgets' ) ? VulnHub_Dash_Widgets::stale_ttl() : HOUR_IN_SECONDS;
+		set_transient( $ck, $n, $ttl );
+
+		return $n;
 	}
 
 	public static function render_widget(): void {

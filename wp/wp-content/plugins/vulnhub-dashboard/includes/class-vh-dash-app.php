@@ -1021,6 +1021,20 @@ final class VulnHub_Dash_App {
 		$q     = Repo::findings( array_filter( $args, static fn( $v ): bool => '' !== $v && 0 !== $v ) );
 		$total = (int) $q['total'];
 		$pages = max( 1, (int) ceil( $total / $per ) );
+
+		/*
+		 * Two views over the same filtered set: the findings list, and a
+		 * product breakdown of exactly those findings. The tab links carry
+		 * every active filter so switching between them never changes scope.
+		 */
+		$vh_tab       = 'products' === self::q( 'tab' ) ? 'products' : 'findings';
+		$vh_tab_carry = self::current_filters( array(
+			'search', 'patch_available', 'severity', 'asset_type', 'team_id', 'department',
+			'age', 'overdue', 'life', 'product', 'zone', 'platform', 'sev_not', 'route',
+			'delivery', 'poc', 'hosting', 'asset', 'state', 'orderby', 'order', 'location_id',
+		) );
+		$vh_find_url  = self::page_url( 'vulnerabilities', $vh_tab_carry );
+		$vh_prod_url  = self::page_url( 'vulnerabilities', array_merge( $vh_tab_carry, array( 'tab' => 'products' ) ) );
 		?>
 		<div class="vh-page-head">
 			<div>
@@ -1041,6 +1055,11 @@ final class VulnHub_Dash_App {
 					<button type="button" class="vh-btn vh-btn--primary" data-vh-raise><?php esc_html_e( 'Raise ticket for selected', 'vulnhub' ); ?></button>
 				<?php endif; ?>
 			</div>
+		</div>
+
+		<div class="vh-tabs" role="tablist">
+			<a class="vh-tabs__tab <?php echo 'findings' === $vh_tab ? 'is-active' : ''; ?>" href="<?php echo esc_url( $vh_find_url ); ?>"><?php esc_html_e( 'Findings', 'vulnhub' ); ?></a>
+			<a class="vh-tabs__tab <?php echo 'products' === $vh_tab ? 'is-active' : ''; ?>" href="<?php echo esc_url( $vh_prod_url ); ?>"><?php esc_html_e( 'By product', 'vulnhub' ); ?></a>
 		</div>
 
 		<?php
@@ -1245,6 +1264,57 @@ final class VulnHub_Dash_App {
 			<a class="vh-btn vh-btn--ghost" href="<?php echo esc_url( self::page_url( 'vulnerabilities' ) ); ?>"><?php esc_html_e( 'Reset', 'vulnhub' ); ?></a>
 		</form>
 
+		<?php if ( 'products' === $vh_tab ) : ?>
+			<?php
+			$vh_pargs = array_filter( $args, static fn( $v ): bool => '' !== $v && 0 !== $v );
+			unset( $vh_pargs['offset'] );
+			$vh_pargs['group'] = 'product';
+			$vh_pargs['limit'] = 100;
+			$vh_prows = (array) ( Repo::findings( $vh_pargs )['products'] ?? array() );
+			?>
+			<?php if ( ! $vh_prows ) : ?>
+				<p class="vh-chart-empty"><?php esc_html_e( 'No classified products for these filters.', 'vulnhub' ); ?></p>
+			<?php else : ?>
+				<?php
+				$vh_pmax = max( 1, (int) $vh_prows[0]['assets'] );
+				$vh_pcar = self::current_filters( array(
+					'search', 'patch_available', 'severity', 'asset_type', 'team_id', 'department',
+					'age', 'overdue', 'life', 'zone', 'platform', 'sev_not', 'route', 'delivery',
+					'poc', 'hosting', 'asset', 'state',
+				) );
+				?>
+				<ul class="vh-prodlist">
+					<?php foreach ( $vh_prows as $vh_pr ) : ?>
+						<?php
+						$vh_pa   = (int) $vh_pr['assets'];
+						$vh_ppct = (int) round( 100 * $vh_pa / $vh_pmax );
+						$vh_purl = self::page_url( 'vulnerabilities', array_merge( $vh_pcar, array( 'product' => (string) $vh_pr['product_slug'] ) ) );
+						?>
+						<li class="vh-prodrow">
+							<?php echo VulnHub_Dash_Widgets::product_icon( (string) $vh_pr['product_slug'], (string) $vh_pr['component_class'], (string) $vh_pr['product'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+							<div class="vh-prodrow__main">
+								<div class="vh-prodrow__head">
+									<a class="vh-prodrow__name" href="<?php echo esc_url( $vh_purl ); ?>"><?php echo esc_html( (string) $vh_pr['product'] ); ?></a>
+									<?php echo VulnHub_Dash_Widgets::product_kind_badge( (string) $vh_pr['product_kind'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+									<span class="vh-prodrow__nums">
+										<?php
+										printf(
+											/* translators: 1: asset count, 2: finding count. */
+											esc_html__( '%1$s assets · %2$s findings', 'vulnhub' ),
+											'<strong>' . esc_html( number_format_i18n( $vh_pa ) ) . '</strong>',
+											esc_html( number_format_i18n( (int) $vh_pr['findings'] ) )
+										);
+										?>
+									</span>
+								</div>
+								<div class="vh-prodrow__bar"><span style="width:<?php echo (int) $vh_ppct; ?>%"></span></div>
+							</div>
+						</li>
+					<?php endforeach; ?>
+				</ul>
+				<p class="vh-sub"><?php esc_html_e( 'Products behind the findings in this scope, ranked by assets affected. A bundled library is attributed to the app that ships it. Select a product to filter the findings list to it.', 'vulnhub' ); ?></p>
+			<?php endif; ?>
+		<?php else : ?>
 		<?php echo VulnHub_Dash_Charts::severity_legend(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 
 		<?php if ( ! $q['rows'] ) : ?>
@@ -1305,6 +1375,7 @@ final class VulnHub_Dash_App {
 			</div>
 			<?php self::pager( $paged, $pages, 'vp' ); ?>
 		<?php endif; ?>
+		<?php endif; /* tab */ ?>
 		<?php
 	}
 

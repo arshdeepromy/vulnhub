@@ -152,6 +152,21 @@ final class VulnHub_Hosting {
 	 * @return array<string,array<string,int>> keyed by environment key.
 	 */
 	public static function rows(): array {
+		/*
+		 * Two GROUP BYs over the server estate and the whole findings table.
+		 * Memoised in an epoch-keyed transient the way Exposure-by-product and
+		 * the department widget cache theirs: computed once per data epoch,
+		 * shared across hosts and the widget's drill-downs, and rotated
+		 * automatically whenever a sync or import calls bust().
+		 */
+		$epoch = class_exists( 'VulnHub_Dash_Widgets' ) ? VulnHub_Dash_Widgets::epoch() : '';
+		$ck    = 'vh_hosting_rows_' . md5( $epoch );
+		$hit   = get_transient( $ck );
+
+		if ( is_array( $hit ) ) {
+			return $hit;
+		}
+
 		global $wpdb;
 
 		$a   = vh_table( 'assets' );
@@ -215,7 +230,12 @@ final class VulnHub_Hosting {
 		}
 
 		// Drop environments with no servers.
-		return array_filter( $out, static fn( array $r ): bool => $r['servers'] > 0 );
+		$out = array_filter( $out, static fn( array $r ): bool => $r['servers'] > 0 );
+
+		$ttl = class_exists( 'VulnHub_Dash_Widgets' ) ? VulnHub_Dash_Widgets::stale_ttl() : HOUR_IN_SECONDS;
+		set_transient( $ck, $out, $ttl );
+
+		return $out;
 	}
 
 	/* =================================================================
