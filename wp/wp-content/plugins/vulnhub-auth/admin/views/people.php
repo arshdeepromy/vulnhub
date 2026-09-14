@@ -324,7 +324,7 @@ endif;
 				<th scope="row"><label for="vh-new-email"><?php esc_html_e( 'Email address', 'vulnhub' ); ?></label></th>
 				<td>
 					<input type="email" id="vh-new-email" name="email" class="regular-text" required
-						placeholder="analyst@<?php echo esc_attr( (string) wp_parse_url( home_url(), PHP_URL_HOST ) ); ?>">
+						placeholder="analyst@example.com">
 				</td>
 			</tr>
 			<tr>

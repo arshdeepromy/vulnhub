@@ -428,10 +428,11 @@ final class VulnHub_Dash_Portal {
 		$word = (string) apply_filters( 'vulnhub_portal_login_wordmark', 'vulnhub' );
 
 		/*
-		 * Read back rather than written down: a staging copy of the portal
-		 * should not sit there claiming to be the production one.
+		 * An optional label under the sign-in card. Left empty by default so
+		 * the deployment's own hostname is never printed on the login screen;
+		 * set the 'vulnhub_portal_login_host' filter to show a chosen label.
 		 */
-		$host = (string) wp_parse_url( home_url(), PHP_URL_HOST );
+		$host = (string) apply_filters( 'vulnhub_portal_login_host', '' );
 		$sso  = self::sso_start_url( $redirect );
 
 		$chips = array(
@@ -477,7 +478,9 @@ final class VulnHub_Dash_Portal {
 
 						<div class="vh-login__cardhead">
 							<div class="vh-login__title"><?php esc_html_e( 'Sign in', 'vulnhub' ); ?></div>
-							<div class="vh-login__host"><?php echo esc_html( $host ); ?></div>
+							<?php if ( '' !== $host ) : ?>
+								<div class="vh-login__host"><?php echo esc_html( $host ); ?></div>
+							<?php endif; ?>
 						</div>
 
 						<?php if ( $error ) : ?>
