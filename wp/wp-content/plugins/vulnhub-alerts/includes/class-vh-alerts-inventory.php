@@ -262,7 +262,10 @@ final class VulnHub_Alerts_Inventory {
 
 	/** Rebuild after an import changes what we run. */
 	public static function init(): void {
-		add_action( 'vulnhub_import_completed', array( __CLASS__, 'flush' ) );
+		// `vulnhub_import_complete` (no -d) is the hook vulnhub-import fires;
+		// this listened for a name nothing ever fired. flush() takes no
+		// arguments, so the hook's own are ignored (accepted_args 0).
+		add_action( 'vulnhub_import_complete', array( __CLASS__, 'flush' ), 10, 0 );
 		add_action( 'vulnhub_coverage_recalculated', array( __CLASS__, 'flush' ) );
 	}
 }

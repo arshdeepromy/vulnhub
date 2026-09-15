@@ -357,6 +357,30 @@ final class VulnHub_Import_Runner {
 			 * night the answer actually mattered.
 			 */
 			Coverage::recalculate();
+
+			/**
+			 * Fires once an import job has finished successfully, after its
+			 * housekeeping (lifecycle sweep, stale-record collection,
+			 * duplicate sweep, roll-ups, mapping and coverage) has run.
+			 *
+			 * Listened for by the dashboard (widget cache) and by
+			 * vulnhub-alerts (installed-software inventory), and never fired
+			 * until now -- both listeners were dead code. The first argument
+			 * is the import type, which uses the same ids as the connectors
+			 * ('tenable', 'cmdb'), so a listener can map it exactly as it maps
+			 * `vulnhub_sync_complete`'s connector id.
+			 *
+			 * The dashboard also busts on `vulnhub_coverage_recalculated`,
+			 * which Coverage::recalculate() above has just fired, so its cache
+			 * is invalidated twice for one import. That is harmless: a bust
+			 * only ticks a counter, and queue_warm() holds a two-minute lock,
+			 * so the board is still rebuilt once.
+			 *
+			 * @param string              $type     Import type: 'tenable' or 'cmdb'.
+			 * @param int                 $job_id   Import job id.
+			 * @param array<string,mixed> $counters The job's counters (rows_read, assets_created, findings_created, ...).
+			 */
+			do_action( 'vulnhub_import_complete', (string) $job['type'], $job_id, array_diff_key( $counters, array( 'failures' => true ) ) );
 		}
 
 		vulnhub()->logger->audit(
