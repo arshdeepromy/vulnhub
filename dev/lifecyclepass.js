@@ -1,3 +1,4 @@
+const VH_ROOT = process.env.VULNHUB_ROOT || require('path').resolve(__dirname, '..');
 /*
  * Prove the patch-availability and end-of-life work end to end, in a browser.
  *
@@ -17,7 +18,7 @@ const path = require('path');
 const { chromium } = require('playwright');
 
 const BASE = 'http://localhost:8093';
-const ROOT = '/home/romy/vulnhub';
+const ROOT = VH_ROOT;
 const OUT = path.join(ROOT, 'dev/shots');
 
 const results = [];

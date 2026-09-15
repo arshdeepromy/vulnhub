@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       VulnHub Dashboard
- * Plugin URI:        https://vul.romynz.com
+ * Plugin URI:        https://github.com/arshdeepromy/vulnhub
  * Description:       The front-end application for VulnHub — dashboards, vulnerability triage, asset ownership, ticket tracking and the exception register, served as a theme-independent app shell at your own domain.
  * Version:           1.0.0
  * Requires at least: 6.5
@@ -676,7 +676,7 @@ register_activation_hook(
 
 		update_option( 'vulnhub_dash_pages', $map, false );
 
-		// The dashboard becomes the site's front page, so vul.romynz.com lands
+		// The dashboard becomes the site's front page, so the site root lands
 		// straight on the application rather than a blog index.
 		if ( ! empty( $map['dashboard'] ) ) {
 			update_option( 'show_on_front', 'page' );

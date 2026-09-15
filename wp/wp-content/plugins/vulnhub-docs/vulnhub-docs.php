@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       VulnHub Docs
- * Plugin URI:        https://vul.romynz.com
+ * Plugin URI:        https://github.com/arshdeepromy/vulnhub
  * Description:       The built-in handbook and developer wiki for VulnHub. Adds a "Docs" section to the portal — a browsable set of guide and reference pages that explain every widget, every number and how the data is filtered, for new users and new developers alike — and links it from the primary navigation and the admin area.
  * Version:           1.0.0
  * Requires at least: 6.5

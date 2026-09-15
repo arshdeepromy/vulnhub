@@ -10,3 +10,6 @@ wp/wp-content/upgrade/
 .vh_enc_key
 .mcp_token
 .portal_test_pass
+
+# Real/sensitive sample data — never commit
+dev/real-*.csv

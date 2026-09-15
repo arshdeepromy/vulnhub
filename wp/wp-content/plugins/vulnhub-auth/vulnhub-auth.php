@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       VulnHub Authentication
- * Plugin URI:        https://vul.romynz.com
+ * Plugin URI:        https://github.com/arshdeepromy/vulnhub
  * Description:       Portal account management, multi-factor authentication and enterprise single sign-on for the VulnHub platform — RFC 6238 TOTP with recovery codes, Okta OIDC, Microsoft Entra ID OIDC, generic OpenID Connect, and Active Directory / LDAP.
  * Version:           1.1.0
  * Requires at least: 6.5

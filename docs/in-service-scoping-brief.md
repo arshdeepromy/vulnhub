@@ -4,9 +4,9 @@
 
 VulnHub — WordPress vulnerability & asset management app.
 
-- Root: `/home/romy/vulnhub` (docker compose: `vulnhub-wp`, `vulnhub-db`, `vulnhub-wpcli`)
-- Plugins: `/home/romy/vulnhub/wp/wp-content/plugins/vulnhub-*`
-- Live: https://vul.romynz.com/
+- Root: the cloned repository (docker compose: `vulnhub-wp`, `vulnhub-db`, `vulnhub-wpcli`)
+- Plugins: `wp/wp-content/plugins/vulnhub-*`
+- Live: your public domain (e.g. `https://vulnhub.example.com/`)
 - Helpers: `./wp.sh <wp-cli args>` · `./q.sh` (reads SQL on stdin) · `./lint.sh` (php -l across all plugins)
 - DB prefix `wp_`, assets table `wp_vh_assets`, findings `wp_vh_findings`
 
@@ -147,7 +147,7 @@ Propose an answer with the trade-offs, ask me to confirm, then implement.
 ## Verify with
 
 ```bash
-cd /home/romy/vulnhub
+cd /path/to/vulnhub
 ./q.sh <<'SQL'
 SELECT lifecycle_status, COUNT(*) FROM wp_vh_assets GROUP BY lifecycle_status ORDER BY 2 DESC;
 SQL
@@ -156,11 +156,11 @@ SQL
 
 And these URLs — widget number must equal the list header count in every case:
 
-- https://vul.romynz.com/ (Remediation health, Estate by device type, Platforms past EOL, Ownership gaps)
-- https://vul.romynz.com/assets/ · `?life=all` · `?life=retired_all` · `?life=in_service` · `?life=unknown`
-- https://vul.romynz.com/assets/?coverage=gap · `?needs_user=1` · `?eol=win10-22h2` · `?known=only:tenable`
-- https://vul.romynz.com/vulnerabilities/
-- https://vul.romynz.com/vulnhub-estate/
+- / (Remediation health, Estate by device type, Platforms past EOL, Ownership gaps)
+- /assets/ · `?life=all` · `?life=retired_all` · `?life=in_service` · `?life=unknown`
+- /assets/?coverage=gap · `?needs_user=1` · `?eol=win10-22h2` · `?known=only:tenable`
+- /vulnerabilities/
+- /vulnhub-estate/
 
 Baselines observed before the fix (for regression comparison):
 `coverage=gap` 99 (56 in_service / 43 unknown) · `needs_user=1` 78 (5 / 13 unknown / 59 quarantine / 1

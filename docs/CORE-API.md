@@ -4,8 +4,7 @@ Read this before writing any VulnHub integration plugin. Core owns the data mode
 the credential vault, scheduling, logging, ownership mapping and the admin portal.
 Your plugin supplies **one connector class** and (optionally) its own admin screen.
 
-Everything lives on the Kiro box at:
-`/home/romy/vulnhub/wp/wp-content/plugins/`
+Plugins live under `wp/wp-content/plugins/` in the repository.
 
 WordPress 7.0.4, PHP 8.3, MariaDB 11. Table prefix `vh_`, so VulnHub tables are
 `vh_vulnhub_*`. Use `vh_table('assets')` — never hardcode.
@@ -598,8 +597,8 @@ vh_can_manage();
 - Never `error_log()` a credential. Never echo a secret back into a form field —
   render the mask from `Settings::secret_hint()` as a placeholder instead.
 - Translatable strings use the `vulnhub` text domain.
-- Lint before you finish: `/home/romy/vulnhub/lint.sh`
-- Smoke-test pages: `/home/romy/vulnhub/check-pages.sh "/wp-admin/admin.php?page=…"`
+- Lint before you finish: `./lint.sh`
+- Smoke-test pages: `./check-pages.sh "/wp-admin/admin.php?page=…"`
 
 
 

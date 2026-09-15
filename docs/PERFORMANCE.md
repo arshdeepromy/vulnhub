@@ -16,7 +16,7 @@ protocol              : h3
 
 Sixteen and a half seconds waiting for the server to produce the HTML, and
 essentially nothing else. Not CSS, not JavaScript, not image weight, not the
-Cloudflare tunnel. The same page measured 322 ms an hour later.
+a fronting CDN. The same page measured 322 ms an hour later.
 
 That gap is the whole story: the stack was not slow, it **collapsed under
 contention**, and four things made it fragile.
@@ -116,7 +116,7 @@ also caps at 151 connections and prefork opens one per worker.
 **Fixed** in `conf/apache/vulnhub-mpm.conf`: a real floor of warm workers
 (`StartServers 16`, `MinSpareServers 12`), and a ceiling the container can
 genuinely hold (`MaxRequestWorkers 40`), plus a short keep-alive timeout so a
-tunnel connection does not pin a worker doing nothing.
+proxied connection does not pin a worker doing nothing.
 
 ---
 
@@ -134,7 +134,7 @@ so a media transcode cannot starve it.
 
 ## Where it landed
 
-Through the tunnel, at `vul.romynz.com`:
+Through a fronting proxy on a public domain:
 
 | page | median TTFB |
 |---|---|

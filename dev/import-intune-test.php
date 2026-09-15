@@ -32,8 +32,8 @@ $row = array(
 	'Compliance'                => 'Compliant',
 	'OS'                        => 'Windows',
 	'OS version'                => '10.0.26100.2033',
-	'Primary user UPN'          => 'csvtest.person@romynz.example',
-	'Primary user email address' => 'csvtest.person@romynz.example',
+	'Primary user UPN'          => 'csvtest.person@example.com',
+	'Primary user email address' => 'csvtest.person@example.com',
 	'Primary user display name' => 'CSV Test Person',
 	'Last check-in'             => '07/09/2026 06:14:22',   // day-first, as an NZ export writes it
 	'Enrolled date'             => '2024-02-11T03:00:00Z',
@@ -72,5 +72,5 @@ printf( "  %-18s %s\n", 'site name', (string) ( $loc['name'] ?? '(none)' ) );
 // Clean up so the estate is left exactly as it was.
 $wpdb->delete( vh_table( 'assets' ), array( 'id' => (int) $a['id'] ) );
 $wpdb->delete( vh_table( 'locations' ), array( 'id' => (int) $a['location_id'] ) );
-$wpdb->delete( vh_table( 'people' ), array( 'email' => 'csvtest.person@romynz.example' ) );
+$wpdb->delete( vh_table( 'people' ), array( 'email' => 'csvtest.person@example.com' ) );
 echo "\n(test asset, site and person removed)\n";

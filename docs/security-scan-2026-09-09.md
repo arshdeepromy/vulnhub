@@ -1,7 +1,7 @@
 # VulnHub app — unauthenticated security scan
 
 **Target:** VulnHub — Vulnerability & Asset Management (WordPress)
-**Origin scanned:** http://localhost:8093 (public edge: https://vul.romynz.com via Cloudflare tunnel)
+**Origin scanned:** http://localhost:8093 (public edge: https://<your-domain> via a fronting CDN)
 **Date:** 2026-09-09
 **Scope of this pass:** what a stranger with only the login-page URL can reach — no credentials.
 **Method:** `curl` for the HTTP/API surface (faster and more precise than a browser for this),
@@ -19,7 +19,7 @@ only "Sign in". A headless browser hitting `/assets/` unauthenticated was bounce
 `/sign-in/` and leaked **zero** data markers.
 
 The exposure is the **WordPress platform underneath it**, not the app. WordPress leaks
-the administrator username (`romy`, id 1) three different ways, and the origin advertises
+the administrator username (`<admin>`, id 1) three different ways, and the origin advertises
 its software versions. On a login page reachable from the internet, a confirmed username
 turns "guess two things" into "guess one" — it is the single change that most helps an
 attacker, and the thing the "only the login page should be exposed" goal is really about.
@@ -30,9 +30,9 @@ attacker, and the thing the "only the login page should be exposed" goal is real
 
 | # | Severity | Finding | Evidence |
 |---|----------|---------|----------|
-| 1 | High | **Admin username disclosed via REST** | `GET /wp-json/wp/v2/users` → `[{"id":1,"slug":"romy",...}]` |
-| 2 | High | **Admin username disclosed via author scan** | `GET /?author=1` → 301 `Location: /author/romy/` |
-| 3 | Medium | **Login form confirms valid usernames** | wrong pw for `romy` → "the password you entered for romy is incorrect"; unknown user → "not registered on this site" |
+| 1 | High | **Admin username disclosed via REST** | `GET /wp-json/wp/v2/users` → `[{"id":1,"slug":"<admin>",...}]` |
+| 2 | High | **Admin username disclosed via author scan** | `GET /?author=1` → 301 `Location: /author/<admin>/` |
+| 3 | Medium | **Login form confirms valid usernames** | wrong pw for `<admin>` → "the password you entered for <admin> is incorrect"; unknown user → "not registered on this site" |
 | 4 | Medium | **`xmlrpc.php` enabled** (pingback + `system.multicall`) | `POST /xmlrpc.php system.listMethods` lists `pingback.ping`, `system.multicall` — brute-force amplification and pingback SSRF/reflection |
 | 5 | Medium | **Debug log world-readable** | `GET /wp-content/debug.log` → 200; leaks absolute server paths and a real code warning (see #8) |
 | 6 | Low | **Software version disclosure** | `Server: Apache/2.4.68 (Debian)`, `X-Powered-By: PHP/8.3.33`, `GET /readme.html` + `/license.txt` → 200 |
@@ -75,9 +75,9 @@ Two files, both under the bind-mounted `./wp` so they survive container recreati
 
 | # | Finding | Before | After |
 |---|---------|--------|-------|
-| 1 | REST user enumeration | `200`, exposes `slug:romy` | `404` for anonymous; `200` preserved for logged-in users |
-| 2 | `?author=N` / author archive | `301 → /author/romy/` | `404` |
-| 3 | Login username oracle | "…for **romy** is incorrect" vs "not registered" | identical "username or password is incorrect" |
+| 1 | REST user enumeration | `200`, exposes `slug:<admin>` | `404` for anonymous; `200` preserved for logged-in users |
+| 2 | `?author=N` / author archive | `301 → /author/<admin>/` | `404` |
+| 3 | Login username oracle | "…for **<admin>** is incorrect" vs "not registered" | identical "username or password is incorrect" |
 | 4 | `xmlrpc.php` | enabled (pingback + multicall) | `403` (Apache) + `xmlrpc_enabled` false + methods dropped |
 | 5 | `wp-content/debug.log` | `200` | `403` |
 | 6 | `readme.html` / `license.txt` | `200` | `403` |
@@ -99,6 +99,6 @@ Two files, both under the bind-mounted `./wp` so they survive container recreati
 
 ### Edge note
 
-Scanned the origin (`localhost:8093`). At `vul.romynz.com` Cloudflare may already mask the Server
+Scanned the origin (`localhost:8093`). At the public edge a fronting CDN may already mask the Server
 banner and enforce HTTPS/HSTS; confirm HSTS is set at the edge, since the origin is plain HTTP
-inside the tunnel.
+inside the proxied path.

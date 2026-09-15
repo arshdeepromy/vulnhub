@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-cd /home/romy/vulnhub
+# Run from the project root (the directory that holds docker-compose.yml),
+# resolved relative to this script so it works wherever the repo is checked out.
+cd "$(dirname "$0")"
 if docker compose ps --format '{{.Name}} {{.State}}' | grep -q 'wpcli running'; then
   docker compose exec -T wpcli wp "$@"
 else

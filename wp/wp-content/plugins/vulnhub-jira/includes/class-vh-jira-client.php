@@ -615,7 +615,7 @@ final class VulnHub_Jira_Client {
 		$body = array(
 			'globalId'     => $global_id,
 			'application'  => array(
-				'type' => 'com.romynz.vulnhub',
+				'type' => 'com.example.vulnhub',
 				'name' => 'VulnHub',
 			),
 			'relationship' => 'tracked in VulnHub',

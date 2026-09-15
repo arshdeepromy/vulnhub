@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       VulnHub Jira
- * Plugin URI:        https://vul.romynz.com
+ * Plugin URI:        https://github.com/arshdeepromy/vulnhub
  * Description:       Jira Cloud integration for VulnHub — raises remediation tickets from findings with a genuine Atlassian Document Format description, keeps their status in sync in batched JQL queries, reopens issues the scanner still detects, and drives a configurable automation engine that flows tickets to the right team.
  * Version:           1.0.0
  * Requires at least: 6.5

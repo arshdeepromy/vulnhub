@@ -1,3 +1,4 @@
+const VH_ROOT = process.env.VULNHUB_ROOT || require('path').resolve(__dirname, '..');
 /*
  * Does the Elementor side of VulnHub actually work in the editor?
  *
@@ -12,7 +13,7 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 
 const BASE = 'http://localhost:8093';
-const PASS = fs.readFileSync('/home/romy/vulnhub/.admin_pass', 'utf8').trim();
+const PASS = fs.readFileSync(VH_ROOT + '/.admin_pass', 'utf8').trim();
 
 let passed = 0;
 let failed = 0;
@@ -61,7 +62,7 @@ function bad(label, detail) {
     try {
       docs = JSON.parse(
         require('child_process')
-          .execSync(`/home/romy/vulnhub/wp.sh option get vulnhub_elementor_documents --format=json 2>/dev/null`)
+          .execSync(`${VH_ROOT}/wp.sh option get vulnhub_elementor_documents --format=json 2>/dev/null`)
           .toString()
           .trim()
       );

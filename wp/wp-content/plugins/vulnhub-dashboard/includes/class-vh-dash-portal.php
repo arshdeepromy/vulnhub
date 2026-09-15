@@ -421,11 +421,12 @@ final class VulnHub_Dash_Portal {
 		/**
 		 * The wordmark beside the logo mark.
 		 *
-		 * The design signs off "romynz". A filter is cheaper than editing a
+		 * Defaults to the product name. A filter is cheaper than editing a
 		 * template on a rebrand, and keeps the org name setting -- which is a
-		 * long legal name in most installs -- out of a 16px slot.
+		 * long legal name in most installs -- out of a 16px slot. A deployment
+		 * sets its own brand with the 'vulnhub_portal_login_wordmark' filter.
 		 */
-		$word = (string) apply_filters( 'vulnhub_portal_login_wordmark', 'romynz' );
+		$word = (string) apply_filters( 'vulnhub_portal_login_wordmark', 'VulnHub' );
 
 		/*
 		 * An optional label under the sign-in card. Left empty by default so

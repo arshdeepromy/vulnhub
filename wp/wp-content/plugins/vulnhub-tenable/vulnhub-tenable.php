@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       VulnHub Tenable
- * Plugin URI:        https://vul.romynz.com
+ * Plugin URI:        https://github.com/arshdeepromy/vulnhub
  * Description:       Tenable Vulnerability Management integration for VulnHub — imports assets and findings via the export APIs, classifies asset types for the ownership engine, computes SLA due dates, and verifies closed tickets against fresh scan data.
  * Version:           1.0.0
  * Requires at least: 6.5

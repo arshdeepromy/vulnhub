@@ -1,3 +1,4 @@
+const VH_ROOT = process.env.VULNHUB_ROOT || require('path').resolve(__dirname, '..');
 /*
  * Does the dashboard board actually pack, move and stick?
  *
@@ -12,7 +13,7 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 
 const BASE = 'http://localhost:8093';
-const PASS = fs.readFileSync('/home/romy/vulnhub/.portal_test_pass', 'utf8').trim();
+const PASS = fs.readFileSync(VH_ROOT + '/.portal_test_pass', 'utf8').trim();
 const GAP = 16;
 
 let passed = 0;

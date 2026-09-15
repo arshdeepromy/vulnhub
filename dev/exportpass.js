@@ -1,3 +1,4 @@
+const VH_ROOT = process.env.VULNHUB_ROOT || require('path').resolve(__dirname, '..');
 /*
  * The export control, end to end.
  *
@@ -28,7 +29,7 @@ const bad = (n, d) => { fail++; console.log(`FAIL  ${n}${d ? '  — ' + d : ''}`
   page.on('pageerror', e => errs.push(String(e).slice(0, 140)));
   page.on('console', m => { if (m.type() === 'error') errs.push(m.text().slice(0, 140)); });
 
-  const pw = fs.readFileSync('/home/romy/vulnhub/.admin_pass', 'utf8').trim();
+  const pw = fs.readFileSync(VH_ROOT + '/.admin_pass', 'utf8').trim();
   await page.goto(`${BASE}/sign-in/`, { waitUntil: 'domcontentloaded' });
   await page.fill('input[name="log"], #user_login, input[name="username"]', 'romy');
   await page.fill('input[type="password"]', pw);
