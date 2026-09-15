@@ -190,8 +190,20 @@ final class Admin {
 			return;
 		}
 
-		wp_register_style( 'vulnhub-admin', VULNHUB_URL . 'admin/assets/admin.css', array(), VULNHUB_VERSION );
-		wp_register_script( 'vulnhub-admin', VULNHUB_URL . 'admin/assets/admin.js', array( 'wp-api-fetch' ), VULNHUB_VERSION, true );
+		/*
+		 * Version by the file's own mtime, not the plugin version, so an edit
+		 * to the CSS or JS is picked up by the browser without waiting for a
+		 * plugin-version bump. Versioning admin.js by the static plugin
+		 * version is exactly how a fixed Test/Sync handler can sit on disk
+		 * while every browser keeps running the cached broken one.
+		 */
+		$css_path = VULNHUB_DIR . 'admin/assets/admin.css';
+		$js_path  = VULNHUB_DIR . 'admin/assets/admin.js';
+		$css_ver  = VULNHUB_VERSION . '.' . ( file_exists( $css_path ) ? (string) filemtime( $css_path ) : '0' );
+		$js_ver   = VULNHUB_VERSION . '.' . ( file_exists( $js_path ) ? (string) filemtime( $js_path ) : '0' );
+
+		wp_register_style( 'vulnhub-admin', VULNHUB_URL . 'admin/assets/admin.css', array(), $css_ver );
+		wp_register_script( 'vulnhub-admin', VULNHUB_URL . 'admin/assets/admin.js', array( 'wp-api-fetch' ), $js_ver, true );
 
 		wp_localize_script(
 			'vulnhub-admin',

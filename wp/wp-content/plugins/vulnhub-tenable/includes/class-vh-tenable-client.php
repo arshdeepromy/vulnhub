@@ -68,10 +68,14 @@ final class VulnHub_Tenable_Client {
 	 * interactive "Sync now" gets its own set_time_limit() call in
 	 * VulnHub_Tenable_Connector::do_sync() to match.
 	 */
-	private const POLL_TIMEOUT_SECONDS = 1500;
+	 // Raised to 1h: the staged sync only DOWNLOADS in this phase (no per-row
+	 // database work), so the ceiling now bounds a network transfer of a
+	 // multi-gigabyte full export rather than a download-and-import, and a
+	 // first full pull of a large account can legitimately stream for a while.
+	private const POLL_TIMEOUT_SECONDS = 3600;
 
 	/** Hard ceiling on status requests for a single export job. */
-	private const POLL_MAX_ATTEMPTS = 300;
+	private const POLL_MAX_ATTEMPTS = 1200;
 
 	/** First and largest sleep between status polls, in seconds. */
 	private const POLL_FIRST_WAIT = 2.0;
@@ -428,7 +432,7 @@ final class VulnHub_Tenable_Client {
 	 * @param callable(array<int,array<string,mixed>>,int):void $on_chunk Chunk handler.
 	 * @return array{uuid:string,status:string,chunks:int,records:int,seconds:float}
 	 */
-	public function run_export( string $kind, array $body, callable $on_chunk ): array {
+	public function run_export( string $kind, array $body, callable $on_chunk, ?callable $on_poll = null ): array {
 		$started = microtime( true );
 		$uuid    = $this->request_export( $kind, $body );
 
@@ -445,6 +449,15 @@ final class VulnHub_Tenable_Client {
 
 			$state  = $this->export_status( $kind, $uuid );
 			$status = strtoupper( (string) ( $state['status'] ?? '' ) );
+
+			// A liveness beat every poll, before any chunk downloads. A large
+			// export can sit in QUEUED/PROCESSING for minutes between chunks
+			// while Tenable prepares the next batch; without a beat here the
+			// stall-reaper mistakes that legitimate wait for a dead process
+			// and kills a download that is working fine.
+			if ( $on_poll ) {
+				$on_poll();
+			}
 
 			// Download every chunk that has appeared since the last poll.
 			foreach ( (array) ( $state['chunks_available'] ?? array() ) as $chunk_id ) {

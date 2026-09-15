@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       VulnHub Tenable
- * Plugin URI:        https://github.com/arshdeepromy/vulnhub
+ * Plugin URI:        https://vul.romynz.com
  * Description:       Tenable Vulnerability Management integration for VulnHub — imports assets and findings via the export APIs, classifies asset types for the ownership engine, computes SLA due dates, and verifies closed tickets against fresh scan data.
  * Version:           1.0.0
  * Requires at least: 6.5
@@ -35,6 +35,7 @@ add_action(
 	'vulnhub_register_connectors',
 	static function ( $connectors ): void {
 		require_once VULNHUB_TENABLE_DIR . 'includes/class-vh-tenable-client.php';
+		require_once VULNHUB_TENABLE_DIR . 'includes/class-vh-tenable-store.php';
 		require_once VULNHUB_TENABLE_DIR . 'includes/class-vh-tenable-mock.php';
 		require_once VULNHUB_TENABLE_DIR . 'includes/class-vh-tenable-connector.php';
 		require_once VULNHUB_TENABLE_DIR . 'includes/class-vh-tenable-verifier.php';

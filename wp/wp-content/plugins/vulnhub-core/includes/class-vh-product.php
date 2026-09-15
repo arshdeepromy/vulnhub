@@ -942,4 +942,43 @@ final class VH_Product {
 		$s = preg_replace( '/[^a-z0-9]+/', '-', $s );
 		return trim( (string) $s, '-' );
 	}
+
+	/**
+	 * The highest "fixed in" version across a set of scanner texts.
+	 *
+	 * A scanner reports one finding per version threshold it knows about --
+	 * "Firefox < 154.0", "Firefox < 146.0", and so on -- so a single outdated
+	 * browser lights up a dozen separate rows. For remediation only the
+	 * newest of those thresholds matters: install that or later and every one
+	 * of them is fixed at once. This pulls the version out of a `< X` title or
+	 * an "Upgrade to X" / "X or later" solution and returns the maximum.
+	 *
+	 * @param array<int,string> $texts Titles and/or solution strings.
+	 * @return string The highest version seen, or '' if none parsed.
+	 */
+	public static function latest_fixed_version( array $texts ): string {
+		$best = '';
+
+		foreach ( $texts as $text ) {
+			$text = (string) $text;
+
+			// Prefer an explicit fix threshold; fall back to any dotted number
+			// that is not obviously a CVE year (four digits followed by '-').
+			if ( preg_match_all( '/(?:<|upgrade to|update to|fixed in|version)\s*[^\d]{0,12}?(\d+(?:\.\d+)+)/i', $text, $m ) ) {
+				$candidates = $m[1];
+			} elseif ( preg_match_all( '/\b(\d+(?:\.\d+)+)\b/', $text, $m ) ) {
+				$candidates = $m[1];
+			} else {
+				continue;
+			}
+
+			foreach ( $candidates as $version ) {
+				if ( '' === $best || version_compare( $version, $best, '>' ) ) {
+					$best = $version;
+				}
+			}
+		}
+
+		return $best;
+	}
 }

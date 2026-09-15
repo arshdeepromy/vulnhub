@@ -1852,6 +1852,68 @@ final class Repo {
 	 * @param bool $dry_run Report only.
 	 * @return array<int,string> What was held, one line each.
 	 */
+	/**
+	 * Retire the assets Tenable no longer reports, after a FULL sync.
+	 *
+	 * Strictly scoped so it can never touch another connector's inventory: a
+	 * candidate must have Tenable as its primary source, carry a Tenable uuid,
+	 * and be known to NO other system (Intune, Defender, CMDB, any cloud). An
+	 * asset Intune or the CMDB also owns stays exactly where it is even when
+	 * Tenable drops it. Retirement is to `missing` -- reversible, and reversed
+	 * automatically the next time the asset is seen -- not a delete.
+	 *
+	 * A hard safeguard: if this would move more than 15% of the Tenable estate
+	 * at once, it refuses and changes nothing. That is the shape of a broken
+	 * "seen" set (an empty or partial asset export), and the cost of a wrong
+	 * mass-retirement is far higher than the cost of skipping one run's prune.
+	 *
+	 * Only ever call with the seen set from a COMPLETE full asset export; an
+	 * incremental export sees only recently-assessed hosts and would read
+	 * every un-rescanned machine as gone.
+	 *
+	 * @param array<int,string> $seen_uuids Tenable uuids present in this export.
+	 * @return array{aborted:bool,retired:int,candidates:int}
+	 */
+	public static function retire_absent_tenable( array $seen_uuids ): array {
+		global $wpdb;
+
+		$seen = array_flip( array_values( array_filter( array_map( 'strval', $seen_uuids ) ) ) );
+
+		if ( ! $seen ) {
+			return array( 'aborted' => true, 'retired' => 0, 'candidates' => 0 );
+		}
+
+		$a    = vh_table( 'assets' );
+		$rows = (array) $wpdb->get_results(
+			"SELECT id, tenable_uuid FROM {$a}
+			 WHERE primary_source = 'tenable' AND tenable_uuid <> ''
+			   AND lifecycle_status IN (" . vh_reportable_sql() . ")
+			   AND intune_id = '' AND defender_id = '' AND azure_ad_device_id = ''
+			   AND azure_vm_id = '' AND aws_instance_id = '' AND gcp_instance_id = ''
+			   AND cmdb_id = '' AND cmdb_key = ''", // phpcs:ignore WordPress.DB.PreparedSQL
+			ARRAY_A
+		);
+
+		$absent = array();
+		foreach ( $rows as $r ) {
+			if ( ! isset( $seen[ (string) $r['tenable_uuid'] ] ) ) {
+				$absent[] = (int) $r['id'];
+			}
+		}
+
+		$candidates = count( $rows );
+
+		if ( $candidates > 0 && count( $absent ) > (int) ceil( $candidates * 0.15 ) ) {
+			return array( 'aborted' => true, 'retired' => count( $absent ), 'candidates' => $candidates );
+		}
+
+		if ( $absent ) {
+			Lifecycle::set( $absent, 'missing' );
+		}
+
+		return array( 'aborted' => false, 'retired' => count( $absent ), 'candidates' => $candidates );
+	}
+
 	public static function collect_stale_assets( bool $dry_run = false ): array {
 		global $wpdb;
 
@@ -2828,7 +2890,7 @@ final class Repo {
 
 		// Same asset, vuln, port and protocol as last time.
 		$row = $wpdb->get_row(
-			$wpdb->prepare( "SELECT id, state FROM {$table} WHERE fingerprint = %s", $fingerprint ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$wpdb->prepare( "SELECT id, state, severity, risk_score FROM {$table} WHERE fingerprint = %s", $fingerprint ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			ARRAY_A
 		);
 		if ( $row ) {
@@ -2836,7 +2898,7 @@ final class Repo {
 		}
 
 		$candidates = $wpdb->get_results(
-			$wpdb->prepare( "SELECT id, state, port FROM {$table} WHERE asset_id = %d AND vuln_id = %d ORDER BY id", $asset_id, $vuln_id ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$wpdb->prepare( "SELECT id, state, severity, risk_score, port FROM {$table} WHERE asset_id = %d AND vuln_id = %d ORDER BY id", $asset_id, $vuln_id ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			ARRAY_A
 		);
 		if ( ! $candidates ) {
@@ -2916,6 +2978,47 @@ final class Repo {
 
 		$row_prev        = '';
 		$incoming_output = (string) ( $data['output'] ?? '' );
+
+		/*
+		 * Skip-unchanged fast path. A re-sync re-sends a finding that has not
+		 * changed on every scan, and re-parsing its plugin output and
+		 * rewriting every column for it is the bulk of a quarter-million-row
+		 * import's cost. When the row already exists with the same state,
+		 * severity and risk -- and this is not a reopen or a suppression flip
+		 * -- only "last seen" needs to move: a two-column UPDATE, no text
+		 * parsing. The one thing that can drift is the plugin output text, and
+		 * output almost never changes without the version (and so the vuln)
+		 * changing too; a periodic full resync refreshes it either way.
+		 */
+		if (
+			$existing
+			&& ! $reopened
+			&& (string) ( $existing['state'] ?? '' ) === $state
+			&& (string) ( $existing['severity'] ?? '' ) === $severity
+			&& abs( (float) ( $existing['risk_score'] ?? 0 ) - (float) ( $data['risk_score'] ?? 0 ) ) < 0.05
+		) {
+			$light = array(
+				'last_synced_at' => vh_now(),
+				'updated_at'     => vh_now(),
+			);
+			foreach ( array( 'last_found', 'last_fixed' ) as $ts ) {
+				if ( ! empty( $data[ $ts ] ) ) {
+					$light[ $ts ] = vh_to_mysql( $data[ $ts ] );
+				}
+			}
+			if ( '' !== (string) ( $data['scan_uuid'] ?? '' ) ) {
+				$light['scan_uuid'] = (string) $data['scan_uuid'];
+			}
+
+			$wpdb->update( $table, $light, array( 'id' => (int) $existing['id'] ) );
+
+			return array(
+				'id'        => (int) $existing['id'],
+				'created'   => false,
+				'reopened'  => false,
+				'unchanged' => true,
+			);
+		}
 
 		/*
 		 * Derived at write time, like bundle_app above it, because the
@@ -3207,6 +3310,20 @@ final class Repo {
 				$params[] = (int) $args[ $arg ];
 			}
 		}
+
+		/*
+		 * An explicit set of finding ids -- the "export exactly these" path
+		 * when a reader has ticked specific rows rather than exporting the
+		 * whole filtered set. Bounded, integer-cast and de-duplicated, so it
+		 * is a safe interpolation; an empty set after cleaning matches
+		 * nothing rather than everything.
+		 */
+		if ( isset( $args['ids'] ) && '' !== $args['ids'] ) {
+			$raw = is_array( $args['ids'] ) ? $args['ids'] : explode( ',', (string) $args['ids'] );
+			$set = array_values( array_unique( array_filter( array_map( 'intval', $raw ), static fn( int $n ): bool => $n > 0 ) ) );
+			$set = array_slice( $set, 0, 50000 );
+			$where[] = $set ? ( 'f.id IN (' . implode( ',', $set ) . ')' ) : '1=0';
+		}
 		if ( ! empty( $args['team_id'] ) ) {
 			$where[]  = 'a.team_id = %d';
 			$params[] = (int) $args['team_id'];
@@ -3339,6 +3456,41 @@ final class Repo {
 			$want    = in_array( (string) $args['patch_available'], array( '1', 'yes', 'true' ), true );
 			$where[] = ( $want ? '' : 'NOT ' ) . self::patch_sql( 'v' );
 			$need_v  = true;
+		}
+
+		/*
+		 * End-of-life scope, judged at the finding, not the host. A finding is
+		 * end of life when the thing it is actually about is discontinued:
+		 *
+		 *   - a missing-OS-update on a machine whose operating system is past
+		 *     vendor support (it can never be patched -- the OS is dead), or
+		 *   - a vulnerability that is itself a discontinued-software detection
+		 *     (Tenable's SEoL / "Unsupported Version" plugins).
+		 *
+		 * Crucially it is NOT "any finding on a machine that has some retired
+		 * library somewhere": that asset-level test dragged live, patchable
+		 * findings -- a Windows Server 2025 update with a fix waiting -- into
+		 * the EOL list because the same box happened to carry an old OpenSSL.
+		 * `insupport` is the exact complement. Empty inputs stay honest: with
+		 * nothing end of life the expression is 1=0, so `eol` matches nothing
+		 * and `insupport` (NOT 1=0) matches everything.
+		 */
+		if ( ! empty( $args['support'] ) && in_array( (string) $args['support'], array( 'eol', 'insupport' ), true ) ) {
+			$need_v     = true;
+			$os_assets  = Eol::eol_os_asset_ids();
+			$seol_vulns = Eol::seol_vuln_ids();
+
+			$eol_parts = array();
+			if ( $os_assets ) {
+				$eol_parts[] = "( v.component_class IN ( 'os_windows', 'os_linux' ) AND f.asset_id IN ( "
+					. implode( ',', array_map( 'intval', $os_assets ) ) . ' ) )';
+			}
+			if ( $seol_vulns ) {
+				$eol_parts[] = 'f.vuln_id IN ( ' . implode( ',', array_map( 'intval', $seol_vulns ) ) . ' )';
+			}
+
+			$eol_expr = $eol_parts ? ( '( ' . implode( ' OR ', $eol_parts ) . ' )' ) : '1=0';
+			$where[]  = ( 'eol' === $args['support'] ) ? $eol_expr : ( 'NOT ' . $eol_expr );
 		}
 
 		/*
@@ -3480,9 +3632,10 @@ final class Repo {
 		$need_a = $need_a || ! empty( $ext['need_asset'] );
 		$need_v = $need_v || ! empty( $ext['need_vuln'] );
 
-		// The product breakdown reads the vulns table for its grouping columns.
+		// The product and per-vulnerability breakdowns both read the vulns
+		// table for their grouping columns.
 		$group_by = (string) ( $args['group'] ?? '' );
-		if ( 'product' === $group_by ) {
+		if ( 'product' === $group_by || 'vuln' === $group_by ) {
 			$need_v = true;
 		}
 
@@ -3496,6 +3649,7 @@ final class Repo {
 			'hostname'    => 'a.hostname',
 			'due_at'      => 'f.due_at',
 			'title'       => 'v.title',
+			'vuln_id'     => 'f.vuln_id',
 		);
 		$orderby = $allowed[ (string) ( $args['orderby'] ?? '' ) ] ?? 'f.risk_score';
 		$order   = 'ASC' === strtoupper( (string) ( $args['order'] ?? 'DESC' ) ) ? 'ASC' : 'DESC';
@@ -3560,6 +3714,63 @@ final class Repo {
 			);
 		}
 
+		/*
+		 * Per-vulnerability breakdown of exactly this filtered set: one row
+		 * per vuln, with the count of assets and findings it accounts for and
+		 * enough of the vulns row to render the list and its clean two-section
+		 * export without a second query. Reuses the whole WHERE above -- so
+		 * the "Vulnerability on assets" tab groups precisely the findings the
+		 * Findings tab lists under the same filters. `total` is the number of
+		 * distinct vulnerabilities, which is what the pager counts here.
+		 */
+		if ( 'vuln' === $group_by ) {
+			$vlimit  = max( 1, min( 500, (int) ( $args['limit'] ?? 50 ) ) );
+			$voffset = max( 0, (int) ( $args['offset'] ?? 0 ) );
+
+			$vtotal = (int) ( $params
+				? $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(DISTINCT f.vuln_id) {$narrow}", ...$params ) ) // phpcs:ignore
+				: $wpdb->get_var( "SELECT COUNT(DISTINCT f.vuln_id) {$narrow}" ) ); // phpcs:ignore
+
+			if ( 0 === $vtotal || $voffset >= $vtotal ) {
+				return array(
+					'vulns' => array(),
+					'total' => $vtotal,
+				);
+			}
+
+			$vsql = "SELECT f.vuln_id,
+						MAX( v.title ) AS title,
+						MAX( v.plugin_id ) AS plugin_id,
+						MAX( v.family ) AS family,
+						MAX( v.severity ) AS severity,
+						MAX( v.severity_id ) AS severity_id,
+						MAX( v.component_class ) AS component_class,
+						MAX( v.product ) AS product,
+						MAX( v.product_kind ) AS product_kind,
+						MAX( v.cve_json ) AS cve_json,
+						MAX( v.cvss3_base ) AS cvss3_base,
+						MAX( v.vpr_score ) AS vpr_score,
+						MAX( v.exploit_available ) AS exploit_available,
+						MAX( v.patch_publication_date ) AS patch_publication_date,
+						MAX( v.solution ) AS solution,
+						MAX( v.description ) AS description,
+						COUNT( DISTINCT f.asset_id ) AS assets,
+						COUNT( * ) AS findings
+					 {$narrow}
+					 GROUP BY f.vuln_id
+					 ORDER BY MAX( v.severity_id ) DESC, assets DESC, findings DESC
+					 LIMIT %d OFFSET %d";
+
+			$vp   = $params;
+			$vp[] = $vlimit;
+			$vp[] = $voffset;
+
+			return array(
+				'vulns' => (array) $wpdb->get_results( $wpdb->prepare( $vsql, ...$vp ), ARRAY_A ), // phpcs:ignore
+				'total' => $vtotal,
+			);
+		}
+
 		$total = (int) ( $params
 			? $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) {$narrow}", ...$params ) ) // phpcs:ignore
 			: $wpdb->get_var( "SELECT COUNT(*) {$narrow}" ) ); // phpcs:ignore
@@ -3595,7 +3806,7 @@ final class Repo {
 			a.hostname, a.fqdn, a.ipv4, a.asset_type, a.operating_system, a.criticality,
 			a.owner_person_id, a.team_id, a.location_id,
 			v.title AS vuln_title, v.plugin_id, v.family, v.cve_json, v.cvss3_base, v.vpr_score,
-			v.product, v.product_kind,
+			v.product, v.product_kind, v.component_class,
 			v.solution, v.description, v.exploit_available, v.patch_publication_date,
 			p.display_name AS owner_name, p.upn AS owner_upn, p.department AS owner_department,
 			t.name AS team_name,

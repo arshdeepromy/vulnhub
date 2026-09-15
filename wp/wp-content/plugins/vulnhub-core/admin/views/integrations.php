@@ -218,6 +218,9 @@ $vh_active   = $vh_selected ? vulnhub()->connectors->get( $vh_selected ) : null;
 						</button>
 					<?php endif; ?>
 				</p>
+				<?php if ( $vh_active->supports_sync() ) : ?>
+					<div class="vh-sync-progress" data-vh-sync-progress="<?php echo esc_attr( $vh_active->id() ); ?>" hidden></div>
+				<?php endif; ?>
 			</div>
 
 			<?php if ( $vh_last_run ) : ?>
@@ -275,6 +278,14 @@ $vh_active   = $vh_selected ? vulnhub()->connectors->get( $vh_selected ) : null;
 					</div>
 					<p class="vh-connector__desc"><?php echo esc_html( $vh_c->description() ); ?></p>
 					<p class="vh-connector__desc"><em><?php echo esc_html( (string) $vh_h['detail'] ); ?></em></p>
+					<?php if ( ! empty( $vh_h['last'] ) ) : ?>
+						<dl class="vh-connector__sync">
+							<dt><?php esc_html_e( 'Last sync finished', 'vulnhub' ); ?></dt>
+							<dd><?php echo esc_html( vh_date( (string) $vh_h['last']['finished_at'], 'j M Y, H:i:s' ) ); ?></dd>
+							<dt><?php esc_html_e( 'Duration', 'vulnhub' ); ?></dt>
+							<dd><?php echo esc_html( vh_duration_human( (int) $vh_h['last']['duration_ms'] ) ); ?></dd>
+						</dl>
+					<?php endif; ?>
 					<div class="vh-connector__foot">
 						<a class="button button-primary" href="<?php echo esc_url( vh_admin_url( 'vulnhub-integrations', array( 'connector' => (string) $vh_id ) ) ); ?>">
 							<?php esc_html_e( 'Configure', 'vulnhub' ); ?>
@@ -288,6 +299,9 @@ $vh_active   = $vh_selected ? vulnhub()->connectors->get( $vh_selected ) : null;
 							</button>
 						<?php endif; ?>
 					</div>
+					<?php if ( $vh_c->supports_sync() ) : ?>
+						<div class="vh-sync-progress" data-vh-sync-progress="<?php echo esc_attr( (string) $vh_id ); ?>" hidden></div>
+					<?php endif; ?>
 				</div>
 			<?php endforeach; ?>
 		</div>

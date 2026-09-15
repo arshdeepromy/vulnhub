@@ -1946,3 +1946,124 @@ html.vh-js .vh-savebar.is-shown { display: flex; }
 .vh-stack__value a:hover { color: var(--vh-link); }
 .vh-stack__extra a { color: inherit; text-decoration: none; }
 .vh-stack__extra a:hover { color: var(--vh-link); text-decoration: underline; }
+
+/* =====================================================================
+ * "Vulnerability on assets" tab: one expandable <details> row per vuln.
+ * ================================================================== */
+.vh-vulnlist { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 4px; }
+
+.vh-vulnrow {
+  border: 1px solid var(--vh-line); border-radius: 12px;
+  background: var(--vh-plane); overflow: hidden;
+}
+.vh-vulnrow[open] { border-color: var(--vh-ink-2); }
+
+.vh-vulnrow__sum {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; cursor: pointer; list-style: none;
+}
+.vh-vulnrow__sum::-webkit-details-marker { display: none; }
+.vh-vulnrow__sum::after {
+  content: ""; flex: 0 0 auto; width: 8px; height: 8px; margin-left: 2px;
+  border-right: 2px solid var(--vh-muted); border-bottom: 2px solid var(--vh-muted);
+  transform: rotate(45deg); transition: transform .15s ease;
+}
+.vh-vulnrow[open] .vh-vulnrow__sum::after { transform: rotate(-135deg); }
+.vh-vulnrow__sum:hover { background: var(--vh-neutral-bg); }
+
+.vh-vulnrow__main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.vh-vulnrow__name { color: var(--vh-ink); font-weight: 560; line-height: 1.3; }
+.vh-vulnrow__main .vh-meta { font-size: 12px; color: var(--vh-muted); }
+
+.vh-vulnrow__tags { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+.vh-vulnrow__count {
+  flex: 0 0 auto; font-size: 12.5px; color: var(--vh-ink-2);
+  white-space: nowrap; text-align: right; min-width: 74px;
+}
+.vh-vulnrow__count strong { color: var(--vh-ink); font-variant-numeric: tabular-nums; }
+
+.vh-vulnrow__body { padding: 4px 14px 14px; border-top: 1px solid var(--vh-line); }
+.vh-vulnrow__loading { margin: 12px 2px; }
+
+/* The affected-assets table nested inside an expanded row reads as secondary. */
+.vh-table--sub { font-size: 12.5px; }
+.vh-table--sub thead th { font-size: 11px; }
+
+@media (max-width: 640px) {
+  .vh-vulnrow__sum { flex-wrap: wrap; }
+  .vh-vulnrow__main { flex-basis: 100%; order: 3; }
+  .vh-vulnrow__count { min-width: 0; }
+}
+
+/* Export panel: the scope line that says exactly how many rows leave. */
+.vh-export__scope {
+  margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--vh-line);
+  font-size: 12.5px; color: var(--vh-ink); font-weight: 560;
+}
+
+/* Findings selection bar: count + "select all matching" + export. */
+.vh-selbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin: 4px 0 10px; padding: 10px 14px;
+  border: 1px solid var(--vh-line); border-radius: 10px;
+  background: var(--vh-plane);
+}
+.vh-selbar__count { color: var(--vh-ink); font-size: 13px; font-variant-numeric: tabular-nums; }
+.vh-selbar__all { font-size: 12.5px; }
+.vh-selbar__sp { flex: 1 1 auto; }
+
+/* Connector card: last-sync completion time and duration. */
+.vh-connector__sync {
+  display: grid; grid-template-columns: auto 1fr; gap: 3px 14px;
+  margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--vh-line);
+  font-size: 12.5px;
+}
+.vh-connector__sync dt { color: var(--vh-muted); }
+.vh-connector__sync dd { margin: 0; color: var(--vh-ink); font-variant-numeric: tabular-nums; }
+
+/* Connector sync progress bar. */
+.vh-sync-progress { margin: 12px 0 0; }
+.vh-sync-progress__bar {
+  height: 8px; border-radius: 5px; overflow: hidden;
+  background: var(--vh-neutral-bg); position: relative;
+}
+.vh-sync-progress__bar > span {
+  display: block; height: 100%; border-radius: 5px;
+  background: var(--vh-series-1, #4da3ff); transition: width .6s ease;
+}
+.vh-sync-progress__bar.is-indeterminate > span {
+  width: 34% !important; position: absolute; left: -34%;
+  animation: vh-sync-indet 1.3s ease-in-out infinite;
+}
+@keyframes vh-sync-indet { 0%{left:-34%} 60%,100%{left:100%} }
+.vh-sync-progress__meta { margin-top: 6px; font-size: 12px; color: var(--vh-ink-2); font-variant-numeric: tabular-nums; }
+.vh-sync-progress__done { margin-top: 4px; font-size: 12.5px; line-height: 1.5; }
+.vh-sync-progress__done--bad { color: var(--vh-bad, #ff6b6b); }
+.vh-sync-progress__done--good { color: var(--vh-good, #46c93a); }
+@media (prefers-reduced-motion: reduce) { .vh-sync-progress__bar.is-indeterminate > span { animation: none; left: 0; width: 100% !important; } }
+
+/* Staged sync: labelled two-bar layout (download, then process). */
+.vh-sync-progress__row { display: grid; grid-template-columns: 70px 1fr; align-items: center; gap: 10px; margin-top: 8px; }
+.vh-sync-progress__lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; opacity: .7; }
+
+/* "By product" tab: expandable product rows + remediation line. */
+.vh-prodlist .vh-prodrow { display: block; }
+.vh-prodrow__exp { display: block; }
+.vh-prodrow__sum { display: flex; align-items: center; gap: 12px; cursor: pointer; list-style: none; padding: 2px 0; }
+.vh-prodrow__sum::-webkit-details-marker { display: none; }
+.vh-prodrow__sum::after {
+  content: ""; flex: 0 0 auto; width: 8px; height: 8px; margin-left: 4px;
+  border-right: 2px solid var(--vh-muted); border-bottom: 2px solid var(--vh-muted);
+  transform: rotate(45deg); transition: transform .15s ease;
+}
+.vh-prodrow__exp[open] .vh-prodrow__sum::after { transform: rotate(-135deg); }
+.vh-prodrow__sum:hover { background: var(--vh-neutral-bg); border-radius: 8px; }
+.vh-prodrow__body { padding: 10px 0 6px; margin-top: 8px; border-top: 1px solid var(--vh-line); }
+
+.vh-remediate {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px;
+  margin: 4px 0 12px; padding: 10px 14px; border-radius: 10px;
+  background: var(--vh-neutral-bg); border: 1px solid var(--vh-line);
+}
+.vh-remediate__do { font-size: 13.5px; color: var(--vh-ink); }
+.vh-remediate__why { font-size: 12.5px; color: var(--vh-ink-2); }

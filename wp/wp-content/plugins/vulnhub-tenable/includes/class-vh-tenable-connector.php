@@ -294,6 +294,27 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 	 *
 	 * @return array{ok:bool,message:string,detail?:array<string,mixed>}
 	 */
+	/**
+	 * A live Tenable sync downloads and processes a large export, far too long
+	 * to hold a browser request open for, so it runs in the background. Mock
+	 * mode is small and stays inline.
+	 */
+	public function async_sync(): bool {
+		return ! $this->is_mock();
+	}
+
+	/**
+	 * A run is resumable when the store holds a state whose phase is neither
+	 * finished nor failed -- i.e. a download or process that was interrupted.
+	 */
+	public function resumable_sync(): bool {
+		if ( $this->is_mock() ) {
+			return false;
+		}
+		$phase = (string) ( VH_Tenable_Store::read_state( $this->id() )['phase'] ?? '' );
+		return in_array( $phase, array( 'download', 'process', 'finalize' ), true );
+	}
+
 	public function test_connection(): array {
 		if ( $this->is_mock() ) {
 			$devices = count( \VulnHub\Core\Mock::devices() );
@@ -357,7 +378,409 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 	 * @param array<string,mixed> $args Sync options.
 	 * @return array{ok:bool,message:string}
 	 */
+	/** Zero the per-run caches and counters. Shared by both sync paths. */
+	private function reset_counts(): void {
+		$this->asset_cache = array();
+		$this->vuln_cache  = array();
+		$this->sla_cache   = array();
+		$this->jobs        = array();
+		$this->counts      = array(
+			'assets'            => 0,
+			'assets_created'    => 0,
+			'assets_updated'    => 0,
+			'assets_skipped'    => 0,
+			'vulns'             => 0,
+			'findings'          => 0,
+			'findings_created'  => 0,
+			'findings_fixed'    => 0,
+			'findings_reopened' => 0,
+			'findings_skipped'  => 0,
+			'sev_critical'      => 0,
+			'sev_high'          => 0,
+			'sev_medium'        => 0,
+			'sev_low'           => 0,
+			'sev_info'          => 0,
+		);
+	}
+
+	/* =================================================================
+	 * Staged sync: download to disk, then process off disk, resumably.
+	 * ============================================================== */
+
+	/**
+	 * The `since` (unix seconds) for this run. From the watermark of the last
+	 * fully successful sync, minus a 24h overlap so a change near the boundary
+	 * cannot slip through; on the very first run, a deep lookback so the whole
+	 * history is captured. Tenable applies `since` to last_found for open
+	 * findings and to last_fixed for fixed ones, so this window catches new
+	 * detections and resolutions alike.
+	 */
+	private function since_for_run(): int {
+		$watermark = (int) $this->settings->get( $this->id(), 'sync_watermark', 0 );
+
+		if ( $watermark > 0 ) {
+			return max( 0, $watermark - DAY_IN_SECONDS );
+		}
+
+		$first_days = (int) $this->settings->get( $this->id(), 'first_sync_days', 3650 );
+
+		return time() - max( 1, $first_days ) * DAY_IN_SECONDS;
+	}
+
+	/**
+	 * Advance the watermark to when THIS run started -- only ever called after
+	 * a run has fully finished importing. A run that is interrupted or whose
+	 * export did not complete leaves the watermark untouched, so the next run
+	 * re-covers the same window rather than skipping over it. That is the rule
+	 * that keeps an incremental sync from ever leaving a gap.
+	 *
+	 * @param array<string,mixed> $state Run state.
+	 */
+	private function advance_watermark( array $state ): void {
+		$start = strtotime( (string) ( $state['started'] ?? vh_now() ) . ' UTC' ) ?: time();
+		$this->settings->set( $this->id(), 'sync_watermark', $start );
+	}
+
+	/**
+	 * Mirror the two-phase progress onto the run row, so the poller can draw a
+	 * download bar and a processing bar. The resume checkpoint lives in the
+	 * store's state.json; this is only what the UI reads.
+	 *
+	 * @param array<string,mixed> $state Run state.
+	 */
+	private function report_stage( array $state ): void {
+		if ( ! $this->run_id ) {
+			return;
+		}
+
+		$this->logger->stage_progress(
+			$this->run_id,
+			array(
+				'phase'    => (string) ( $state['phase'] ?? '' ),
+				'is_full'  => (bool) ( $state['is_full'] ?? false ),
+				'download' => (array) ( $state['download'] ?? array() ),
+				'process'  => (array) ( $state['process'] ?? array() ),
+			)
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $args Sync options.
+	 * @return array{ok:bool,message:string}
+	 */
+	protected function do_sync_staged( array $args = array() ): array {
+		unset( $args );
+
+		if ( function_exists( 'set_time_limit' ) ) {
+			@set_time_limit( 0 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors -- cron/CLI, no page waiting.
+		}
+
+		$conn  = $this->id();
+		$state = VH_Tenable_Store::read_state( $conn );
+
+		$phase = (string) ( $state['phase'] ?? '' );
+
+		// Fresh run when there is no state, or the last one is finished.
+		if ( ! $state || in_array( $phase, array( '', 'done', 'failed' ), true ) ) {
+			VH_Tenable_Store::clear( $conn );
+			$since = $this->since_for_run();
+			$state = array(
+				'phase'    => 'download',
+				'started'  => vh_now(),
+				'since'    => $since,
+				'is_full'  => ( $since <= time() - 200 * DAY_IN_SECONDS ),
+				'download' => array( 'assets_chunks' => 0, 'vuln_chunks' => 0, 'bytes' => 0, 'status' => 'downloading' ),
+				'process'  => array( 'stage' => 'assets', 'chunk' => 1, 'records_done' => 0, 'records_total' => 0 ),
+			);
+			VH_Tenable_Store::write_state( $conn, $state );
+			$this->log( sprintf( 'Staged sync: fresh run, since %s.', gmdate( 'Y-m-d H:i', (int) $state['since'] ) ) );
+		} else {
+			$this->log( sprintf( 'Staged sync: resuming at phase "%s".', $phase ) );
+		}
+
+		$this->reset_counts();
+
+		if ( 'download' === $state['phase'] ) {
+			$state = $this->download_to_disk( $state );
+			VH_Tenable_Store::write_state( $conn, $state );
+
+			if ( 'download' === $state['phase'] ) {
+				return array(
+					'ok'      => false,
+					'message' => __( 'The Tenable export did not finish downloading. It will be retried; no data was changed.', 'vulnhub' ),
+				);
+			}
+		}
+
+		if ( 'process' === $state['phase'] ) {
+			$state = $this->process_from_disk( $state );
+			VH_Tenable_Store::write_state( $conn, $state );
+		}
+
+		if ( 'finalize' === $state['phase'] ) {
+			$this->finalize_sync( $state );
+			$state['phase'] = 'done';
+			VH_Tenable_Store::write_state( $conn, $state );
+			$this->report_stage( $state );
+			$this->advance_watermark( $state );
+			VH_Tenable_Store::clear( $conn );
+
+			return array( 'ok' => true, 'message' => $this->summary_message() );
+		}
+
+		return array( 'ok' => true, 'message' => $this->summary_message() );
+	}
+
+	/**
+	 * Phase 1: stream the raw export to disk, chunk by chunk. No database
+	 * writes happen here, so it is fast and cannot half-import anything -- it
+	 * either lands the whole export on disk or it does not, and only a
+	 * complete download advances to processing.
+	 *
+	 * @param array<string,mixed> $state Run state.
+	 * @return array<string,mixed> Updated state.
+	 */
+	private function download_to_disk( array $state ): array {
+		$conn  = $this->id();
+		$since = (int) $state['since'];
+
+		// Start clean: a resumed download re-fetches, because a Tenable export
+		// job is short-lived and its chunk numbering does not survive a fresh
+		// request anyway. Only the chunk files are cleared -- state.json stays,
+		// so an interrupted download is still visible to the resume sweep and
+		// its leftover chunks get cleared here on the next attempt rather than
+		// sitting on disk. Processing, not downloading, is the expensive phase
+		// worth resuming mid-way.
+		VH_Tenable_Store::clear_chunks( $conn );
+		$this->report_stage( $state );
+
+		/* --- assets --- */
+		$this->log( 'Downloading Tenable asset export to disk…' );
+		$a_saved = 0;
+		$a_recs  = 0;
+		$assets_job = $this->client()->run_export(
+			VulnHub_Tenable_Client::KIND_ASSETS,
+			array(
+				'chunk_size' => $this->asset_chunk_size(),
+				'filters'    => array(
+					'last_assessed' => $since,
+					'is_licensed'   => true,
+					'is_deleted'    => false,
+					'is_terminated' => false,
+				),
+			),
+			function ( array $chunk, int $chunk_id ) use ( $conn, &$a_saved, &$a_recs, &$state ) {
+				$bytes = VH_Tenable_Store::save_chunk( $conn, 'assets', $chunk_id, (string) wp_json_encode( $chunk ) );
+				++$a_saved;
+				$a_recs += count( $chunk );
+				$state['download']['assets_chunks'] = $a_saved;
+				$state['download']['bytes']        += $bytes;
+				$this->report_stage( $state );
+			},
+			function () use ( &$state ) {
+				$this->report_stage( $state ); // heartbeat between chunks
+			}
+		);
+
+		if ( 'FINISHED' !== (string) ( $assets_job['status'] ?? '' ) ) {
+			$this->log( sprintf( 'Asset export did not finish (%s); will retry.', (string) ( $assets_job['status'] ?? 'no response' ) ) );
+			return $state; // still 'download'
+		}
+
+		/* --- vulns --- */
+		$this->log( 'Downloading Tenable vulnerability export to disk…' );
+		$v_saved = 0;
+		$v_recs  = 0;
+		$vulns_job = $this->client()->run_export(
+			VulnHub_Tenable_Client::KIND_VULNS,
+			array(
+				'num_assets'            => $this->vuln_num_assets(),
+				'include_unlicensed'    => false,
+				'include_plugin_output' => $this->settings->get_bool( $this->id(), 'include_plugin_output', true ),
+				'filters'               => array(
+					'severity' => array_values( $this->severity_slugs() ),
+					'state'    => array( 'OPEN', 'REOPENED', 'FIXED' ),
+					'since'    => $since,
+				),
+			),
+			function ( array $chunk, int $chunk_id ) use ( $conn, &$v_saved, &$v_recs, &$state ) {
+				$bytes = VH_Tenable_Store::save_chunk( $conn, 'vulns', $chunk_id, (string) wp_json_encode( $chunk ) );
+				++$v_saved;
+				$v_recs += count( $chunk );
+				$state['download']['vuln_chunks'] = $v_saved;
+				$state['download']['bytes']      += $bytes;
+				$this->report_stage( $state );
+			},
+			function () use ( &$state ) {
+				$this->report_stage( $state ); // heartbeat between chunks
+			}
+		);
+
+		if ( 'FINISHED' !== (string) ( $vulns_job['status'] ?? '' ) ) {
+			$this->log( sprintf( 'Vulnerability export did not finish (%s); will retry.', (string) ( $vulns_job['status'] ?? 'no response' ) ) );
+			return $state; // still 'download'
+		}
+
+		// Whole export is on disk. Hand over to processing. Remember this
+		// download's size so the NEXT run's progress bar has a scale to show
+		// "X MB of ~Y MB" against, kept per size class (a full first run and a
+		// small incremental are wildly different, so they must not overwrite
+		// each other's estimate).
+		$est_key = ( (int) $state['since'] <= time() - 200 * DAY_IN_SECONDS ) ? 'dl_est_full' : 'dl_est_incr';
+		update_option( 'vulnhub_' . $est_key . '_' . $this->id(), (int) $state['download']['bytes'], false );
+
+		$state['download']['status']         = 'done';
+		$state['process']['records_total']   = $a_recs + $v_recs;
+		$state['process']['asset_chunks']    = $a_saved;
+		$state['process']['vuln_chunks']     = $v_saved;
+		$state['phase']                      = 'process';
+		$this->log( sprintf( 'Download complete: %d asset chunk(s), %d vuln chunk(s), %d records on disk.', $a_saved, $v_saved, $a_recs + $v_recs ) );
+		$this->report_stage( $state );
+
+		return $state;
+	}
+
+	/**
+	 * Phase 2: import the downloaded chunks one at a time, checkpointing after
+	 * each so an interruption resumes from the next chunk rather than the
+	 * start. Memory stays bounded to a single chunk, which is what keeps a
+	 * quarter-million-row import from being OOM-killed.
+	 *
+	 * @param array<string,mixed> $state Run state.
+	 * @return array<string,mixed> Updated state.
+	 */
+	private function process_from_disk( array $state ): array {
+		$conn         = $this->id();
+		$asset_chunks = (int) ( $state['process']['asset_chunks'] ?? 0 );
+		$vuln_chunks  = (int) ( $state['process']['vuln_chunks'] ?? 0 );
+
+		// Assets first, so findings can attach to them.
+		if ( 'assets' === ( $state['process']['stage'] ?? 'assets' ) ) {
+			for ( $i = (int) $state['process']['chunk']; $i <= $asset_chunks; $i++ ) {
+				$records = VH_Tenable_Store::read_chunk( $conn, 'assets', $i );
+				$this->import_asset_chunk( $records, $i );
+				unset( $records );
+
+				// Checkpoint past this chunk, THEN free its file. The order
+				// matters: the checkpoint is on disk before the data is gone,
+				// so a crash in between leaves a resumable state, never a hole.
+				$state['process']['chunk']         = $i + 1;
+				$state['process']['records_done'] += 0; // asset rows are not the headline count
+				VH_Tenable_Store::write_state( $conn, $state );
+				VH_Tenable_Store::delete_chunk( $conn, 'assets', $i );
+				$this->report_stage( $state );
+			}
+
+			$state['process']['stage'] = 'vulns';
+			$state['process']['chunk'] = 1;
+			VH_Tenable_Store::write_state( $conn, $state );
+		}
+
+		// Findings.
+		for ( $i = (int) $state['process']['chunk']; $i <= $vuln_chunks; $i++ ) {
+			$records = VH_Tenable_Store::read_chunk( $conn, 'vulns', $i );
+
+			foreach ( $records as $record ) {
+				$this->import_finding( $record );
+				++$state['process']['records_done'];
+			}
+			unset( $records );
+
+			// Checkpoint first, then free the chunk's disk (see the note in the
+			// asset loop): the resume point is durable before the bytes go.
+			$state['process']['chunk'] = $i + 1;
+			VH_Tenable_Store::write_state( $conn, $state );
+			VH_Tenable_Store::delete_chunk( $conn, 'vulns', $i );
+			$this->report_stage( $state );
+
+			// Keep the working set small across a long run.
+			if ( function_exists( 'gc_collect_cycles' ) ) {
+				gc_collect_cycles();
+			}
+		}
+
+		$state['phase'] = 'finalize';
+
+		return $state;
+	}
+
+	/**
+	 * Phase 3: the once-per-run work that must happen after every finding is
+	 * in -- roll up per-asset counters, and reconcile the asset inventory so
+	 * anything Tenable has dropped is retired. Strictly Tenable-scoped: assets
+	 * owned by other connectors are never touched.
+	 *
+	 * @param array<string,mixed> $state Run state.
+	 */
+	private function finalize_sync( array $state ): void {
+		/*
+		 * Prune Tenable-dropped assets -- but only on a FULL run, whose asset
+		 * export is the whole inventory. On an incremental run the asset
+		 * export is just the recently-assessed hosts, so absence means "not
+		 * scanned lately", not "gone", and pruning on it would be wrong. The
+		 * asset chunks are still on disk here (the store is cleared after
+		 * finalize), so the seen set is read straight from them. Tenable-scoped
+		 * and safeguarded inside retire_absent_tenable().
+		 */
+		if ( ! empty( $state['is_full'] ) && $this->settings->get_bool( $this->id(), 'prune_absent', true ) ) {
+			$seen = array();
+			$chunks = (int) ( $state['process']['asset_chunks'] ?? 0 );
+			for ( $i = 1; $i <= $chunks; $i++ ) {
+				foreach ( VH_Tenable_Store::read_chunk( $this->id(), 'assets', $i ) as $rec ) {
+					$uuid = (string) ( $rec['id'] ?? $rec['uuid'] ?? '' );
+					if ( '' !== $uuid ) {
+						$seen[ $uuid ] = true;
+					}
+				}
+			}
+
+			$result = \VulnHub\Core\Repo::retire_absent_tenable( array_keys( $seen ) );
+
+			if ( ! empty( $result['aborted'] ) ) {
+				$this->log( sprintf(
+					'Prune skipped: %d of %d Tenable assets looked absent (over the 15%% safety limit) -- the asset export was likely incomplete, so nothing was retired.',
+					(int) $result['retired'],
+					(int) $result['candidates']
+				) );
+			} elseif ( (int) $result['retired'] > 0 ) {
+				$this->log( sprintf( 'Retired %d asset(s) Tenable no longer reports (Tenable-only, reversible).', (int) $result['retired'] ) );
+			}
+		}
+
+		$this->log( 'Recalculating asset roll-ups…' );
+		\VulnHub\Core\Repo::recalculate_asset_rollups();
+		$this->persist_run_summary();
+	}
+
+	private function summary_message(): string {
+		return sprintf(
+			/* translators: 1: assets, 2: vulnerability definitions, 3: findings, 4: fixed findings, 5: reopened findings. */
+			__( 'Imported %1$d assets, %2$d vulnerability definitions and %3$d findings (%4$d already remediated, %5$d reopened).', 'vulnhub' ),
+			(int) $this->counts['assets'],
+			(int) $this->counts['vulns'],
+			(int) $this->counts['findings'],
+			(int) $this->counts['findings_fixed'],
+			(int) $this->counts['findings_reopened']
+		);
+	}
+
+	/**
+	 * Entry point. Mock stays on the old one-pass path (it is small and
+	 * deterministic); a live sync goes through the staged download-then-process
+	 * pipeline so it can survive an interruption and show two progress bars.
+	 *
+	 * @param array<string,mixed> $args Sync options.
+	 * @return array{ok:bool,message:string}
+	 */
 	protected function do_sync( array $args = array() ): array {
+		if ( $this->is_mock() ) {
+			return $this->do_sync_direct( $args );
+		}
+
+		return $this->do_sync_staged( $args );
+	}
+
+	protected function do_sync_direct( array $args = array() ): array {
 		unset( $args );
 
 		// A live vulnerability export can legitimately run well past PHP's
@@ -372,27 +795,7 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 			@set_time_limit( 1800 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
 		}
 
-		$this->asset_cache = array();
-		$this->vuln_cache  = array();
-		$this->sla_cache   = array();
-		$this->jobs        = array();
-		$this->counts      = array(
-			'assets'           => 0,
-			'assets_created'   => 0,
-			'assets_updated'   => 0,
-			'assets_skipped'   => 0,
-			'vulns'            => 0,
-			'findings'         => 0,
-			'findings_created' => 0,
-			'findings_fixed'   => 0,
-			'findings_reopened' => 0,
-			'findings_skipped' => 0,
-			'sev_critical'     => 0,
-			'sev_high'         => 0,
-			'sev_medium'       => 0,
-			'sev_low'          => 0,
-			'sev_info'         => 0,
-		);
+		$this->reset_counts();
 
 		$severities = $this->severity_slugs();
 		$days       = $this->asset_days();
@@ -405,6 +808,8 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 				$this->asset_chunk_size()
 			)
 		);
+
+		$this->progress( __( 'Starting sync', 'vulnhub' ), 0 );
 
 		/* --- 1. Assets ------------------------------------------------ */
 		$this->sync_assets( $days );
@@ -518,6 +923,7 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 	 */
 	private function sync_vulns( int $days, array $severities ): void {
 		$this->log( 'Requesting Tenable vulnerability export…' );
+		$this->progress( __( 'Requesting vulnerability export from Tenable', 'vulnhub' ), (int) $this->counts['findings'] );
 
 		if ( $this->is_mock() ) {
 			$chunks = VulnHub_Tenable_Mock::vuln_chunks( $this->vuln_num_assets(), $severities, $days );

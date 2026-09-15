@@ -961,6 +961,120 @@ final class Eol {
 	}
 
 	/**
+	 * Reportable assets whose OPERATING SYSTEM is past vendor support.
+	 *
+	 * This is the OS half of "end of life": the machine is running a Windows
+	 * or Linux release the vendor has stopped shipping patches for, so a
+	 * missing-OS-update finding on it can never actually be fixed. It is
+	 * deliberately the OS only -- a machine that merely carries one retired
+	 * library is not itself an end-of-life platform, and treating it as one
+	 * swept every current finding on that box (a Server 2025 update with a
+	 * patch waiting) into the EOL list. That was the whole bug.
+	 *
+	 * Memoised for the request; the findings list asks for it twice (count
+	 * then rows) and the answer cannot change between them.
+	 *
+	 * @return array<int,int> Asset ids.
+	 */
+	public static function eol_os_asset_ids(): array {
+		static $cache = null;
+
+		if ( null !== $cache ) {
+			return $cache;
+		}
+
+		global $wpdb;
+
+		$rows = (array) $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			'SELECT id, operating_system, os_version, asset_type FROM ' . vh_table( 'assets' )
+			. ' WHERE lifecycle_status IN (' . vh_reportable_sql() . ')', // phpcs:ignore
+			ARRAY_A
+		);
+
+		$out = array();
+
+		foreach ( $rows as $asset ) {
+			$osrow = self::match_os( $asset );
+
+			if ( $osrow && 'past' === self::status( (string) $osrow['eol'] )['status'] ) {
+				$out[] = (int) $asset['id'];
+			}
+		}
+
+		$cache = $out;
+
+		return $out;
+	}
+
+	/**
+	 * The vulnerability definitions that are themselves end-of-life findings.
+	 *
+	 * This is the SOFTWARE half of "end of life": Tenable ships explicit
+	 * detections for discontinued software -- "Apache Log4j SEoL", "Mozilla
+	 * Firefox SEoL", "Microsoft SQL Server Unsupported Version Detection" --
+	 * whose whole point is that the product itself is retired, not merely a
+	 * version that needs updating. Those are the findings a reader means by
+	 * "the software is discontinued"; a routine "libcurl < 8.18.0" is not one
+	 * and must not appear under the EOL filter just because it shares a host
+	 * with a retired product.
+	 *
+	 * @return array<int,int> Vulnerability ids.
+	 */
+	public static function seol_vuln_ids(): array {
+		static $cache = null;
+
+		if ( null !== $cache ) {
+			return $cache;
+		}
+
+		global $wpdb;
+
+		$ids = (array) $wpdb->get_col(
+			$wpdb->prepare(
+				'SELECT id FROM ' . vh_table( 'vulns' ) . ' WHERE title REGEXP %s',
+				'SEoL|End of Life|End-of-Life|Unsupported Version|End of Support|no longer supported'
+			)
+		);
+
+		$cache = array_map( 'intval', $ids );
+
+		return $cache;
+	}
+
+	/**
+	 * Is one finding end of life, at the level of the finding rather than the
+	 * host? True when the vulnerability is a discontinued-software detection,
+	 * or when it is a missing-OS-update on a machine whose OS is past support.
+	 * Everything else -- a patchable product, an OS-update on a live OS -- is
+	 * in support, whatever else happens to be installed on the same machine.
+	 *
+	 * The two lookups are flipped to hash sets on first use and memoised, so
+	 * calling this per row across a page of findings stays cheap.
+	 *
+	 * @param int    $asset_id        The finding's asset.
+	 * @param int    $vuln_id         The finding's vulnerability.
+	 * @param string $component_class The vulnerability's class (os_windows / os_linux / third_party).
+	 */
+	public static function finding_is_eol( int $asset_id, int $vuln_id, string $component_class ): bool {
+		static $os_flip = null;
+		static $sv_flip = null;
+
+		if ( null === $os_flip ) {
+			$os_flip = array_flip( self::eol_os_asset_ids() );
+		}
+		if ( null === $sv_flip ) {
+			$sv_flip = array_flip( self::seol_vuln_ids() );
+		}
+
+		if ( isset( $sv_flip[ $vuln_id ] ) ) {
+			return true;
+		}
+
+		return isset( $os_flip[ $asset_id ] )
+			&& in_array( $component_class, array( 'os_windows', 'os_linux' ), true );
+	}
+
+	/**
 	 * Headline counts for the widget: assets per status, platforms only.
 	 *
 	 * @return array<string,int>

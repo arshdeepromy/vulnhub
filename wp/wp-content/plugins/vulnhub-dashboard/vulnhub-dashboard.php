@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       VulnHub Dashboard
- * Plugin URI:        https://github.com/arshdeepromy/vulnhub
+ * Plugin URI:        https://vul.romynz.com
  * Description:       The front-end application for VulnHub — dashboards, vulnerability triage, asset ownership, ticket tracking and the exception register, served as a theme-independent app shell at your own domain.
  * Version:           1.0.0
  * Requires at least: 6.5
@@ -356,6 +356,82 @@ add_action(
 			)
 		);
 
+		/*
+		 * Affected-asset list for one vulnerability, for the expandable rows
+		 * on the "Vulnerability on assets" tab. A real GET so $_GET carries
+		 * the same filters the tab was rendered with, and the rendering lives
+		 * in VulnHub_Dash_App so the fragment matches the rest of the portal.
+		 */
+		register_rest_route(
+			'vulnhub-dashboard/v1',
+			'/vuln-assets',
+			array(
+				'methods'             => 'GET',
+				'callback'            => static function ( WP_REST_Request $request ) {
+					$vuln = max( 0, (int) $request->get_param( 'vuln' ) );
+
+					return rest_ensure_response(
+						array(
+							'html' => VulnHub_Dash_App::vuln_assets_fragment( $vuln ),
+						)
+					);
+				},
+				'permission_callback' => static function (): bool {
+					return is_user_logged_in() && current_user_can( \VulnHub\Core\Caps::VIEW );
+				},
+			)
+		);
+
+		/*
+		 * Live sync status for the connector cards' progress bar: where the
+		 * running import is, how fast, a rough ETA, or the failure if it has
+		 * stopped. Cheap enough to poll every few seconds; it also reaps a run
+		 * that was killed mid-import and left claiming to be running.
+		 */
+		/*
+		 * Outdated-asset list for one product, for the "By product" tab's
+		 * expandable rows: what one update fixes, and where.
+		 */
+		register_rest_route(
+			'vulnhub-dashboard/v1',
+			'/product-assets',
+			array(
+				'methods'             => 'GET',
+				'callback'            => static function ( WP_REST_Request $request ) {
+					$slug = sanitize_title( (string) $request->get_param( 'product' ) );
+
+					return rest_ensure_response(
+						array(
+							'html' => VulnHub_Dash_App::product_assets_fragment( $slug ),
+						)
+					);
+				},
+				'permission_callback' => static function (): bool {
+					return is_user_logged_in() && current_user_can( \VulnHub\Core\Caps::VIEW );
+				},
+			)
+		);
+
+		register_rest_route(
+			'vulnhub-dashboard/v1',
+			'/sync-status',
+			array(
+				'methods'             => 'GET',
+				'callback'            => static function ( WP_REST_Request $request ) {
+					$connector = sanitize_key( (string) $request->get_param( 'connector' ) );
+
+					if ( '' === $connector ) {
+						return new WP_Error( 'vulnhub_no_connector', __( 'No connector given.', 'vulnhub' ), array( 'status' => 400 ) );
+					}
+
+					return rest_ensure_response( vulnhub()->logger->sync_status( $connector ) );
+				},
+				'permission_callback' => static function (): bool {
+					return is_user_logged_in() && current_user_can( \VulnHub\Core\Caps::VIEW );
+				},
+			)
+		);
+
 		register_rest_route(
 			'vulnhub-dashboard/v1',
 			'/layout/reset',
@@ -600,7 +676,7 @@ register_activation_hook(
 
 		update_option( 'vulnhub_dash_pages', $map, false );
 
-		// The dashboard becomes the site's front page, so the root URL lands
+		// The dashboard becomes the site's front page, so vul.romynz.com lands
 		// straight on the application rather than a blog index.
 		if ( ! empty( $map['dashboard'] ) ) {
 			update_option( 'show_on_front', 'page' );

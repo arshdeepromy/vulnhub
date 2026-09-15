@@ -243,14 +243,120 @@
 	/* ---------------------------------------------------------------
 	 * Select all / raise ticket
 	 * ------------------------------------------------------------- */
-	document.addEventListener( 'change', function ( event ) {
-		if ( ! event.target.matches( '[data-vh-all]' ) ) {
+	/*
+	 * Selection state for the findings list.
+	 *
+	 * Two modes. In "page" mode the ticked rows are exactly what is selected,
+	 * and the export carries their ids. In "all" mode the reader has asked for
+	 * every finding the filter matches -- more than one page of them -- so the
+	 * export carries the filter and no ids, and the whole set comes back. The
+	 * bar shows which is in force and how many that is.
+	 */
+	var selMode = 'page';
+
+	function selBar() {
+		return document.querySelector( '[data-vh-selbar]' );
+	}
+
+	function selChecked() {
+		return document.querySelectorAll( '.vh-pick:checked' ).length;
+	}
+
+	function selRefresh() {
+		var bar = selBar();
+		if ( ! bar ) { return; }
+
+		var total   = parseInt( bar.getAttribute( 'data-vh-total' ), 10 ) || 0;
+		var checked = selChecked();
+		var countEl = bar.querySelector( '[data-vh-selcount]' );
+		var allBtn  = bar.querySelector( '[data-vh-selall]' );
+
+		if ( 'all' === selMode ) {
+			bar.hidden = false;
+			if ( countEl ) { countEl.textContent = ( cfg.i18n.selAll || 'All %d findings selected' ).replace( '%d', total.toLocaleString() ); }
+			if ( allBtn ) { allBtn.hidden = true; }
 			return;
 		}
-		var on = event.target.checked;
-		document.querySelectorAll( '.vh-pick' ).forEach( function ( box ) {
-			box.checked = on;
+
+		if ( checked < 1 ) {
+			bar.hidden = true;
+			return;
+		}
+
+		bar.hidden = false;
+		if ( countEl ) { countEl.textContent = ( cfg.i18n.selCount || '%d selected' ).replace( '%d', checked.toLocaleString() ); }
+
+		// Offer "select every match" only when there are more than the ticked.
+		if ( allBtn ) {
+			if ( total > checked ) {
+				allBtn.hidden = false;
+				allBtn.textContent = ( cfg.i18n.selAllMatching || 'Select all %d matching these filters' ).replace( '%d', total.toLocaleString() );
+			} else {
+				allBtn.hidden = true;
+			}
+		}
+	}
+
+	// Header box: tick/untick every rendered row; drop out of "all" mode.
+	document.addEventListener( 'change', function ( event ) {
+		if ( event.target.matches( '[data-vh-all]' ) ) {
+			selMode = 'page';
+			var on = event.target.checked;
+			document.querySelectorAll( '.vh-pick' ).forEach( function ( box ) { box.checked = on; } );
+			selRefresh();
+			return;
+		}
+		if ( event.target.matches( '.vh-pick' ) ) {
+			selMode = 'page';
+			selRefresh();
+		}
+	} );
+
+	// "Select all N matching these filters".
+	document.addEventListener( 'click', function ( event ) {
+		if ( ! event.target.closest( '[data-vh-selall]' ) ) { return; }
+		selMode = 'all';
+		document.querySelectorAll( '.vh-pick' ).forEach( function ( box ) { box.checked = true; } );
+		selRefresh();
+	} );
+
+	// Clear the selection.
+	document.addEventListener( 'click', function ( event ) {
+		if ( ! event.target.closest( '[data-vh-selclear]' ) ) { return; }
+		selMode = 'page';
+		document.querySelectorAll( '.vh-pick' ).forEach( function ( box ) { box.checked = false; } );
+		var all = document.querySelector( '[data-vh-all]' );
+		if ( all ) { all.checked = false; }
+		selRefresh();
+	} );
+
+	/*
+	 * Export the selection. Reuses the column-picker form already on the page
+	 * for its endpoint, nonce and carried filters, so this is the same export
+	 * with either an explicit id set (page mode) or none (all mode). Leaving
+	 * cols off means every column, which is what an unopened picker gives.
+	 */
+	document.addEventListener( 'click', function ( event ) {
+		if ( ! event.target.closest( '[data-vh-selexport]' ) ) { return; }
+
+		var form = document.querySelector( '.vh-export__panel' );
+		if ( ! form ) { toast( cfg.i18n.error || 'Export is unavailable.', 'warn' ); return; }
+
+		var params = new URLSearchParams();
+		form.querySelectorAll( 'input[name]' ).forEach( function ( input ) {
+			if ( 'cols[]' === input.name ) { return; } // omit -> all columns
+			if ( input.name ) { params.set( input.name, input.value ); }
 		} );
+
+		if ( 'all' !== selMode ) {
+			var ids = [];
+			document.querySelectorAll( '.vh-pick:checked' ).forEach( function ( box ) { ids.push( box.value ); } );
+			if ( ! ids.length ) { toast( cfg.i18n.noSelect || 'Nothing selected.', 'warn' ); return; }
+			params.set( 'ids', ids.join( ',' ) );
+		}
+
+		var action = form.getAttribute( 'action' ) || '';
+		window.location.href = action + ( action.indexOf( '?' ) === -1 ? '?' : '&' ) + params.toString();
 	} );
 
 	function toast( message, tone ) {
@@ -2007,5 +2113,120 @@ document.addEventListener( 'click', function ( e ) {
 		} );
 
 		evaluate();
+	}
+}() );
+
+/*
+ * "Vulnerability on assets" tab: each vulnerability is a <details> row that
+ * loads the assets it affects the first time it is opened.
+ *
+ * Fetched from /vuln-assets with THIS page's own filters (read straight from
+ * window.location.search, exactly as infinite scroll does) so the asset list
+ * under a vuln can never show a machine the filters above it excluded. The
+ * `toggle` event does not bubble, so the listener is attached per row rather
+ * than delegated on the document. Progressive enhancement: with no JS/REST
+ * the row still opens, showing the "Loading…" line and a working link on it
+ * is not needed because the vuln title links to the full detail screen.
+ */
+( function () {
+	'use strict';
+
+	if ( ! window.wp || ! wp.apiFetch ) {
+		return;
+	}
+
+	function load( details ) {
+		var body = details.querySelector( '[data-vh-vuln-assets]' );
+		var id   = details.getAttribute( 'data-vh-vuln' );
+		if ( ! body || ! id || '1' === body.getAttribute( 'data-vh-loaded' ) ) {
+			return;
+		}
+
+		body.setAttribute( 'data-vh-loaded', '1' );
+
+		var params = new URLSearchParams( window.location.search );
+		params.delete( 'vp' );
+		params.delete( 'ap' );
+		params.delete( 'page_id' );
+		params.set( 'vuln', id );
+
+		wp.apiFetch( { path: '/vulnhub-dashboard/v1/vuln-assets?' + params.toString() } )
+			.then( function ( d ) {
+				body.innerHTML = d && d.html
+					? d.html
+					: '<p class="vh-sub vh-muted">' + '—' + '</p>';
+			} )
+			.catch( function () {
+				// Let the reader try again by reopening the row.
+				body.setAttribute( 'data-vh-loaded', '0' );
+			} );
+	}
+
+	function init() {
+		document.querySelectorAll( 'details.vh-vulnrow' ).forEach( function ( details ) {
+			details.addEventListener( 'toggle', function () {
+				if ( details.open ) {
+					load( details );
+				}
+			} );
+		} );
+	}
+
+	if ( 'loading' === document.readyState ) {
+		document.addEventListener( 'DOMContentLoaded', init );
+	} else {
+		init();
+	}
+}() );
+
+/*
+ * "By product" tab: each product row expands to the outdated assets one
+ * update would fix, loaded on first open with the list's own filters.
+ */
+( function () {
+	'use strict';
+
+	if ( ! window.wp || ! wp.apiFetch ) {
+		return;
+	}
+
+	function load( details ) {
+		var body = details.querySelector( '[data-vh-product-assets]' );
+		var slug = details.getAttribute( 'data-vh-product' );
+		if ( ! body || ! slug || '1' === body.getAttribute( 'data-vh-loaded' ) ) {
+			return;
+		}
+
+		body.setAttribute( 'data-vh-loaded', '1' );
+
+		var params = new URLSearchParams( window.location.search );
+		params.delete( 'vp' );
+		params.delete( 'ap' );
+		params.delete( 'page_id' );
+		params.set( 'product', slug );
+
+		wp.apiFetch( { path: '/vulnhub-dashboard/v1/product-assets?' + params.toString() } )
+			.then( function ( d ) {
+				body.innerHTML = ( d && d.html ) ? d.html : '<p class="vh-sub vh-muted">—</p>';
+			} )
+			.catch( function () {
+				body.setAttribute( 'data-vh-loaded', '0' );
+			} );
+	}
+
+	function init() {
+		document.querySelectorAll( 'details.vh-prodrow__exp' ).forEach( function ( details ) {
+			details.addEventListener( 'toggle', function () {
+				if ( details.open ) {
+					load( details );
+				}
+			} );
+		} );
+	}
+
+	if ( 'loading' === document.readyState ) {
+		document.addEventListener( 'DOMContentLoaded', init );
+	} else {
+		init();
 	}
 }() );
