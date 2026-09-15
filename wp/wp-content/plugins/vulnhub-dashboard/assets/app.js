@@ -2230,3 +2230,75 @@ document.addEventListener( 'click', function ( e ) {
 		init();
 	}
 }() );
+
+/*
+ * Live product search on /products/. The whole list is rendered server-side
+ * (and works with no JS at all); this filters the already-present rows as you
+ * type, with no round-trip. It composes with the platform chips, which reload
+ * the page server-side -- search runs within whatever scope is loaded. Matching
+ * is on data-vh-name (product name + kind + bundled libraries), so typing a
+ * library like 'libcurl' surfaces every app that ships it.
+ */
+( function () {
+	'use strict';
+
+	var cfg = window.VulnHubApp || { i18n: {} };
+	var box = document.querySelector( '[data-vh-prodsearch]' );
+	if ( ! box ) {
+		return;
+	}
+	var list  = document.querySelector( '.vh-prodlist--full' );
+	var input = box.querySelector( '.vh-prodsearch__input' );
+	if ( ! list || ! input ) {
+		return;
+	}
+
+	var rows  = Array.prototype.slice.call( list.querySelectorAll( '.vh-prodrow' ) );
+	var count = box.querySelector( '.vh-prodsearch__count' );
+	var empty = document.querySelector( '[data-vh-prodsearch-empty]' );
+	var total = rows.length;
+	var fmt   = ( cfg.i18n && cfg.i18n.searchShowing ) || '%1$s of %2$s';
+
+	box.hidden = false; // reveal the control now that JS can drive it
+
+	function nf( n ) {
+		try { return n.toLocaleString(); } catch ( e ) { return '' + n; }
+	}
+
+	function apply() {
+		var q     = input.value.trim().toLowerCase();
+		var terms = q ? q.split( /\s+/ ) : [];
+		var shown = 0;
+
+		for ( var i = 0; i < rows.length; i++ ) {
+			var hay = rows[ i ].getAttribute( 'data-vh-name' ) || '';
+			var ok  = true;
+			for ( var t = 0; t < terms.length; t++ ) {
+				if ( hay.indexOf( terms[ t ] ) === -1 ) { ok = false; break; }
+			}
+			rows[ i ].hidden = ! ok;
+			if ( ok ) {
+				// Force the scroll-reveal state on, or a row filtered in from below
+				// the fold (still at opacity 0) would appear blank.
+				rows[ i ].classList.add( 'vh-inview' );
+				shown++;
+			}
+		}
+
+		if ( count ) {
+			count.textContent = q ? fmt.replace( '%1$s', nf( shown ) ).replace( '%2$s', nf( total ) ) : '';
+		}
+		if ( empty ) {
+			empty.hidden = ! ( q && 0 === shown );
+		}
+	}
+
+	var raf = null;
+	input.addEventListener( 'input', function () {
+		if ( raf ) { window.cancelAnimationFrame( raf ); }
+		raf = window.requestAnimationFrame( apply );
+	} );
+	input.addEventListener( 'keydown', function ( e ) {
+		if ( 'Escape' === e.key && input.value ) { input.value = ''; apply(); }
+	} );
+}() );

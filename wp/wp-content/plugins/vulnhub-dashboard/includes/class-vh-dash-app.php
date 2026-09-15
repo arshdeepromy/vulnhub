@@ -201,6 +201,9 @@ final class VulnHub_Dash_App {
 					'selAllMatching'  => __( 'Select all %d matching these filters', 'vulnhub' ),
 					/* translators: %d: total number of matching findings. Keep the %d. */
 					'selAll'          => __( 'All %d matching findings selected', 'vulnhub' ),
+					/* translators: 1: number shown, 2: total. Keep both placeholders. */
+					'searchShowing'   => __( '%1$s of %2$s', 'vulnhub' ),
+					'searchNoMatch'   => __( 'No products match your search.', 'vulnhub' ),
 				),
 			)
 		);
@@ -2342,6 +2345,12 @@ final class VulnHub_Dash_App {
 				<?php echo VulnHub_Dash_Charts::empty_state( __( 'No products match this filter.', 'vulnhub' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 			</div>
 		<?php else : ?>
+			<div class="vh-prodsearch" data-vh-prodsearch data-vh-total="<?php echo (int) count( $rows ); ?>" hidden>
+				<input type="search" class="vh-prodsearch__input" autocomplete="off" spellcheck="false"
+					placeholder="<?php esc_attr_e( 'Search products…', 'vulnhub' ); ?>"
+					aria-label="<?php esc_attr_e( 'Search products by name', 'vulnhub' ); ?>" />
+				<span class="vh-prodsearch__count" role="status" aria-live="polite"></span>
+			</div>
 			<div class="vh-card vh-card--flush">
 				<ul class="vh-prodlist vh-prodlist--full">
 					<?php
@@ -2352,8 +2361,9 @@ final class VulnHub_Dash_App {
 							'vulnerabilities',
 							array( 'product' => (string) $vh_r['product_slug'], 'life' => 'reportable', 'state' => 'open_any' )
 						);
+						$vh_search = strtolower( trim( (string) $vh_r['product'] . ' ' . (string) ( $vh_r['product_kind'] ?? '' ) . ' ' . (string) ( $vh_r['bundles'] ?? '' ) ) );
 						?>
-						<li class="vh-prodrow">
+						<li class="vh-prodrow" data-vh-name="<?php echo esc_attr( $vh_search ); ?>">
 							<?php echo VulnHub_Dash_Widgets::product_icon( (string) $vh_r['product_slug'], (string) $vh_r['component_class'], (string) $vh_r['product'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 							<div class="vh-prodrow__main">
 								<div class="vh-prodrow__head">
@@ -2389,6 +2399,7 @@ final class VulnHub_Dash_App {
 						</li>
 					<?php endforeach; ?>
 				</ul>
+				<p class="vh-prodsearch__empty" data-vh-prodsearch-empty hidden><?php esc_html_e( 'No products match your search.', 'vulnhub' ); ?></p>
 			</div>
 		<?php endif; ?>
 		<?php
