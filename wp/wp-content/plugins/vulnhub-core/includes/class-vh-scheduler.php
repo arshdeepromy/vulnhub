@@ -20,6 +20,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 final class Scheduler {
 
 	public const HOOK_SYNC       = 'vulnhub_run_connector_sync';
+	/** A manual "Sync now" dispatched to the background. */
+	public const HOOK_SYNC_NOW   = 'vulnhub_run_connector_sync_now';
+	/** Recurring: pick up a staged sync a crash left half-finished. */
+	public const HOOK_RESUME     = 'vulnhub_resume_syncs';
 	public const HOOK_HOUSEKEEP  = 'vulnhub_housekeeping';
 	public const HOOK_VERIFY     = 'vulnhub_cron_verify_closures';
 	public const HOOK_AUTOMATION = 'vulnhub_cron_run_automations';
@@ -57,6 +61,8 @@ final class Scheduler {
 	public function hooks(): void {
 		add_filter( 'cron_schedules', array( __CLASS__, 'intervals' ) ); // phpcs:ignore WordPress.WP.CronInterval
 		add_action( self::HOOK_SYNC, array( $this, 'run_sync' ), 10, 1 );
+		add_action( self::HOOK_SYNC_NOW, array( $this, 'run_sync_now' ), 10, 1 );
+		add_action( self::HOOK_RESUME, array( $this, 'resume_syncs' ) );
 		add_action( self::HOOK_HOUSEKEEP, array( $this, 'housekeeping' ) );
 		add_action( self::HOOK_VERIFY, array( $this, 'verify_closures' ) );
 		add_action( self::HOOK_AUTOMATION, array( $this, 'run_automations' ) );
@@ -169,6 +175,7 @@ final class Scheduler {
 			self::HOOK_HOUSEKEEP  => 'vh_daily',
 			self::HOOK_VERIFY     => 'vh_hourly',
 			self::HOOK_AUTOMATION => 'vh_15min',
+			self::HOOK_RESUME     => 'vh_5min',
 			self::HOOK_SNAPSHOT   => 'vh_daily',
 		);
 		foreach ( $standing as $hook => $interval ) {
@@ -181,6 +188,60 @@ final class Scheduler {
 	/**
 	 * Cron callback: run one connector.
 	 */
+	/**
+	 * Queue a manual sync to run in the background, and nudge cron so it
+	 * starts promptly rather than at the next tick.
+	 *
+	 * @param string $connector_id Connector id.
+	 */
+	public static function queue_sync( string $connector_id ): void {
+		if ( ! wp_next_scheduled( self::HOOK_SYNC_NOW, array( $connector_id ) ) ) {
+			wp_schedule_single_event( time(), self::HOOK_SYNC_NOW, array( $connector_id ) );
+		}
+
+		if ( function_exists( 'spawn_cron' ) ) {
+			spawn_cron(); // fire-and-forget loopback so it does not wait for the 60s tick
+		}
+	}
+
+	/**
+	 * Background handler for a dispatched manual sync. force + ignore_lock so
+	 * it runs even if a stale lock lingers; the staged sync itself resumes any
+	 * checkpoint on disk rather than restarting.
+	 *
+	 * @param string $connector_id Connector id.
+	 */
+	public function run_sync_now( string $connector_id ): void {
+		$connector = vulnhub()->connectors->get( $connector_id );
+		if ( ! $connector ) {
+			return;
+		}
+		$connector->sync( array( 'mode' => 'manual', 'force' => true, 'ignore_lock' => true ) );
+	}
+
+	/**
+	 * Resume any staged sync a crash left half-finished. Runs every few
+	 * minutes: a connector that reports work still on disk, and is not already
+	 * running, is dispatched to continue from its last checkpoint -- so an
+	 * interrupted import finishes on its own rather than waiting for someone
+	 * to press the button again.
+	 */
+	public function resume_syncs(): void {
+		if ( ! function_exists( 'vulnhub' ) || ! isset( vulnhub()->connectors ) ) {
+			return;
+		}
+
+		foreach ( vulnhub()->connectors->all() as $id => $connector ) {
+			if ( ! $connector->resumable_sync() ) {
+				continue;
+			}
+			if ( get_transient( 'vulnhub_sync_lock_' . $id ) ) {
+				continue; // a run holds the lock; leave it be
+			}
+			self::queue_sync( (string) $id );
+		}
+	}
+
 	public function run_sync( string $connector_id ): void {
 		$connector = vulnhub()->connectors->get( $connector_id );
 		if ( ! $connector ) {

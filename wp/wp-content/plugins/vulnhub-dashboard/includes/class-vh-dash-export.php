@@ -65,6 +65,7 @@ final class VulnHub_Dash_Export {
 	 */
 	private const PAGE = 500;
 
+
 	public static function init(): void {
 		add_action( 'admin_post_' . self::ACTION, array( __CLASS__, 'handle' ) );
 	}
@@ -82,6 +83,14 @@ final class VulnHub_Dash_Export {
 			),
 			'findings'      => array(
 				'label' => __( 'Vulnerability findings', 'vulnhub' ),
+				'cap'   => Caps::VIEW,
+			),
+			'vuln_assets'   => array(
+				'label' => __( 'Vulnerabilities with affected assets', 'vulnhub' ),
+				'cap'   => Caps::VIEW,
+			),
+			'product_remediation' => array(
+				'label' => __( 'Product remediation and outdated assets', 'vulnhub' ),
 				'cap'   => Caps::VIEW,
 			),
 			'coverage_gaps' => array(
@@ -493,13 +502,31 @@ final class VulnHub_Dash_Export {
 	 * @param string              $view View key.
 	 * @param array<string,mixed> $args Query arguments.
 	 */
-	public static function button( string $view, array $args = array() ): void {
+	public static function button( string $view, array $args = array(), ?int $count = null, string $noun = '' ): void {
 		$def  = self::views()[ $view ] ?? null;
 		$cols = self::columns( $view );
 
 		if ( ! $def || ! $cols || ! current_user_can( (string) $def['cap'] ) ) {
 			return;
 		}
+
+		$noun    = '' !== $noun ? $noun : __( 'rows', 'vulnhub' );
+		$scope   = null !== $count
+			? sprintf(
+				/* translators: 1: a formatted row count, 2: the noun for it, e.g. "findings". */
+				__( 'Exporting all %1$s %2$s that match these filters.', 'vulnhub' ),
+				number_format_i18n( $count ),
+				$noun
+			)
+			: __( 'The filters on this screen still apply.', 'vulnhub' );
+		$dl_label = null !== $count
+			? sprintf(
+				/* translators: 1: a formatted row count, 2: the noun for it, e.g. "findings". */
+				__( 'Download %1$s %2$s', 'vulnhub' ),
+				number_format_i18n( $count ),
+				$noun
+			)
+			: __( 'Download CSV', 'vulnhub' );
 
 		$groups = array();
 
@@ -541,8 +568,12 @@ final class VulnHub_Dash_Export {
 						<button type="button" class="vh-linkbtn" data-vh-cols="all"><?php esc_html_e( 'All', 'vulnhub' ); ?></button>
 						<button type="button" class="vh-linkbtn" data-vh-cols="none"><?php esc_html_e( 'None', 'vulnhub' ); ?></button>
 					</span>
-					<button type="submit" class="vh-btn vh-btn--primary vh-btn--sm"><?php esc_html_e( 'Download CSV', 'vulnhub' ); ?></button>
+					<button type="submit" class="vh-btn vh-btn--primary vh-btn--sm"><?php echo esc_html( $dl_label ); ?></button>
 				</div>
+
+				<?php if ( null !== $count ) : ?>
+					<p class="vh-export__scope"><?php echo esc_html( $scope ); ?></p>
+				<?php endif; ?>
 
 				<div class="vh-export__cols">
 					<?php foreach ( $groups as $vh_group => $vh_items ) : ?>
@@ -563,6 +594,42 @@ final class VulnHub_Dash_Export {
 				</p>
 			</form>
 		</details>
+		<?php
+	}
+
+	/**
+	 * A plain export link, for a view whose file shape is fixed and so has no
+	 * column picker to offer. Same nonce and carried filters as button(),
+	 * just without the <details> and the checkboxes.
+	 *
+	 * @param string              $view  View key.
+	 * @param array<string,mixed> $args  Query arguments to carry over.
+	 * @param string              $label Optional button label.
+	 */
+	public static function link_button( string $view, array $args = array(), string $label = '', ?int $count = null, string $noun = '' ): void {
+		$def = self::views()[ $view ] ?? null;
+
+		if ( ! $def || ! current_user_can( (string) $def['cap'] ) ) {
+			return;
+		}
+
+		if ( '' === $label ) {
+			$label = null !== $count
+				? sprintf(
+					/* translators: 1: a formatted count, 2: the noun for it, e.g. "vulnerabilities". */
+					__( 'Export %1$s %2$s', 'vulnhub' ),
+					number_format_i18n( $count ),
+					'' !== $noun ? $noun : __( 'rows', 'vulnhub' )
+				)
+				: __( 'Export CSV', 'vulnhub' );
+		}
+		?>
+		<a class="vh-btn vh-btn--ghost vh-btn--sm" href="<?php echo esc_url( self::url( $view, $args ) ); ?>">
+			<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" width="14" height="14">
+				<path d="M12 3v11m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+			</svg>
+			<?php echo esc_html( $label ); ?>
+		</a>
 		<?php
 	}
 
@@ -626,6 +693,14 @@ final class VulnHub_Dash_Export {
 	 * @param array<string,array<string,mixed>> $cols Chosen columns.
 	 */
 	private static function stream( string $view, array $cols ): void {
+		// A wide remediation export aggregates per product and can run past
+		// the default request ceiling; it streams as it goes, so let it finish
+		// rather than be truncated to a silent partial file.
+		if ( function_exists( 'set_time_limit' ) ) {
+			@set_time_limit( 0 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+		}
+
+
 		$name = sprintf(
 			'vulnhub-%s-%s.csv',
 			str_replace( '_', '-', $view ),
@@ -654,6 +729,23 @@ final class VulnHub_Dash_Export {
 		 * every hostname with a non-ASCII character into mojibake.
 		 */
 		fwrite( $out, "\xEF\xBB\xBF" ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+		/*
+		 * The vulnerability-on-assets export is two tables in one file, each
+		 * with its own header, so it writes them itself rather than taking
+		 * the single header-then-rows shape the column-picker views share.
+		 */
+		if ( 'vuln_assets' === $view ) {
+			self::vuln_assets( $out );
+			fclose( $out ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+			exit;
+		}
+
+		if ( 'product_remediation' === $view ) {
+			self::product_remediation( $out );
+			fclose( $out ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+			exit;
+		}
 
 		self::put( $out, array_map( static fn( array $c ): string => (string) $c['label'], array_values( $cols ) ) );
 
@@ -695,6 +787,22 @@ final class VulnHub_Dash_Export {
 	 * @param array<int,string> $row Cells.
 	 */
 	private static function put( $out, array $row ): void {
+		/*
+		 * One record, one physical line. A Solution or Description carries
+		 * hard line breaks, and while RFC 4180 says a quoted field may span
+		 * lines, plenty of things people open a CSV in -- a quick `wc -l`, a
+		 * naive importer, a preview pane -- count physical lines and report a
+		 * 232-row export as far fewer. Collapsing the breaks inside a value to
+		 * spaces makes the row count on disk match the row count on screen
+		 * whatever opens it; the prose is still readable, and the full text is
+		 * a click away on the vulnerability page.
+		 */
+		$row = array_map(
+			static fn( $v ): string => (string) preg_replace( '/[\r\n]+/', '  ', (string) $v ),
+			$row
+		);
+
+
 		/*
 		 * The empty escape string is not cosmetic. PHP's default is a
 		 * backslash, which is not part of RFC 4180 and which Excel does not
@@ -869,10 +977,31 @@ final class VulnHub_Dash_Export {
 				 */
 				'product_slug'    => self::get( 'product_slug' ),
 				'route'           => self::get( 'route' ),
+				'delivery'        => self::get( 'delivery' ),
 				'poc'             => self::get( 'poc' ),
 				'vuln_id'         => self::get_int( 'vuln' ),
 				'asset_id'        => self::get_int( 'asset' ),
+				/*
+				 * An explicit finding-id set: the "export exactly the rows I
+				 * ticked" path from the selection bar. When present it stands
+				 * alongside the filters (the ids came from this filtered list
+				 * in the first place), so the file is those rows and no more.
+				 */
+				'ids'             => self::get( 'ids' ),
 				'patch_available' => self::get( 'patch_available' ),
+				/*
+				 * The lifecycle-support scope (EOL / in-support) and the
+				 * severity-exclusion the download-zone view carries are on
+				 * this list for the same reason path_zone and os_platform
+				 * are: every filter the screen holds has to be read back
+				 * here, or the file silently disagrees with the count above
+				 * the button. Leaving `support` off exported EOL and
+				 * in-support machines alike from an EOL-only list; leaving
+				 * `severity_not` off put Tenable's info file-listings back
+				 * into a list that had excluded them.
+				 */
+				'support'         => self::get( 'support' ),
+				'severity_not'    => self::get( 'severity_not' ),
 				/*
 				 * Same trap again, one filter later: carried() forwards every
 				 * arg the list held into the form, but this list is what gets
@@ -896,6 +1025,272 @@ final class VulnHub_Dash_Export {
 				self::emit( $out, $cols, $r );
 			}
 		);
+	}
+
+	/**
+	 * The filters the vulnerability-on-assets export inherits from $_GET,
+	 * paging removed. The same set the vulnerabilities screen holds, so the
+	 * file matches the tab it was launched from -- support (EOL / in-support)
+	 * included.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private static function vuln_assets_base(): array {
+		return array_filter(
+			array(
+				'state'           => self::get( 'state', 'open_any' ),
+				'lifecycle'       => self::get( 'lifecycle' ),
+				'severity'        => self::get( 'severity' ),
+				'age'             => self::get( 'age' ),
+				'asset_type'      => self::get( 'asset_type' ),
+				'team_id'         => self::get_int( 'team_id' ),
+				'department'      => self::get( 'department' ),
+				'hosting'         => self::get( 'hosting' ),
+				'location_id'     => self::get( 'location_id' ),
+				'search'          => self::get( 'search' ),
+				'overdue'         => self::get( 'overdue' ),
+				'product_slug'    => self::get( 'product_slug' ),
+				'route'           => self::get( 'route' ),
+				'poc'             => self::get( 'poc' ),
+				'patch_available' => self::get( 'patch_available' ),
+				'support'         => self::get( 'support' ),
+				'path_zone'       => self::get( 'path_zone' ),
+				'os_platform'     => self::get( 'os_platform' ),
+			),
+			static fn( $v ): bool => '' !== $v && 0 !== $v
+		);
+	}
+
+	/**
+	 * Two tables in one file: the vulnerabilities that match the filters, each
+	 * with its shared facts once (title, CVE, scoring, solution, description),
+	 * then every affected asset as its own row -- keyed back to the vuln by
+	 * CVE and plugin id, and carrying only what differs per asset, so the
+	 * solution and the description are not repeated down thousands of rows.
+	 * Each asset row also says whether that host is end of life, because that
+	 * is the one lifecycle fact that varies asset by asset under one vuln.
+	 *
+	 * @param resource $out Output handle.
+	 */
+	private static function vuln_assets( $out ): void {
+		$base = self::vuln_assets_base();
+
+		/* ---- Section one: the vulnerabilities. ---- */
+		self::put( $out, array( __( 'Vulnerabilities', 'vulnhub' ) ) );
+		self::put(
+			$out,
+			array(
+				__( 'CVE', 'vulnhub' ),
+				__( 'Plugin', 'vulnhub' ),
+				__( 'Vulnerability', 'vulnhub' ),
+				__( 'Family', 'vulnhub' ),
+				__( 'Severity', 'vulnhub' ),
+				__( 'CVSS v3', 'vulnhub' ),
+				__( 'VPR', 'vulnhub' ),
+				__( 'Exploit available', 'vulnhub' ),
+				__( 'Patch available', 'vulnhub' ),
+				__( 'Patch published', 'vulnhub' ),
+				__( 'Assets affected', 'vulnhub' ),
+				__( 'Open findings', 'vulnhub' ),
+				__( 'Solution', 'vulnhub' ),
+				__( 'Description', 'vulnhub' ),
+			)
+		);
+
+		$offset = 0;
+
+		do {
+			$page  = Repo::findings( array_merge( $base, array( 'group' => 'vuln', 'limit' => 500, 'offset' => $offset ) ) );
+			$vulns = (array) ( $page['vulns'] ?? array() );
+
+			foreach ( $vulns as $v ) {
+				self::put(
+					$out,
+					array(
+						self::cve_list( $v ),
+						(string) ( $v['plugin_id'] ?? '' ),
+						(string) ( $v['title'] ?? '' ),
+						(string) ( $v['family'] ?? '' ),
+						(string) ( $v['severity'] ?? '' ),
+						(string) ( $v['cvss3_base'] ?? '' ),
+						(string) ( $v['vpr_score'] ?? '' ),
+						self::yn( ! empty( $v['exploit_available'] ) ),
+						self::yn( Repo::has_patch( $v ) ),
+						(string) ( $v['patch_publication_date'] ?? '' ),
+						(string) ( $v['assets'] ?? '' ),
+						(string) ( $v['findings'] ?? '' ),
+						(string) ( $v['solution'] ?? '' ),
+						(string) ( $v['description'] ?? '' ),
+					)
+				);
+			}
+
+			flush();
+			$offset += 500;
+		} while ( $vulns && $offset < min( self::MAX_ROWS, (int) ( $page['total'] ?? 0 ) ) );
+
+		/* A blank line, then the second table. */
+		self::put( $out, array() );
+
+		/* ---- Section two: the affected assets. ---- */
+		self::put( $out, array( __( 'Affected assets', 'vulnhub' ) ) );
+		self::put(
+			$out,
+			array(
+				__( 'CVE', 'vulnhub' ),
+				__( 'Plugin', 'vulnhub' ),
+				__( 'Vulnerability', 'vulnhub' ),
+				__( 'Severity', 'vulnhub' ),
+				__( 'Asset', 'vulnhub' ),
+				__( 'IPv4', 'vulnhub' ),
+				__( 'Asset type', 'vulnhub' ),
+				__( 'Operating system', 'vulnhub' ),
+				__( 'End of life', 'vulnhub' ),
+				__( 'Owner', 'vulnhub' ),
+				__( 'Team', 'vulnhub' ),
+				__( 'Location', 'vulnhub' ),
+				__( 'Install path', 'vulnhub' ),
+				__( 'State', 'vulnhub' ),
+				__( 'First found', 'vulnhub' ),
+				__( 'Due', 'vulnhub' ),
+				__( 'Ticket', 'vulnhub' ),
+			)
+		);
+
+		self::each(
+			array_merge( $base, array( 'orderby' => 'vuln_id', 'order' => 'ASC' ) ),
+			static fn( array $a ): array => Repo::findings( $a ),
+			static function ( array $r ) use ( $out, $eol ): void {
+				self::put(
+					$out,
+					array(
+						self::cve_list( $r ),
+						(string) ( $r['plugin_id'] ?? '' ),
+						(string) ( $r['vuln_title'] ?? '' ),
+						(string) ( $r['severity'] ?? '' ),
+						(string) ( $r['hostname'] ?: ( $r['fqdn'] ?? '' ) ),
+						(string) ( $r['ipv4'] ?? '' ),
+						vh_asset_type_label( (string) ( $r['asset_type'] ?? '' ) ),
+						(string) ( $r['operating_system'] ?? '' ),
+						self::yn( Eol::finding_is_eol( (int) $r['asset_id'], (int) $r['vuln_id'], (string) ( $r['component_class'] ?? '' ) ) ),
+						(string) ( $r['owner_name'] ?? '' ),
+						(string) ( $r['team_name'] ?? '' ),
+						(string) ( $r['location_name'] ?? '' ),
+						(string) ( $r['zone_path'] ?: self::install_path( (string) ( $r['output'] ?? '' ) ) ),
+						(string) ( $r['state'] ?? '' ),
+						(string) ( $r['first_found'] ?? '' ),
+						(string) ( $r['due_at'] ?? '' ),
+						(string) ( $r['ticket_key'] ?? '' ),
+					)
+				);
+			}
+		);
+	}
+
+	/**
+	 * The remediation export: for each product in scope, the one update that
+	 * clears it and the assets still on an old version. De-duplicated by
+	 * design -- no per-version "X is vulnerable, Y is vulnerable" repetition,
+	 * just "update to the newest release, and here is who has not". Two
+	 * sections: a product summary, then the outdated assets under each.
+	 *
+	 * @param resource $out Output handle.
+	 */
+	private static function product_remediation( $out ): void {
+		$base = self::vuln_assets_base();
+
+		$products = (array) ( Repo::findings( array_merge( $base, array( 'group' => 'product', 'limit' => 500 ) ) )['products'] ?? array() );
+
+		/* ---- Section one: what to update. ---- */
+		self::put( $out, array( __( 'Remediation', 'vulnhub' ) ) );
+		self::put(
+			$out,
+			array(
+				__( 'Product', 'vulnhub' ),
+				__( 'Update to (or later)', 'vulnhub' ),
+				__( 'Vulnerabilities fixed', 'vulnhub' ),
+				__( 'CVEs', 'vulnhub' ),
+				__( 'Outdated assets', 'vulnhub' ),
+				__( 'Highest severity', 'vulnhub' ),
+				__( 'Exploit available', 'vulnhub' ),
+				__( 'Patch available', 'vulnhub' ),
+				__( 'CVE list', 'vulnhub' ),
+			)
+		);
+
+		$remediations = array();
+
+		foreach ( $products as $p ) {
+			$slug = (string) $p['product_slug'];
+			$rem  = VulnHub_Dash_App::product_remediation( $slug, $base );
+
+			if ( ! $rem['assets'] ) {
+				continue;
+			}
+
+			$remediations[] = $rem;
+
+			self::put(
+				$out,
+				array(
+					(string) $rem['product'],
+					(string) $rem['target'],
+					(string) $rem['vulns'],
+					(string) $rem['cves'],
+					(string) count( $rem['assets'] ),
+					(string) $rem['max_severity'],
+					self::yn( (bool) $rem['exploit'] ),
+					self::yn( (bool) $rem['patchable'] ),
+					implode( ' ', $rem['cve_list'] ),
+				)
+			);
+			flush();
+		}
+
+		self::put( $out, array() );
+
+		/* ---- Section two: who is outdated. ---- */
+		self::put( $out, array( __( 'Outdated assets', 'vulnhub' ) ) );
+		self::put(
+			$out,
+			array(
+				__( 'Product', 'vulnhub' ),
+				__( 'Update to (or later)', 'vulnhub' ),
+				__( 'Asset', 'vulnhub' ),
+				__( 'IPv4', 'vulnhub' ),
+				__( 'Asset type', 'vulnhub' ),
+				__( 'Operating system', 'vulnhub' ),
+				__( 'Owner', 'vulnhub' ),
+				__( 'Team', 'vulnhub' ),
+				__( 'Location', 'vulnhub' ),
+				__( 'Vulnerabilities on asset', 'vulnhub' ),
+				__( 'Due', 'vulnhub' ),
+				__( 'Ticket', 'vulnhub' ),
+			)
+		);
+
+		foreach ( $remediations as $rem ) {
+			foreach ( $rem['assets'] as $a ) {
+				self::put(
+					$out,
+					array(
+						(string) $rem['product'],
+						(string) $rem['target'],
+						(string) $a['hostname'],
+						(string) $a['ipv4'],
+						vh_asset_type_label( (string) $a['asset_type'] ),
+						(string) $a['os'],
+						(string) $a['owner_name'],
+						(string) $a['team_name'],
+						(string) $a['location'],
+						(string) $a['findings'],
+						(string) $a['due_at'],
+						(string) $a['ticket_key'],
+					)
+				);
+			}
+			flush();
+		}
 	}
 
 	/**

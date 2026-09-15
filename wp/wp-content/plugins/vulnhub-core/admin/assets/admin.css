@@ -155,3 +155,23 @@
   .vh-filters { flex-direction:column; align-items:stretch; }
 }
 
+
+/* Connector card: last-sync completion time and duration. */
+.vh-connector__sync { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; margin: 12px 0 0; padding-top: 10px; border-top: 1px solid #e2e4e9; font-size: 12.5px; }
+.vh-connector__sync dt { color: #646970; }
+.vh-connector__sync dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+/* Connector sync progress bar. */
+.vh-sync-progress { margin: 12px 0 0; }
+.vh-sync-progress__bar { height: 8px; border-radius: 5px; overflow: hidden; background: #e2e4e9; position: relative; }
+.vh-sync-progress__bar > span { display: block; height: 100%; border-radius: 5px; background: #2271b1; transition: width .6s ease; }
+.vh-sync-progress__bar.is-indeterminate > span { width: 34% !important; position: absolute; left: -34%; animation: vh-sync-indet 1.3s ease-in-out infinite; }
+@keyframes vh-sync-indet { 0%{left:-34%} 60%,100%{left:100%} }
+.vh-sync-progress__meta { margin-top: 6px; font-size: 12px; color: #646970; font-variant-numeric: tabular-nums; }
+.vh-sync-progress__done { margin-top: 4px; font-size: 12.5px; line-height: 1.5; }
+.vh-sync-progress__done--bad { color: #b32d2e; }
+.vh-sync-progress__done--good { color: #007017; }
+
+/* Staged sync: labelled two-bar layout (download, then process). */
+.vh-sync-progress__row { display: grid; grid-template-columns: 70px 1fr; align-items: center; gap: 10px; margin-top: 8px; }
+.vh-sync-progress__lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; opacity: .7; }

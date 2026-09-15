@@ -106,6 +106,26 @@ abstract class Connector {
 	}
 
 	/**
+	 * Should a manual "Sync now" run in the background rather than in the web
+	 * request? True for a connector whose sync is long enough that holding the
+	 * browser open for it, and losing it if the browser is closed, is the
+	 * wrong model. Such a sync is dispatched to cron and watched by the
+	 * progress poller instead. Default: run inline (short syncs).
+	 */
+	public function async_sync(): bool {
+		return false;
+	}
+
+	/**
+	 * Does this connector have a staged sync checkpointed on disk that was
+	 * interrupted and should be resumed? The resume sweep uses it. Default:
+	 * no staged state to resume.
+	 */
+	public function resumable_sync(): bool {
+		return false;
+	}
+
+	/**
 	 * Is "use mock data instead of the live API" a meaningful choice here?
 	 *
 	 * It is for anything that imports: a sample fleet flows through the same
@@ -185,6 +205,20 @@ abstract class Connector {
 
 	protected function bump( string $key, int $by = 1 ): void {
 		$this->stats[ $key ] = ( $this->stats[ $key ] ?? 0 ) + $by;
+	}
+
+	/**
+	 * Record live progress for the running sync, for the card's progress bar.
+	 * A heartbeat rides along, so a poller can tell a working import from a
+	 * stalled one. Call it as each batch lands, not per row.
+	 *
+	 * @param string $stage Human label for the current phase.
+	 * @param int    $done  Records processed so far.
+	 */
+	protected function progress( string $stage, int $done ): void {
+		if ( $this->run_id ) {
+			$this->logger->progress( $this->run_id, $done, $stage );
+		}
 	}
 
 	/**
@@ -285,19 +319,42 @@ abstract class Connector {
 			);
 		}
 
-		$last = $this->logger->last_run( $this->id() );
-		if ( ! $last ) {
+		/*
+		 * Report on the last run that actually finished, not merely the last
+		 * that started. A sync that is killed mid-run (the Tenable export can
+		 * be, on a large account) leaves a row stranded at status 'running'
+		 * with no finish time; last_run() would return that and the card
+		 * would read "Healthy" with an empty "Last synced —". last_completed_run()
+		 * is the row that can answer when the sync finished and how long it
+		 * took, which is what the card shows.
+		 */
+		$last      = $this->logger->last_run( $this->id() );
+		$completed = $this->logger->last_completed_run( $this->id() );
+
+		if ( ! $last && ! $completed ) {
 			return array(
 				'state'  => 'idle',
 				'label'  => __( 'Never synced', 'vulnhub' ),
 				'detail' => __( 'Configured, waiting for the first run.', 'vulnhub' ),
+				'last'   => null,
 			);
 		}
-		if ( 'failed' === $last['status'] ) {
+
+		if ( $completed && 'failed' === $completed['status'] ) {
 			return array(
 				'state'  => 'error',
 				'label'  => __( 'Last sync failed', 'vulnhub' ),
-				'detail' => vh_trim( (string) $last['message'], 140 ),
+				'detail' => vh_trim( (string) $completed['message'], 140 ),
+				'last'   => $completed,
+			);
+		}
+
+		if ( ! $completed ) {
+			return array(
+				'state'  => 'idle',
+				'label'  => __( 'Sync in progress', 'vulnhub' ),
+				'detail' => __( 'The first sync is still running.', 'vulnhub' ),
+				'last'   => null,
 			);
 		}
 
@@ -305,7 +362,8 @@ abstract class Connector {
 			'state'  => 'ok',
 			'label'  => __( 'Healthy', 'vulnhub' ),
 			/* translators: %s: relative time. */
-			'detail' => sprintf( __( 'Last synced %s.', 'vulnhub' ), vh_ago( (string) $last['finished_at'] ) ),
+			'detail' => sprintf( __( 'Last synced %s.', 'vulnhub' ), vh_ago( (string) $completed['finished_at'] ) ),
+			'last'   => $completed,
 		);
 	}
 }

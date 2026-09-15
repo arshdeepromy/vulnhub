@@ -541,6 +541,22 @@ final class Rest {
 			return new WP_Error( 'vulnhub_not_found', __( 'Connector not found.', 'vulnhub' ), array( 'status' => 404 ) );
 		}
 
+		// A long connector runs in the background so the browser is not held
+		// open for a multi-minute import (and the sync is not lost if the tab
+		// is closed). The progress poller shows it running; a resume picks it
+		// up if it is interrupted.
+		if ( $connector->async_sync() && ! (bool) $request->get_param( 'full' ) ) {
+			\VulnHub\Core\Scheduler::queue_sync( (string) $connector->id() );
+
+			return new WP_REST_Response(
+				array(
+					'ok'      => true,
+					'queued'  => true,
+					'message' => __( 'Sync started in the background — you can watch its progress here.', 'vulnhub' ),
+				)
+			);
+		}
+
 		$result = $connector->sync(
 			array(
 				'mode'  => 'manual',

@@ -729,6 +729,37 @@ function vh_now(): string {
 }
 
 /**
+ * A duration in milliseconds as a short human string: "45s", "3m 42s",
+ * "1h 5m". Zero or negative reads as an em dash, because "0s" on a card
+ * looks like a real measurement of nothing rather than the absence of one.
+ *
+ * @param int $ms Duration in milliseconds.
+ */
+function vh_duration_human( int $ms ): string {
+	if ( $ms <= 0 ) {
+		return '—';
+	}
+
+	$seconds = (int) round( $ms / 1000 );
+
+	if ( $seconds < 60 ) {
+		return $seconds . 's';
+	}
+
+	$minutes = intdiv( $seconds, 60 );
+	$seconds = $seconds % 60;
+
+	if ( $minutes < 60 ) {
+		return $seconds ? sprintf( '%dm %ds', $minutes, $seconds ) : sprintf( '%dm', $minutes );
+	}
+
+	$hours   = intdiv( $minutes, 60 );
+	$minutes = $minutes % 60;
+
+	return $minutes ? sprintf( '%dh %dm', $hours, $minutes ) : sprintf( '%dh', $hours );
+}
+
+/**
  * Normalise a vendor timestamp (ISO8601, epoch seconds, or MySQL) to UTC MySQL.
  */
 function vh_to_mysql( mixed $value ): ?string {
