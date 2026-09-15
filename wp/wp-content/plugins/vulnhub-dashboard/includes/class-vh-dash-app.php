@@ -34,6 +34,29 @@ final class VulnHub_Dash_App {
 		add_action( 'wp_enqueue_scripts', array( __CLASS__, 'strip_builder_assets' ), 999 );
 		add_filter( 'body_class', array( __CLASS__, 'body_class' ) );
 		add_action( 'template_redirect', array( __CLASS__, 'redirect_signed_in' ) );
+		add_filter( 'vulnhub_admin_screen_url', array( __CLASS__, 'exceptions_url_in_portal' ), 20, 3 );
+	}
+
+	/**
+	 * Keep the exception request and decision screens inside the portal.
+	 *
+	 * Core's exceptions view builds every link and post-save redirect with
+	 * vh_admin_url( 'vulnhub-exceptions' ). The portal's own redirect filter
+	 * cannot map that screen -- it is a primary-nav view, not an admin
+	 * section -- so rendered on the portal it pointed back into wp-admin,
+	 * where a portal-only account is turned away. On a portal page it means
+	 * the Exceptions view, which renders the same core form in place.
+	 *
+	 * @param string               $url  Default URL.
+	 * @param string               $page Screen slug.
+	 * @param array<string,scalar> $args Query arguments.
+	 */
+	public static function exceptions_url_in_portal( string $url, string $page, array $args ): string {
+		if ( 'vulnhub-exceptions' !== $page || is_admin() || '' === self::view_for_post( get_post() ) ) {
+			return $url;
+		}
+
+		return self::page_url( 'exceptions', $args );
 	}
 
 	/* -----------------------------------------------------------------
@@ -412,7 +435,18 @@ final class VulnHub_Dash_App {
 						<div class="vh-account__menu">
 							<p class="vh-account__name"><?php echo esc_html( wp_get_current_user()->display_name ); ?></p>
 							<p class="vh-account__mail"><?php echo esc_html( wp_get_current_user()->user_email ); ?></p>
-							<a href="<?php echo esc_url( admin_url( 'profile.php' ) ); ?>"><?php esc_html_e( 'Security &amp; MFA', 'vulnhub' ); ?></a>
+							<?php
+							/*
+							 * The portal's own "Your security" section when the auth
+							 * plugin provides it. profile.php is wp-admin, which a
+							 * portal-only account is redirected away from, so the
+							 * old link sent them straight back to the dashboard.
+							 */
+							$vh_security = isset( VulnHub_Dash_Portal::sections()['security'] )
+								? VulnHub_Dash_Portal::portal_url( VulnHub_Dash_Portal::ADMIN_VIEW, array( 'section' => 'security' ) )
+								: admin_url( 'profile.php' );
+							?>
+							<a href="<?php echo esc_url( $vh_security ); ?>"><?php esc_html_e( 'Security &amp; MFA', 'vulnhub' ); ?></a>
 							<a href="<?php echo esc_url( wp_logout_url( VulnHub_Dash_Portal::login_url() ) ); ?>"><?php esc_html_e( 'Sign out', 'vulnhub' ); ?></a>
 						</div>
 					</details>
@@ -653,15 +687,26 @@ final class VulnHub_Dash_App {
 	 * point once a reader stops to look: a source that last claimed a machine
 	 * eight months ago is the one worth doubting.
 	 *
+	 * When the list is filtered to one source ("Known by CMDB"), that chip is
+	 * drawn first and highlighted. Every source still shows -- the other feeds
+	 * are exactly what someone checking CMDB coverage wants to see beside it --
+	 * but the eye needs one fixed place to land, row after row, to confirm the
+	 * filter is doing what it says.
+	 *
 	 * @param string $stored The asset's `sources_json` column.
 	 * @param bool   $link   Whether chips should filter the assets list.
+	 * @param string $focus  Source slug to highlight, or '' for none.
 	 * @return string Escaped HTML.
 	 */
-	private static function source_chips( string $stored, bool $link = true ): string {
+	private static function source_chips( string $stored, bool $link = true, string $focus = '' ): string {
 		$seen = Repo::source_map( $stored );
 
 		if ( ! $seen ) {
 			return '<span class="vh-muted" title="' . esc_attr__( 'No feed has claimed this asset.', 'vulnhub' ) . '">&mdash;</span>';
+		}
+
+		if ( '' !== $focus && array_key_exists( $focus, $seen ) ) {
+			$seen = array( $focus => $seen[ $focus ] ) + $seen;
 		}
 
 		$labels = vh_asset_sources();
@@ -675,9 +720,17 @@ final class VulnHub_Dash_App {
 				/* translators: 1: name of a source system, 2: a date. */
 				: sprintf( __( '%1$s last claimed this asset on %2$s.', 'vulnhub' ), $name, vh_date( $date ) );
 
+			$is_focus = $slug === $focus;
+
+			if ( $is_focus ) {
+				/* translators: %s: the sentence describing when the source last claimed the asset. */
+				$tip = sprintf( __( '%s This is the source the list is filtered on.', 'vulnhub' ), $tip );
+			}
+
 			$chip = sprintf(
-				'<span class="vh-chip vh-chip--src vh-chip--src-%s" title="%s">%s</span>',
+				'<span class="vh-chip vh-chip--src vh-chip--src-%s%s" title="%s">%s</span>',
 				esc_attr( $slug ),
+				$is_focus ? ' is-focus' : '',
 				esc_attr( $tip ),
 				esc_html( $name )
 			);
@@ -688,6 +741,24 @@ final class VulnHub_Dash_App {
 		}
 
 		return '<span class="vh-srcs">' . implode( ' ', $out ) . '</span>';
+	}
+
+	/**
+	 * The source the assets list is filtered to, for source_chips() to
+	 * highlight. "Known by X" and "Only known by X" name one; "Not known by X"
+	 * has nothing to highlight, because no row carries X.
+	 *
+	 * Read from the query string, so the infinite-scroll endpoint -- a real
+	 * GET carrying the same filters -- highlights the rows it appends too.
+	 */
+	private static function known_focus(): string {
+		$known = self::q( 'known' );
+
+		if ( '' === $known || str_starts_with( $known, 'not:' ) ) {
+			return '';
+		}
+
+		return sanitize_key( str_starts_with( $known, 'only:' ) ? substr( $known, 5 ) : $known );
 	}
 
 	/**
@@ -1703,7 +1774,7 @@ final class VulnHub_Dash_App {
 							<span class="vh-muted">—</span>
 						<?php endif; ?>
 					</td>
-					<td data-th="<?php esc_attr_e( 'Known by', 'vulnhub' ); ?>"><?php echo self::source_chips( (string) ( $a['sources_json'] ?? '' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+					<td data-th="<?php esc_attr_e( 'Known by', 'vulnhub' ); ?>"><?php echo self::source_chips( (string) ( $a['sources_json'] ?? '' ), true, self::known_focus() ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
 					<td data-th="<?php esc_attr_e( 'Type', 'vulnhub' ); ?>"><?php echo esc_html( vh_asset_types()[ (string) $a['asset_type'] ] ?? '' ); ?></td>
 					<td data-th="<?php esc_attr_e( 'Operating system', 'vulnhub' ); ?>"><?php
 						echo $a['operating_system']
@@ -2281,7 +2352,8 @@ final class VulnHub_Dash_App {
 					<button type="button" class="vh-btn vh-btn--sm" data-vh-raise data-vh-finding="<?php echo esc_attr( (string) $f['id'] ); ?>"><?php esc_html_e( 'Ticket', 'vulnhub' ); ?></button>
 				<?php endif; ?>
 				<?php if ( current_user_can( Caps::REQUEST_EXCEPTION ) && (int) $f['exception_id'] === 0 ) : ?>
-					<a class="vh-btn vh-btn--sm vh-btn--ghost" href="<?php echo esc_url( vh_admin_url( 'vulnhub-exceptions', array( 'new' => 1, 'finding' => (int) $f['id'] ) ) ); ?>"><?php esc_html_e( 'Except', 'vulnhub' ); ?></a>
+					<?php // The portal's Exceptions view, not wp-admin: this row is also rendered by the findings-more REST route, where there is no portal post to infer the destination from. ?>
+					<a class="vh-btn vh-btn--sm vh-btn--ghost" href="<?php echo esc_url( self::page_url( 'exceptions', array( 'new' => 1, 'finding' => (int) $f['id'] ) ) ); ?>"><?php esc_html_e( 'Except', 'vulnhub' ); ?></a>
 				<?php endif; ?>
 			</td>
 		</tr>
@@ -3527,6 +3599,23 @@ final class VulnHub_Dash_App {
 	/* ------------------------------------------------------- exceptions. */
 
 	private static function view_exceptions(): void {
+		/*
+		 * Requesting an exception (?new=1&finding=…) and deciding one
+		 * (?exception=…) are core's screens. Drawn here in place, so the Except
+		 * button on a finding and the Ref link below never leave the portal;
+		 * exceptions_url_in_portal() keeps that screen's own links and
+		 * post-save redirect here too. Its REST calls go through wp.apiFetch,
+		 * which app.js already depends on.
+		 */
+		$vh_new_ok = isset( $_GET['new'] ) && current_user_can( Caps::REQUEST_EXCEPTION ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( $vh_new_ok || self::qi( 'exception' ) > 0 ) {
+			echo '<div class="vh-page-head"><div><h1>' . esc_html( $vh_new_ok ? __( 'Request an exception', 'vulnhub' ) : __( 'Exception', 'vulnhub' ) ) . '</h1></div></div>';
+			echo '<div class="vh-core-screen">';
+			vulnhub()->admin->render_screen( 'vulnhub-exceptions' );
+			echo '</div>';
+			return;
+		}
+
 		$s = Repo::summary();
 		$q = Exceptions::query( array( 'status' => self::q( 'status' ), 'limit' => 100 ) );
 		?>
@@ -3539,6 +3628,10 @@ final class VulnHub_Dash_App {
 				<a class="vh-btn vh-btn--primary" href="<?php echo esc_url( self::page_url( 'vulnerabilities' ) ); ?>"><?php esc_html_e( 'Find a finding to except', 'vulnhub' ); ?></a>
 			<?php endif; ?>
 		</div>
+
+		<?php if ( '' !== self::q( 'vh_msg' ) ) : // Set by core's request and decision screens after they save. ?>
+			<p class="vh-flash vh-flash--good" role="status"><?php echo esc_html( self::q( 'vh_msg' ) ); ?></p>
+		<?php endif; ?>
 
 		<section class="vh-tiles">
 			<?php
@@ -3597,7 +3690,7 @@ final class VulnHub_Dash_App {
 					<tbody>
 					<?php foreach ( $q['rows'] as $e ) : ?>
 						<tr>
-							<td class="vh-mono"><strong><?php echo esc_html( (string) $e['reference'] ); ?></strong></td>
+							<td class="vh-mono"><strong><a href="<?php echo esc_url( self::page_url( 'exceptions', array( 'exception' => (int) $e['id'] ) ) ); ?>"><?php echo esc_html( (string) $e['reference'] ); ?></a></strong></td>
 							<td><?php echo esc_html( vh_trim( (string) $e['title'], 62 ) ); ?></td>
 							<td class="vh-sub"><?php echo esc_html( Exceptions::reasons()[ (string) $e['reason'] ] ?? '' ); ?></td>
 							<td><?php echo esc_html( number_format_i18n( (int) $e['affected_count'] ) ); ?></td>

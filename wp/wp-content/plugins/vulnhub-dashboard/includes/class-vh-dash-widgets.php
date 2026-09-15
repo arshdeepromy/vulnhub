@@ -1466,8 +1466,12 @@ final class VulnHub_Dash_Widgets {
 	}
 
 	public static function render_headline(): void {
-		$s     = Repo::summary();
-		$trend = Repo::trend( array( 'open_critical', 'open_high' ), 30 );
+		$s = Repo::summary();
+		// findings_overdue, not open_high: the Past SLA tile's sparkline was
+		// drawing the open-high trend beside an overdue number, so the line
+		// and the figure above it were measuring different things. The daily
+		// snapshot has recorded findings_overdue all along.
+		$trend = Repo::trend( array( 'open_critical', 'findings_overdue' ), 30 );
 		$cov   = Coverage::summary();
 
 		echo '<div class="vh-tiles">';
@@ -1493,7 +1497,7 @@ final class VulnHub_Dash_Widgets {
 				'value' => (int) $s['overdue'],
 				'tone'  => (int) $s['overdue'] > 0 ? 'serious' : 'good',
 				'meta'  => __( 'beyond the agreed remediation window', 'vulnhub' ),
-				'spark' => array_values( $trend['open_high'] ?? array() ),
+				'spark' => array_values( $trend['findings_overdue'] ?? array() ),
 				'href'  => VulnHub_Dash_Portal::portal_url( 'vulnerabilities', array( 'overdue' => '1' ) ),
 			)
 		);
@@ -1804,7 +1808,11 @@ final class VulnHub_Dash_Widgets {
 				static fn( array $r ): array => array(
 					'label' => vh_trim( (string) $r['title'], 44 ),
 					'value' => (int) $r['asset_count'],
-					'href'  => VulnHub_Dash_Portal::portal_url( 'vulnerabilities', array( 'vuln_id' => (int) $r['id'] ) ),
+					// `vuln`, not `vuln_id`: the Vulnerabilities screen reads
+					// `vuln` and opens that vulnerability's detail page; it
+					// never read `vuln_id`, so every bar landed on the
+					// unfiltered list.
+					'href'  => VulnHub_Dash_Portal::portal_url( 'vulnerabilities', array( 'vuln' => (int) $r['id'] ) ),
 				),
 				$rows
 			),

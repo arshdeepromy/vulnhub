@@ -146,7 +146,11 @@
 		if ( stamped ) {
 			return stamped;
 		}
-		return window.matchMedia( '(prefers-color-scheme: dark)' ).matches ? 'dark' : 'light';
+		// Nothing stamped means the stylesheet's default, and that is dark:
+		// there is no prefers-color-scheme rule in the CSS. Asking the OS here
+		// made the first click on a light-mode machine "switch" to dark -- the
+		// theme already on screen -- so it appeared to do nothing.
+		return 'dark';
 	}
 
 	document.addEventListener( 'click', function ( event ) {
