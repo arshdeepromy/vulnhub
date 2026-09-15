@@ -151,7 +151,10 @@ if ( $vh_new && current_user_can( 'vulnhub_request_exception' ) ) :
 
 			wp.apiFetch( { path: '/vulnhub/v1/exceptions', method: 'POST', data: data } )
 				.then( function ( result ) {
-					window.location = '<?php echo esc_url_raw( vh_admin_url( 'vulnhub-exceptions' ) ); ?>&vh_msg=' +
+					// Join with ? or &: in wp-admin the URL already has ?page=,
+					// on the portal it is a clean permalink.
+					var back = '<?php echo esc_url_raw( vh_admin_url( 'vulnhub-exceptions' ) ); ?>';
+					window.location = back + ( back.indexOf( '?' ) === -1 ? '?' : '&' ) + 'vh_msg=' +
 						encodeURIComponent( result.message );
 				} )
 				.catch( function ( error ) {
@@ -250,7 +253,8 @@ if ( $vh_view_id ) :
 								note: document.getElementById( 'vh-decision-note' ).value
 							}
 						} ).then( function ( result ) {
-							window.location = '<?php echo esc_url_raw( vh_admin_url( 'vulnhub-exceptions' ) ); ?>&vh_msg=' +
+							var back = '<?php echo esc_url_raw( vh_admin_url( 'vulnhub-exceptions' ) ); ?>';
+							window.location = back + ( back.indexOf( '?' ) === -1 ? '?' : '&' ) + 'vh_msg=' +
 								encodeURIComponent( result.message );
 						} ).catch( function ( error ) {
 							window.alert( error.message );

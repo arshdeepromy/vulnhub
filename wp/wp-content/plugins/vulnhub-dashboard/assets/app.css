@@ -39,16 +39,34 @@
   --vh-sev-medium: #f5d04a;
   --vh-sev-low: #5ea3ff;
   --vh-sev-info: #7d8aa3;
+  /* severity as TEXT. The ramp above is tuned for marks (3:1); in dark it is
+     light enough to read as text too, so these match it. The light theme
+     darkens them, because amber and orange text on white cannot reach 4.5:1. */
+  --vh-sev-critical-ink: #ff5a66;
+  --vh-sev-high-ink: #ff9a3c;
+  --vh-sev-medium-ink: #f5d04a;
+  --vh-sev-low-ink: #5ea3ff;
+  --vh-sev-info-ink: #7d8aa3;
   --vh-good: #4ade80;
   --vh-warn: #f5b04a;
   --vh-bad: #ff5a66;
+  /* status ink on its own tint. Also defined in app-redesign.css; repeated
+     here so an Elementor page, which loads only this file, has them. */
+  --vh-good-ink: #86efac;
+  --vh-warn-ink: #ffd28a;
   /* pill fills — translucent tint + readable ink (AA on the tint) */
   --vh-pill-ink: #e6edf7;
+  --vh-pill-high: rgba(255,154,60,.16);
+  --vh-pill-medium: rgba(245,208,74,.16);
   --vh-pill-low: rgba(94,163,255,.16);
   --vh-pill-info: rgba(125,138,163,.16);
   --vh-pill-fg-critical: #ff8c94;
+  --vh-pill-fg-high: #ffb36b;
+  --vh-pill-fg-medium: #f5d04a;
   --vh-pill-fg-low: #8fb8ff;
   --vh-pill-fg-info: #a3b1c6;
+  /* table header band: a dark wash in dark; the light theme swaps in a pale one */
+  --vh-thead-bg: rgba(7,11,20,.6);
   --vh-good-bg: rgba(74,222,128,.14);
   --vh-warn-bg: rgba(245,176,74,.14);
   --vh-bad-bg: rgba(255,90,102,.14);
@@ -190,7 +208,7 @@ body.vh-app ::-webkit-scrollbar-track { background: transparent; }
 .vh-card__label, .vh-tile__label { display: block; font: 500 10.5px/1.3 var(--vh-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--vh-faint); }
 .vh-card__value, .vh-tile__value { font-size: 34px; font-weight: 500; line-height: 1.1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; margin-top: 6px; }
 .vh-tile__delta { font-size: 12px; font-weight: 600; margin-left: 8px; }
-.vh-tile__delta--up { color: var(--vh-pill-fg-critical); } .vh-tile__delta--down { color: #86efac; }
+.vh-tile__delta--up { color: var(--vh-pill-fg-critical); } .vh-tile__delta--down { color: var(--vh-good-ink); }
 .vh-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 14px; }
 .vh-tile { display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; position: relative; overflow: hidden; color: var(--vh-ink); background: var(--vh-raised); border: 1px solid var(--vh-line); border-radius: var(--vh-radius); box-shadow: var(--vh-shadow); transition: transform var(--vh-dur) var(--vh-ease), box-shadow var(--vh-dur), border-color var(--vh-dur); animation: vhIn .5s var(--vh-ease) both; }
 a.vh-tile:hover { transform: translateY(-2px); border-color: rgba(var(--vh-accent-rgb),.4); box-shadow: var(--vh-shadow-hover); }
@@ -199,13 +217,13 @@ a.vh-tile:hover { transform: translateY(-2px); border-color: rgba(var(--vh-accen
 .vh-connector__head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
 .vh-connector__desc { color: var(--vh-ink-2); font-size: 12.5px; line-height: 1.5; }
 .vh-connector__foot { display: flex; gap: 8px; padding-top: 10px; margin-top: 10px; border-top: 1px solid var(--vh-line); }
-.vh-warn-note { border-radius: 10px; padding: 10px 14px; background: var(--vh-warn-bg); border: 1px solid rgba(245,176,74,.35); color: #ffd28a; font-size: 12.5px; }
+.vh-warn-note { border-radius: 10px; padding: 10px 14px; background: var(--vh-warn-bg); border: 1px solid rgba(245,176,74,.35); color: var(--vh-warn-ink); font-size: 12.5px; }
 .vh-chart-empty, .vh-empty { position: relative; overflow: hidden; border: 1px dashed rgba(120,160,210,.25); border-radius: var(--vh-radius); background: rgba(9,14,26,.5); padding: 44px 24px; text-align: center; color: var(--vh-muted); }
 .vh-chart-empty strong, .vh-empty strong { display: block; color: var(--vh-ink); font-size: 16px; font-weight: 500; margin-bottom: 6px; }
 
 /* ----------------------------------------------------------------- tables */
 .vh-table, .vh-tableview table, table.widefat { width: 100%; border-collapse: collapse; background: transparent !important; border: 0 !important; box-shadow: none !important; }
-.vh-table thead tr, table.widefat thead tr { background: rgba(7,11,20,.6); }
+.vh-table thead tr, table.widefat thead tr { background: var(--vh-thead-bg); }
 .vh-table th, .vh-tableview th, table.widefat th {
   text-align: left; padding: 10px 12px; font: 500 10.5px/1.3 var(--vh-mono); letter-spacing: .1em; text-transform: uppercase;
   color: var(--vh-faint); border-bottom: 1px solid var(--vh-line); background: transparent;
@@ -231,25 +249,25 @@ table.widefat.striped tbody tr:nth-child(odd) { background: transparent; }
 /* ------------------------------------------------------------------ pills */
 .vh-pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: .02em; white-space: nowrap; border: 1px solid transparent; }
 .vh-pill--critical, .vh-pill.vh-sev-critical { background: var(--vh-bad-bg); color: var(--vh-pill-fg-critical); border-color: rgba(255,90,102,.45); }
-.vh-pill--high,     .vh-pill.vh-sev-high     { background: rgba(255,154,60,.16); color: #ffb36b; border-color: rgba(255,154,60,.45); }
-.vh-pill--medium,   .vh-pill.vh-sev-medium   { background: rgba(245,208,74,.16); color: #f5d04a; border-color: rgba(245,208,74,.45); }
+.vh-pill--high,     .vh-pill.vh-sev-high     { background: var(--vh-pill-high); color: var(--vh-pill-fg-high); border-color: rgba(255,154,60,.45); }
+.vh-pill--medium,   .vh-pill.vh-sev-medium   { background: var(--vh-pill-medium); color: var(--vh-pill-fg-medium); border-color: rgba(245,208,74,.45); }
 .vh-pill--low,      .vh-pill.vh-sev-low      { background: var(--vh-pill-low); color: var(--vh-pill-fg-low); border-color: rgba(94,163,255,.45); }
 .vh-pill--info,     .vh-pill.vh-sev-info     { background: var(--vh-pill-info); color: var(--vh-pill-fg-info); border-color: rgba(125,138,163,.45); }
 .vh-chip { display: inline-block; padding: 2px 9px; border-radius: 6px; font-size: 11.5px; font-weight: 500; color: var(--vh-ink-2); background: var(--vh-neutral-bg); border: 1px solid rgba(120,160,210,.2); white-space: nowrap; }
 .vh-chip--src { font-family: var(--vh-mono); font-size: 11px; }
-.vh-chip--good { background: var(--vh-good-bg); color: #86efac; border-color: rgba(74,222,128,.35); }
-.vh-chip--warn { background: var(--vh-warn-bg); color: #ffd28a; border-color: rgba(245,176,74,.4); }
+.vh-chip--good { background: var(--vh-good-bg); color: var(--vh-good-ink); border-color: rgba(74,222,128,.35); }
+.vh-chip--warn { background: var(--vh-warn-bg); color: var(--vh-warn-ink); border-color: rgba(245,176,74,.4); }
 .vh-chip--bad  { background: var(--vh-bad-bg); color: var(--vh-pill-fg-critical); border-color: rgba(255,90,102,.45); }
 .vh-chip--filter { cursor: pointer; } .vh-chip--filter:hover { border-color: rgba(var(--vh-accent-rgb),.5); color: var(--vh-ink); }
 .vh-badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font: 500 10px/1.5 var(--vh-mono); letter-spacing: .06em; }
 .vh-badge--mock { color: var(--vh-warn); border: 1px solid rgba(245,176,74,.45); }
 .vh-state { display: inline-block; padding: 1px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; background: var(--vh-neutral-bg); color: var(--vh-ink-2); border: 1px solid rgba(120,160,210,.25); }
-.vh-state--good, .vh-state.is-success, .vh-flash--good { background: var(--vh-good-bg); color: #86efac; border-color: rgba(74,222,128,.35); }
+.vh-state--good, .vh-state.is-success, .vh-flash--good { background: var(--vh-good-bg); color: var(--vh-good-ink); border-color: rgba(74,222,128,.35); }
 .vh-state--bad, .vh-board__status--bad { background: var(--vh-bad-bg); color: var(--vh-pill-fg-critical); border-color: rgba(255,90,102,.45); }
 .vh-health { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--vh-muted); }
 .vh-health::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #4a5a75; box-shadow: 0 0 8px currentColor; }
-.vh-health--ok::before    { background: var(--vh-good); color: var(--vh-good); }  .vh-health--ok    { color: #86efac; }
-.vh-health--warn::before  { background: var(--vh-warn); color: var(--vh-warn); }  .vh-health--warn  { color: #ffd28a; }
+.vh-health--ok::before    { background: var(--vh-good); color: var(--vh-good); }  .vh-health--ok    { color: var(--vh-good-ink); }
+.vh-health--warn::before  { background: var(--vh-warn); color: var(--vh-warn); }  .vh-health--warn  { color: var(--vh-warn-ink); }
 .vh-health--error::before { background: var(--vh-bad); color: var(--vh-bad); }    .vh-health--error { color: var(--vh-pill-fg-critical); }
 .vh-health--mock::before  { background: var(--vh-warn); }
 .vh-health--off::before, .vh-health--idle::before { background: #4a5a75; box-shadow: none; }
@@ -334,7 +352,7 @@ body.vh-app select option { background: var(--vh-surface); color: var(--vh-ink);
 .vh-flow__card:hover, .vh-flow__box:hover { background: rgba(11,18,32,.95); }
 .vh-flow__card--edge:hover, .vh-flow__box--edge:hover { border-color: var(--vh-sev-critical); } .vh-flow__card--user:hover, .vh-flow__box--user:hover { border-color: var(--vh-sev-high); } .vh-flow__card--inside:hover, .vh-flow__box--inside:hover { border-color: var(--vh-sev-low); }
 .vh-flow__card-n, .vh-flow__n { font-size: 20px; font-weight: 500; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
-.vh-flow__card--edge .vh-flow__card-n, .vh-flow__box--edge .vh-flow__n { color: var(--vh-sev-critical); } .vh-flow__card--user .vh-flow__card-n, .vh-flow__box--user .vh-flow__n { color: var(--vh-sev-high); } .vh-flow__card--inside .vh-flow__card-n, .vh-flow__box--inside .vh-flow__n { color: var(--vh-sev-low); }
+.vh-flow__card--edge .vh-flow__card-n, .vh-flow__box--edge .vh-flow__n { color: var(--vh-sev-critical-ink); } .vh-flow__card--user .vh-flow__card-n, .vh-flow__box--user .vh-flow__n { color: var(--vh-sev-high-ink); } .vh-flow__card--inside .vh-flow__card-n, .vh-flow__box--inside .vh-flow__n { color: var(--vh-sev-low-ink); }
 .vh-flow__card-label, .vh-flow__box-label { font-size: 13px; font-weight: 600; }
 .vh-flow__card-note, .vh-flow__box-sub, .vh-flow__n-unit { font-size: 11.5px; color: var(--vh-muted); }
 .vh-flow__box-cta { color: var(--vh-link); font-size: 12px; }

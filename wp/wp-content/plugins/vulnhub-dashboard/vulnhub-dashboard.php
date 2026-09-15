@@ -76,10 +76,13 @@ add_action(
 add_action( 'vulnhub_sync_complete', array( 'VulnHub_Dash_Widgets', 'bust_for_connector' ), 99, 1 );
 
 /*
- * These two have no connector to map, so they mean "anything may have moved".
+ * These two mean "anything may have moved". Registered with no arguments on
+ * purpose: vulnhub_import_complete passes the import type first, and bust()
+ * would take that as a source name, tick a key no widget reads, and bust
+ * nothing.
  */
 foreach ( array( 'vulnhub_import_complete', 'vulnhub_coverage_recalculated' ) as $vulnhub_dash_bust ) {
-	add_action( $vulnhub_dash_bust, array( 'VulnHub_Dash_Widgets', 'bust' ), 99 );
+	add_action( $vulnhub_dash_bust, array( 'VulnHub_Dash_Widgets', 'bust' ), 99, 0 );
 }
 
 /*

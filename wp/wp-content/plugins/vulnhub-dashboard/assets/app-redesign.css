@@ -37,10 +37,17 @@
 }
 .vh-segbars__seg:first-child { border-radius: 5px 2px 2px 5px; }
 .vh-segbars__seg:last-child { border-radius: 2px 5px 5px 2px; }
+/*
+ * The segment's fill is whatever tone the caller passed (an inline style), so
+ * the label cannot pick an ink per step. White straight on the ramp failed on
+ * most steps -- 1.50 on dark medium, 1.71 on light medium, 2.11 on dark high.
+ * A dark backing under the number keeps the segment's colour visible around
+ * it and holds white at 5.72:1 or better over every step in both themes.
+ */
 .vh-segbars__seg-n {
   font-size: 11px; font-weight: 640; font-variant-numeric: tabular-nums;
   color: #fff; padding: 0 5px; white-space: nowrap;
-  
+  background: rgba(6,16,28,.55); border-radius: 3px; line-height: 14px;
   mix-blend-mode: normal;
 }
 .vh-segbars__seg { container-type: inline-size; }
@@ -712,10 +719,24 @@ a.vh-stack__seg:hover, a.vh-stack__seg:focus-visible { outline: 2px solid var(--
   overflow: visible; z-index: 40;
 }
 .admin-bar .vh-topbar { top: 32px; height: calc(100vh - 32px); }
-/* Only when the portal actually drew the rail -- see body_class(). */
+/*
+ * Only when the portal actually drew the rail -- see body_class().
+ *
+ * The body reserves the rail, and the page column centres in what is left.
+ * This used to be `margin-left: 64px` on .vh-main, which overrode app.css's
+ * `margin: 0 auto` -- so past 1440px of content the column sat pinned against
+ * the rail and every extra pixel of a wide (or zoomed-out) window piled up on
+ * the right. Reserving the space on the body keeps `auto` margins working, so
+ * the gutters grow evenly on both sides, and the footer lines up with the
+ * column above it instead of using its own narrower width.
+ */
+body.vh-app { --vh-content-max: 1440px; }
+/* Sign-in carries vh-chrome-rail too (body_class() does not special-case it)
+   but draws no rail and is full-bleed, so it must not reserve one. */
+body.vh-chrome-rail:not(.vh-login-body) { padding-left: 64px; }
 .vh-chrome-rail .vh-main,
 .vh-chrome-rail .vh-footer,
-.vh-chrome-rail footer.vh-footer { margin-left: 64px; }
+.vh-chrome-rail footer.vh-footer { max-width: var(--vh-content-max); margin-left: auto; margin-right: auto; }
 
 /* brand: just the 36px tile, no org text in the rail */
 .vh-topbar .vh-brand { gap: 0; margin-bottom: 16px; }
@@ -765,7 +786,7 @@ a.vh-stack__seg:hover, a.vh-stack__seg:focus-visible { outline: 2px solid var(--
     overflow-x: auto; overflow-y: visible;
   }
   .admin-bar .vh-topbar { top: 0; height: auto; }
-  .vh-main, .vh-footer, footer.vh-footer { margin-left: 0; }
+  body.vh-chrome-rail:not(.vh-login-body) { padding-left: 0; }
   .vh-topbar .vh-brand { margin-bottom: 0; margin-right: 4px; flex: 0 0 auto; }
   .vh-topbar .vh-nav { flex-direction: row; flex: 1 1 auto; width: auto; gap: 4px; overflow-x: auto; overflow-y: hidden; }
   .vh-topbar .vh-nav__link { width: 40px; height: 40px; flex: 0 0 auto; }
@@ -775,6 +796,22 @@ a.vh-stack__seg:hover, a.vh-stack__seg:focus-visible { outline: 2px solid var(--
   .vh-page-head h1 { font-size: 22px; }
   /* tables and wide blocks scroll inside their own frame, never the page */
   .vh-tablewrap, .vh-table-wrap, .vh-tableview__scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  /*
+   * Axis text lives inside a 900-unit-wide viewBox that scales to the panel,
+   * so app.css's 11px lands at ~4px on a phone (a 390px screen leaves a
+   * ~320px chart: a 0.36 scale). A larger nominal size, stepped with the
+   * width, brings it back to roughly 8-12px on screen. This fix existed once
+   * and was lost when app.css was replaced with the redesign drop-in.
+   */
+  .vh-chart .vh-axis { font-size: 18px; }
+}
+@media (max-width: 560px) {
+  .vh-chart .vh-axis { font-size: 24px; }
+}
+@media (max-width: 430px) {
+  /* Not larger: a y-axis label is right-anchored 36 units in, and past ~26px
+     a five-figure number reaches further left than the panel's own padding. */
+  .vh-chart .vh-axis { font-size: 26px; }
 }
 
 /* Exposure-by-product: the "ships a vulnerable X" line under app rows. */
@@ -1015,8 +1052,8 @@ body.vh-is-dragging {
 .vh-vendor__name { font-weight: 650; color: var(--vh-ink); }
 .vh-vendor__stats { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 8px 0; font-size: 12.5px; color: var(--vh-ink-2); }
 .vh-vstat strong { color: var(--vh-ink); font-variant-numeric: tabular-nums; }
-.vh-vstat--crit strong { color: var(--vh-sev-critical); }
-.vh-vstat--warn strong { color: var(--vh-sev-medium, var(--vh-warn)); }
+.vh-vstat--crit strong { color: var(--vh-sev-critical-ink); }
+.vh-vstat--warn strong { color: var(--vh-sev-medium-ink, var(--vh-warn)); }
 .vh-vstat--muted { color: var(--vh-muted); }
 .vh-vendor__links { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 12px; }
 .vh-vendor__link { color: var(--vh-link); text-decoration: none; white-space: nowrap; }
@@ -1038,9 +1075,9 @@ body.vh-is-dragging {
 .vh-band { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; margin-left: auto; }
 .vh-band--none     { background: rgba(120,160,210,.12); color: var(--vh-muted); }
 .vh-band--low      { background: rgba(46,160,110,.16); color: var(--vh-good, #2ea06e); }
-.vh-band--moderate { background: rgba(214,158,46,.16); color: var(--vh-sev-medium, #d69e2e); }
-.vh-band--high     { background: rgba(221,107,32,.18); color: var(--vh-sev-high, #dd6b20); }
-.vh-band--critical { background: rgba(229,62,62,.18); color: var(--vh-sev-critical, #e53e3e); }
+.vh-band--moderate { background: rgba(214,158,46,.16); color: var(--vh-sev-medium-ink, #d69e2e); }
+.vh-band--high     { background: rgba(221,107,32,.18); color: var(--vh-sev-high-ink, #dd6b20); }
+.vh-band--critical { background: rgba(229,62,62,.18); color: var(--vh-sev-critical-ink, #e53e3e); }
 
 /* kind badge variants for vendors */
 .vh-kind--hardware { }
@@ -1404,7 +1441,7 @@ body.vh-modal-open { overflow: hidden; }
   color: var(--vh-ink);
   font-variant-numeric: tabular-nums;
 }
-.vh-aws-tally .is-bad strong { color: var(--vh-sev-critical); }
+.vh-aws-tally .is-bad strong { color: var(--vh-sev-critical-ink); }
 
 .vh-aws-bulk > summary { cursor: pointer; font-size: 13px; }
 .vh-aws-bulk[open] > summary { margin-bottom: 12px; }
@@ -1439,10 +1476,10 @@ body.vh-modal-open { overflow: hidden; }
   color: var(--vh-ink-2);
 }
 .vh-aws-read > li > em { font-style: normal; font-variant-numeric: tabular-nums; }
-.vh-aws-read > li.is-denied { color: var(--vh-sev-high); }
+.vh-aws-read > li.is-denied { color: var(--vh-sev-high-ink); }
 .vh-aws-read > li.is-denied > em { font-weight: 600; }
 
-.vh-aws-err { margin: 6px 0 0; color: var(--vh-sev-high); overflow-wrap: anywhere; }
+.vh-aws-err { margin: 6px 0 0; color: var(--vh-sev-high-ink); overflow-wrap: anywhere; }
 
 .vh-aws-actions { white-space: nowrap; }
 .vh-aws-actions form { display: inline-block; margin: 0 2px 0 0; }
@@ -1464,7 +1501,7 @@ body.vh-modal-open { overflow: hidden; }
 .vh-aws-found-list em { font-style: normal; color: var(--vh-muted); }
 .vh-aws-found-list strong { font-variant-numeric: tabular-nums; color: var(--vh-ink-2); }
 
-.vh-aws-empty { margin: 6px 0 0; color: var(--vh-sev-medium, #e0a33e); }
+.vh-aws-empty { margin: 6px 0 0; color: var(--vh-sev-medium-ink, #e0a33e); }
 
 /* --------------------------------------------------- cloud connector list. */
 .vh-cc__bar {
@@ -1480,7 +1517,7 @@ body.vh-modal-open { overflow: hidden; }
 
 .vh-cc__tally { display: flex; gap: 16px; font-size: 12px; color: var(--vh-ink-2); }
 .vh-cc__tally strong { font-variant-numeric: tabular-nums; color: var(--vh-ink); }
-.vh-cc__tally .is-bad strong { color: var(--vh-sev-critical); }
+.vh-cc__tally .is-bad strong { color: var(--vh-sev-critical-ink); }
 
 .vh-cc__type { font-size: 11px; letter-spacing: .04em; color: var(--vh-muted); }
 .vh-cc__none { padding: 18px 0; text-align: center; color: var(--vh-muted); font-size: 12.5px; }
@@ -1597,6 +1634,21 @@ dialog.vh-modal {
   --vh-sev-medium: #f0c020;
   --vh-sev-low: #2a78d6;
   --vh-sev-info: #6e6c66;
+  /* Severity as text. The marks above stay the validated heat ramp; text
+     needs 4.5:1 on white and on the plane, which high (3.29) and medium
+     (1.71) never reach, so text takes a darker step of the same hue. */
+  --vh-sev-critical-ink: #b4232c;  /* 6.53 white / 5.98 plane */
+  --vh-sev-high-ink: #9a4a0e;      /* 6.25 / 5.73 */
+  --vh-sev-medium-ink: #7a5c00;    /* 6.25 / 5.73 */
+  --vh-sev-low-ink: #1d62b8;       /* 6.01 / 5.51 */
+  --vh-sev-info-ink: #6e6c66;      /* 5.25 / 4.81 */
+  --vh-pill-high: rgba(224,109,31,.12);
+  --vh-pill-medium: rgba(240,192,32,.20);
+  --vh-pill-fg-high: #9a4a0e;      /* 5.48 on its tint over white */
+  --vh-pill-fg-medium: #7a5c00;    /* 5.60 */
+  /* The dark wash composited over white came out #6a6d72, the same luminance
+     as the header text on it (1.01:1). The plane is a quiet band instead. */
+  --vh-thead-bg: #f4f5f7;          /* --vh-faint on it: 4.81 */
   --vh-good: #1f7a44;      --vh-good-ink: #186236;  --vh-good-bg: rgba(31,122,68,.10);
   --vh-warn: #9c5c0f;      --vh-warn-ink: #8a5009;  --vh-warn-bg: rgba(240,192,32,.16);
   --vh-bad:  #b4232c;      --vh-bad-ink:  #93171f;  --vh-bad-bg:  rgba(180,35,44,.09);
@@ -2079,3 +2131,24 @@ html.vh-js .vh-savebar.is-shown { display: flex; }
    display:flex outranks the UA [hidden] { display:none }, so a hidden row would
    stay visible. Re-assert the hide at matching specificity. */
 ul.vh-prodlist--full > .vh-prodrow[hidden] { display: none; }
+
+/* ------------------------------------------ Known by: the filtered source.
+   With "Known by CMDB" applied every row still lists all of its feeds, but the
+   one the list is filtered on is drawn first (source_chips()) and lifted out
+   with the accent, so it reads as the thing being looked at rather than one
+   chip among four. Accent tokens only, so light and dark both follow the
+   theme; the text colour is the link-hover ink, which clears 4.5:1 on the
+   tinted fill in both. The dot carries the emphasis without relying on hue. */
+.vh-chip--src.is-focus {
+  color: var(--vh-link-hover);
+  background: rgba(var(--vh-accent-rgb), .16);
+  border-color: rgba(var(--vh-accent-rgb), .75);
+  box-shadow: 0 0 0 1px rgba(var(--vh-accent-rgb), .22);
+  font-weight: 650;
+}
+.vh-chip--src.is-focus::before {
+  content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px;
+  border-radius: 50%; background: currentColor; vertical-align: 1px;
+}
+.vh-srcs__link:hover .vh-chip--src.is-focus,
+.vh-srcs__link:focus-visible .vh-chip--src.is-focus { border-color: var(--vh-accent); }

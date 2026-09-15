@@ -27,6 +27,9 @@ final class VulnHub_Auth_Profile {
 	/** Transient prefix for the one-time recovery code display. */
 	private const CODES_TRANSIENT = 'vh_auth_codes_';
 
+	/** Portal admin section where people manage their own second factor. */
+	public const SECTION = 'security';
+
 	/**
 	 * Register hooks.
 	 *
@@ -43,6 +46,93 @@ final class VulnHub_Auth_Profile {
 		add_action( 'admin_post_vulnhub_auth_mfa_recovery', array( __CLASS__, 'handle_recovery' ) );
 		add_action( 'admin_post_vulnhub_auth_mfa_forget', array( __CLASS__, 'handle_forget' ) );
 		add_action( 'admin_post_vulnhub_auth_mfa_reset', array( __CLASS__, 'handle_reset' ) );
+
+		/*
+		 * The same panel, in the portal. profile.php is a wp-admin screen, and
+		 * the portal keeps portal-only accounts out of wp-admin -- so the
+		 * account menu's "Security & MFA" link bounced exactly the people it
+		 * was for back to the dashboard, with no way to enrol at all.
+		 */
+		add_filter( 'vulnhub_portal_sections', array( __CLASS__, 'register_section' ) );
+		add_action( 'vulnhub_render_portal_section', array( __CLASS__, 'render_section' ) );
+	}
+
+	/* -----------------------------------------------------------------
+	 * Portal section
+	 * --------------------------------------------------------------- */
+
+	/**
+	 * Register "Your security" in the portal admin area.
+	 *
+	 * VIEW, not MANAGE: every portal account has a second factor to manage,
+	 * and the section only ever shows the signed-in person their own.
+	 *
+	 * @param array<string,array<string,mixed>> $sections Section definitions.
+	 * @return array<string,array<string,mixed>>
+	 */
+	public static function register_section( array $sections ): array {
+		if ( isset( $sections[ self::SECTION ] ) || ! class_exists( 'VulnHub\\Core\\Caps' ) ) {
+			return $sections;
+		}
+
+		$sections[ self::SECTION ] = array(
+			'label'   => __( 'Your security', 'vulnhub' ),
+			'cap'     => \VulnHub\Core\Caps::VIEW,
+			'group'   => 'platform',
+			'order'   => 12,
+			'summary' => __( 'Your own two-factor authentication: set up an authenticator app, reissue recovery codes, forget remembered browsers.', 'vulnhub' ),
+		);
+
+		return $sections;
+	}
+
+	/**
+	 * Draw the panel for the signed-in person, with its redirect notice.
+	 *
+	 * @param string $section Section slug being rendered.
+	 */
+	public static function render_section( string $section ): void {
+		if ( self::SECTION !== $section || ! is_user_logged_in() ) {
+			return;
+		}
+
+		self::portal_notice();
+		self::render( wp_get_current_user() );
+	}
+
+	/**
+	 * URL of the portal section, or '' when the portal is not active.
+	 *
+	 * @param array<string,string> $args Query arguments.
+	 */
+	public static function section_url( array $args = array() ): string {
+		if ( ! class_exists( 'VulnHub_Dash_Portal' ) ) {
+			return '';
+		}
+
+		return VulnHub_Dash_Portal::portal_url( VulnHub_Dash_Portal::ADMIN_VIEW, array_merge( array( 'section' => self::SECTION ), $args ) );
+	}
+
+	/**
+	 * The redirect notice, in the portal's own classes (it has no wp-admin
+	 * notice styling).
+	 */
+	private static function portal_notice(): void {
+		ob_start();
+		self::notices();
+		$html = (string) ob_get_clean();
+
+		if ( '' === $html ) {
+			return;
+		}
+
+		$good = str_contains( $html, 'notice-success' ) || str_contains( $html, 'notice-info' );
+
+		printf(
+			'<p class="%1$s" role="status">%2$s</p>',
+			esc_attr( $good ? 'vh-flash vh-flash--good' : 'vh-warn-note' ),
+			esc_html( wp_strip_all_tags( $html ) )
+		);
 	}
 
 	/* -----------------------------------------------------------------
@@ -389,6 +479,21 @@ final class VulnHub_Auth_Profile {
 		$url = get_current_user_id() === $user_id
 			? admin_url( 'profile.php' )
 			: admin_url( 'user-edit.php?user_id=' . $user_id );
+
+		// Came from the portal's "Your security" section: go back there, not
+		// to profile.php, which a portal-only account is not allowed to see.
+		// The nonce field carries the referer, so this is the page the form
+		// was actually on.
+		$referer = wp_get_referer();
+		if (
+			get_current_user_id() === $user_id
+			&& is_string( $referer )
+			&& str_contains( $referer, 'section=' . self::SECTION )
+			&& '' !== self::section_url()
+		) {
+			wp_safe_redirect( self::section_url( array( 'vh_mfa' => $notice ) ) );
+			exit;
+		}
 
 		wp_safe_redirect( add_query_arg( 'vh_mfa', $notice, $url ) . '#vulnhub-mfa' );
 		exit;
