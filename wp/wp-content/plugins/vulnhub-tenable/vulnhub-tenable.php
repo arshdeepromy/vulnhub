@@ -43,6 +43,10 @@ add_action(
 		$connectors->register( new VulnHub_Tenable_Connector() );
 
 		( new VulnHub_Tenable_Verifier() )->hooks();
+
+		// A person deciding an asset's lifecycle overrides the full-resync
+		// prune's decision, so the prune must not later undo theirs.
+		add_action( 'vulnhub_lifecycle_changed', array( \VulnHub\Core\Repo::class, 'forget_pruned_tenable' ), 10, 1 );
 	}
 );
 

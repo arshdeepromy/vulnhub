@@ -216,8 +216,17 @@ $vh_active   = $vh_selected ? vulnhub()->connectors->get( $vh_selected ) : null;
 						<button type="button" class="button button-primary" data-vh-action="sync" data-vh-connector="<?php echo esc_attr( $vh_active->id() ); ?>">
 							<?php esc_html_e( 'Sync now', 'vulnhub' ); ?>
 						</button>
+						<?php if ( $vh_active->supports_full_sync() ) : ?>
+							<button type="button" class="button" data-vh-action="sync" data-vh-full="1" data-vh-connector="<?php echo esc_attr( $vh_active->id() ); ?>"
+								data-vh-sync-confirm="<?php esc_attr_e( 'Run a full resync? It downloads everything the source holds rather than only what changed, so it takes much longer than a normal sync. It runs in the background.', 'vulnhub' ); ?>">
+								<?php esc_html_e( 'Full resync', 'vulnhub' ); ?>
+							</button>
+						<?php endif; ?>
 					<?php endif; ?>
 				</p>
+				<?php if ( '' !== $vh_active->full_sync_note() ) : ?>
+					<p class="vh-card__meta"><?php echo esc_html( $vh_active->full_sync_note() ); ?></p>
+				<?php endif; ?>
 				<?php if ( $vh_active->supports_sync() ) : ?>
 					<div class="vh-sync-progress" data-vh-sync-progress="<?php echo esc_attr( $vh_active->id() ); ?>" hidden></div>
 				<?php endif; ?>

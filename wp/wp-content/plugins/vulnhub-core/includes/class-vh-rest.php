@@ -545,14 +545,28 @@ final class Rest {
 		// open for a multi-minute import (and the sync is not lost if the tab
 		// is closed). The progress poller shows it running; a resume picks it
 		// up if it is interrupted.
-		if ( $connector->async_sync() && ! (bool) $request->get_param( 'full' ) ) {
+		//
+		// A full resync goes the same way. It used to be the exception -- `full`
+		// forced the sync inline -- which put the longest run the connector has
+		// inside a web request, and the staged sync ignored the flag anyway.
+		// Now the request is recorded on the connector and the run is queued.
+		$full = (bool) $request->get_param( 'full' );
+
+		if ( $connector->async_sync() ) {
+			if ( $full && $connector->supports_full_sync() ) {
+				$connector->request_full_sync();
+			}
+
 			\VulnHub\Core\Scheduler::queue_sync( (string) $connector->id() );
 
 			return new WP_REST_Response(
 				array(
 					'ok'      => true,
 					'queued'  => true,
-					'message' => __( 'Sync started in the background — you can watch its progress here.', 'vulnhub' ),
+					'full'    => $full && $connector->supports_full_sync(),
+					'message' => $full && $connector->supports_full_sync()
+						? __( 'Full resync queued in the background — you can watch its progress here. It downloads everything the source holds, so it takes longer than a normal sync.', 'vulnhub' )
+						: __( 'Sync started in the background — you can watch its progress here.', 'vulnhub' ),
 				)
 			);
 		}
@@ -561,7 +575,7 @@ final class Rest {
 			array(
 				'mode'  => 'manual',
 				'force' => (bool) $request->get_param( 'force' ),
-				'full'  => (bool) $request->get_param( 'full' ),
+				'full'  => $full,
 			)
 		);
 

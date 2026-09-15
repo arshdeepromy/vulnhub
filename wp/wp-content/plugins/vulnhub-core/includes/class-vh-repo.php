@@ -1860,7 +1860,9 @@ final class Repo {
 	 * and be known to NO other system (Intune, Defender, CMDB, any cloud). An
 	 * asset Intune or the CMDB also owns stays exactly where it is even when
 	 * Tenable drops it. Retirement is to `missing` -- reversible, and reversed
-	 * automatically the next time the asset is seen -- not a delete.
+	 * automatically the next time Tenable reports the asset again (see
+	 * restore_pruned_tenable()) -- not a delete. Each retired asset's previous
+	 * status is remembered in PRUNED_OPTION so that reversal is exact.
 	 *
 	 * A hard safeguard: if this would move more than 15% of the Tenable estate
 	 * at once, it refuses and changes nothing. That is the shape of a broken
@@ -1885,7 +1887,7 @@ final class Repo {
 
 		$a    = vh_table( 'assets' );
 		$rows = (array) $wpdb->get_results(
-			"SELECT id, tenable_uuid FROM {$a}
+			"SELECT id, tenable_uuid, lifecycle_status FROM {$a}
 			 WHERE primary_source = 'tenable' AND tenable_uuid <> ''
 			   AND lifecycle_status IN (" . vh_reportable_sql() . ")
 			   AND intune_id = '' AND defender_id = '' AND azure_ad_device_id = ''
@@ -1895,9 +1897,11 @@ final class Repo {
 		);
 
 		$absent = array();
+		$prev   = array();
 		foreach ( $rows as $r ) {
 			if ( ! isset( $seen[ (string) $r['tenable_uuid'] ] ) ) {
-				$absent[] = (int) $r['id'];
+				$absent[]                = (int) $r['id'];
+				$prev[ (int) $r['id'] ] = (string) $r['lifecycle_status'];
 			}
 		}
 
@@ -1909,9 +1913,139 @@ final class Repo {
 
 		if ( $absent ) {
 			Lifecycle::set( $absent, 'missing' );
+
+			/*
+			 * The marker is written AFTER the move. Lifecycle::set() fires
+			 * `vulnhub_lifecycle_changed`, and forget_pruned_tenable() listens
+			 * to that to drop the marker whenever somebody changes an asset's
+			 * lifecycle by hand -- written first, the prune would erase its
+			 * own marker.
+			 */
+			$marks = (array) get_option( self::PRUNED_OPTION, array() );
+			$now   = time();
+
+			foreach ( $prev as $id => $status ) {
+				$marks[ (int) $id ] = array(
+					'prev' => $status,
+					'at'   => $now,
+				);
+			}
+
+			update_option( self::PRUNED_OPTION, $marks, false );
 		}
 
 		return array( 'aborted' => false, 'retired' => count( $absent ), 'candidates' => $candidates );
+	}
+
+	/**
+	 * Assets a full Tenable resync retired, and the status each had before.
+	 *
+	 * A marker, not a column: it only ever holds the handful of assets the
+	 * prune has put away (at most 15% of the Tenable estate per run), each
+	 * entry is removed the moment the asset comes back or a person decides
+	 * its status, and it needs no schema change. Its whole job is telling a
+	 * retirement the prune made apart from `missing` set by a person, so only
+	 * the prune's own decisions are ever undone automatically.
+	 */
+	public const PRUNED_OPTION = 'vulnhub_tenable_pruned_assets';
+
+	/**
+	 * Undo the prune for assets Tenable is reporting again.
+	 *
+	 * Called with the ids of assets a Tenable asset import has just seen. Any
+	 * that the prune retired, and that are still `missing`, go back to the
+	 * exact status they had -- through Lifecycle::set(), so their archived
+	 * findings are restored from `prev_state` rather than guessed at. An
+	 * asset whose status has moved on since (someone changed it, or another
+	 * source did) keeps that status and just loses its marker.
+	 *
+	 * Deliberately not limited to full resyncs: an incremental export only
+	 * contains assets that were scanned in the window, so appearing in one
+	 * is the strongest evidence there is that the machine exists.
+	 *
+	 * @param array<int,int> $seen_asset_ids Asset ids just seen in a Tenable asset export.
+	 * @return array<string,int> Restored count per restored-to status.
+	 */
+	public static function restore_pruned_tenable( array $seen_asset_ids ): array {
+		global $wpdb;
+
+		$marks = (array) get_option( self::PRUNED_OPTION, array() );
+
+		if ( ! $marks || ! $seen_asset_ids ) {
+			return array();
+		}
+
+		$hit = array_values( array_intersect( array_map( 'intval', array_keys( $marks ) ), array_map( 'intval', $seen_asset_ids ) ) );
+
+		if ( ! $hit ) {
+			return array();
+		}
+
+		$in      = implode( ',', array_fill( 0, count( $hit ), '%d' ) );
+		$current = (array) $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT id, lifecycle_status FROM ' . vh_table( 'assets' ) . " WHERE id IN ({$in})", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				...$hit
+			),
+			ARRAY_A
+		);
+
+		$by_status = array();
+
+		foreach ( $current as $row ) {
+			$id   = (int) $row['id'];
+			$prev = (string) ( $marks[ $id ]['prev'] ?? '' );
+
+			// Still exactly where the prune left it, with somewhere valid to go back to.
+			if ( 'missing' === (string) $row['lifecycle_status'] && isset( vh_lifecycle_statuses()[ $prev ] ) && 'missing' !== $prev ) {
+				$by_status[ $prev ][] = $id;
+			}
+		}
+
+		// Every hit loses its marker, restored or not: it has been seen, so the
+		// prune's decision about it is settled either way.
+		foreach ( $hit as $id ) {
+			unset( $marks[ $id ] );
+		}
+		update_option( self::PRUNED_OPTION, $marks, false );
+
+		$restored = array();
+
+		foreach ( $by_status as $status => $ids ) {
+			Lifecycle::set( $ids, (string) $status );
+			$restored[ (string) $status ] = count( $ids );
+		}
+
+		return $restored;
+	}
+
+	/**
+	 * A lifecycle change not made by the prune settles the asset: forget it.
+	 *
+	 * Listens to `vulnhub_lifecycle_changed`. That also fires for the prune's
+	 * own move and for restore_pruned_tenable()'s, which is why the prune
+	 * writes its marker after moving and the restore removes markers before
+	 * moving -- by the time either fires this, there is nothing of theirs
+	 * left to remove.
+	 *
+	 * @param array<int,int> $ids Assets that moved.
+	 */
+	public static function forget_pruned_tenable( $ids ): void {
+		$marks = (array) get_option( self::PRUNED_OPTION, array() );
+
+		if ( ! $marks || ! is_array( $ids ) ) {
+			return;
+		}
+
+		$before = count( $marks );
+
+		foreach ( $ids as $id ) {
+			unset( $marks[ (int) $id ] );
+		}
+
+		if ( count( $marks ) !== $before ) {
+			update_option( self::PRUNED_OPTION, $marks, false );
+		}
 	}
 
 	public static function collect_stale_assets( bool $dry_run = false ): array {

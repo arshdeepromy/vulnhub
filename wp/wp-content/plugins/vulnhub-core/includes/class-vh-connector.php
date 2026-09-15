@@ -126,6 +126,35 @@ abstract class Connector {
 	}
 
 	/**
+	 * Can this connector be asked for a full resync -- everything the source
+	 * holds, not just what changed since the last run? A connector that syncs
+	 * incrementally from a watermark answers true, and then honours
+	 * request_full_sync(). Default: no distinction to make.
+	 */
+	public function supports_full_sync(): bool {
+		return false;
+	}
+
+	/**
+	 * Ask for the next run to be a full resync.
+	 *
+	 * A request, not a run: a background sync is dispatched to cron and may
+	 * start later, or find an interrupted run to finish first, so the intent
+	 * has to outlive the web request that expressed it. Default: nothing to
+	 * remember.
+	 */
+	public function request_full_sync(): void {
+	}
+
+	/**
+	 * One line for the connector card about full resyncs (last one, next one
+	 * due, a pending request). Empty when there is nothing to say.
+	 */
+	public function full_sync_note(): string {
+		return '';
+	}
+
+	/**
 	 * Is "use mock data instead of the live API" a meaningful choice here?
 	 *
 	 * It is for anything that imports: a sample fleet flows through the same
