@@ -192,6 +192,14 @@ multi-hundred-thousand-row export in memory. The full design is in
   a restarting download clears any half-written chunks from an interrupted run,
   and a completed run wipes its staging directory — so disk is freed as it goes,
   not only at the end.
+- **Compact on disk.** Chunks are stored gzip-compressed (~13:1 on a Tenable
+  export, which is mostly a plugin-metadata block repeated on every finding), so
+  a multi-gigabyte download stages as a few hundred megabytes. Readers decompress
+  transparently and still read older, uncompressed chunks.
+- **Single-flight, heartbeat-guarded.** Only one sync runs at a time — a `flock`
+  on the cron worker stops the 60-second loop stacking overlapping runs into an
+  out-of-memory kill — and the import reports progress within each chunk, so a
+  long-but-healthy run is never falsely reaped as stalled.
 - **Incremental and gap-safe.** After the first full pull, syncs fetch only what
   changed since the last success (with an overlap window so nothing slips through
   the gap), skip re-writing unchanged findings, and resolve findings the scanner
