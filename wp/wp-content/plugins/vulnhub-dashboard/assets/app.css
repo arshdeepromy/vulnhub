@@ -26,13 +26,19 @@
   --vh-faint: #7d8aa3;
   --vh-link: #8fd7ff;
   --vh-link-hover: #c8ecff;
-  /* accent (cyan by default; body[data-vh-accent="emerald"|"violet"] swaps it) */
+  /* accent */
   --vh-accent: #5ee0ff;
   --vh-accent-rgb: 94,224,255;
   --vh-accent-ink: #06101c;
   --vh-btn-primary: linear-gradient(180deg, #7fe8ff, #4fd3f5);
   --vh-series-1: #5ea3ff;
   --vh-series-2: #ff9a3c;
+  /* Series colours as TEXT, not as a mark. The mark floor is 3:1 and the text
+     floor is 4.5:1, and in light the series values only clear the first --
+     series-1 on its own 18% tint reads 3.51:1. Same value in dark, a darker
+     one in light, so a label never has to be re-argued per component. */
+  --vh-series-1-ink: #5ea3ff;
+  --vh-series-2-ink: #ff9a3c;
   /* severity — ALWAYS paired with a text label; never colour alone */
   --vh-sev-critical: #ff5a66;
   --vh-sev-high: #ff9a3c;
@@ -56,10 +62,12 @@
   --vh-warn-ink: #ffd28a;
   /* pill fills — translucent tint + readable ink (AA on the tint) */
   --vh-pill-ink: #e6edf7;
+  --vh-pill-critical: rgba(255,90,102,.16);
   --vh-pill-high: rgba(255,154,60,.16);
   --vh-pill-medium: rgba(245,208,74,.16);
   --vh-pill-low: rgba(94,163,255,.16);
   --vh-pill-info: rgba(125,138,163,.16);
+  --vh-pill-good: rgba(74,222,128,.16);
   --vh-pill-fg-critical: #ff8c94;
   --vh-pill-fg-high: #ffb36b;
   --vh-pill-fg-medium: #f5d04a;
@@ -84,8 +92,14 @@
   --vh-ease: cubic-bezier(.2,.7,.2,1);
   --vh-dur: .25s;
 }
-body[data-vh-accent="emerald"] { --vh-accent:#60ffbe; --vh-accent-rgb:96,255,190; --vh-btn-primary:linear-gradient(180deg,#8dffd2,#4fe8a8); --vh-link:#9af5d2; --vh-link-hover:#d2ffe9; }
-body[data-vh-accent="violet"]  { --vh-accent:#b096ff; --vh-accent-rgb:176,150,255; --vh-btn-primary:linear-gradient(180deg,#c9b8ff,#a88cff); --vh-link:#c9b8ff; --vh-link-hover:#e6ddff; }
+/* An emerald and a violet accent swap used to live here, keyed on a
+   `data-vh-accent` attribute. Nothing ever set that attribute -- no PHP, no JS,
+   no setting -- and the light theme's own selectors outranked it anyway, so it
+   could not have worked if something had. Removed rather than wired up: an
+   accent choice is a product decision nobody has asked for, and dead rules in
+   a token block read as options that exist. The tokens themselves
+   (--vh-accent, --vh-accent-rgb, --vh-btn-primary, --vh-link) are all it would
+   take to bring it back deliberately. */
 
 /* Optional self-hosted fonts. Remove if not shipping the files. */
 @font-face { font-family: "Space Grotesk"; src: url("fonts/SpaceGrotesk[wght].woff2") format("woff2"); font-weight: 300 700; font-display: swap; }

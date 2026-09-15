@@ -165,6 +165,23 @@ function vulnhub_import_is_screen(): bool {
 }
 
 /**
+ * Cache-busting version for one bundled asset: the plugin version plus the
+ * file's own mtime.
+ *
+ * The plugin version alone moves only on release, so a CDN in front of the
+ * portal serves the old file to anyone who loaded the page recently -- new
+ * markup styled by old rules. The mtime changes exactly when the bytes do.
+ * Mirrors VulnHub_Dash_App::asset_ver().
+ *
+ * @param string $rel Path relative to the plugin directory.
+ */
+function vulnhub_import_asset_ver( string $rel ): string {
+	$mtime = @filemtime( VULNHUB_IMPORT_DIR . $rel ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+
+	return $mtime ? VULNHUB_IMPORT_VERSION . '.' . $mtime : VULNHUB_IMPORT_VERSION;
+}
+
+/**
  * Enqueue the importer's own stylesheet and script, only on its own screen.
  */
 add_action(
@@ -178,14 +195,14 @@ add_action(
 			'vulnhub-import',
 			VULNHUB_IMPORT_URL . 'assets/import.css',
 			array( 'vulnhub-app' ),
-			VULNHUB_IMPORT_VERSION
+			vulnhub_import_asset_ver( 'assets/import.css' )
 		);
 
 		wp_enqueue_script(
 			'vulnhub-import',
 			VULNHUB_IMPORT_URL . 'assets/import.js',
 			array(),
-			VULNHUB_IMPORT_VERSION,
+			vulnhub_import_asset_ver( 'assets/import.js' ),
 			true
 		);
 

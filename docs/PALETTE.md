@@ -256,7 +256,10 @@ had literal colours scattered through its component rules.
    They now read `--vh-pill-high` / `--vh-pill-fg-high` and the medium pair,
    so light gets its own tint and a darker label (5.48 and 5.60) while dark is
    unchanged. Pill *borders* are still literal dark rgba, which is cosmetic
-   rather than a contrast failure.
+   rather than a contrast failure. The OS monogram badges
+   (`.vh-os__mono--azure` and friends) carried the same literals and moved onto
+   per-theme pill tokens the same day: 1.28-1.86 in light, now 5.17-7.48, with
+   dark unchanged.
 2. **Fixed 2026-09-16: the light table header was unreadable.**
    `.vh-table thead tr` had a literal `rgba(7,11,20,.6)` wash that composited
    over white to roughly the colour of its own text (≈1.01:1). The fill is now
@@ -272,11 +275,15 @@ had literal colours scattered through its component rules.
    over every step in both themes (it was as low as 1.50).
 5. **Fixed 2026-09-16: severity used as text in light mode.** Vendor stats,
    exposure bands, the attack-path card numbers and the AWS read-out now use
-   the `--vh-sev-*-ink` set above. `--vh-series-2` as text (3.20) is **not**
-   fixed: it is still used raw for the "remediated" series label.
-6. **The accent swap is dead code.** `body[data-vh-accent="emerald"|"violet"]`
-   is styled but nothing sets the attribute. Even if something did, the light
-   block's selector outranks it. The `.vh-themebtn` styles have no markup.
+   the `--vh-sev-*-ink` set above. Series colours used as text followed on the
+   same day: `--vh-series-1-ink` / `--vh-series-2-ink` carry the dark values
+   unchanged and darker ones in light, taking the one live consumer
+   (`.vh-kind--library`) from 4.42 to 7.37.
+6. **Fixed 2026-09-16: the dead accent swap is gone.**
+   `body[data-vh-accent="emerald"|"violet"]` was styled but nothing set the
+   attribute, and the light block's selectors outranked it anyway. The rules
+   were removed, with a comment recording what reinstating them deliberately
+   would take.
 7. **Fixed 2026-09-16: the toggle's first click did nothing.**
    `currentTheme()` fell back to `prefers-color-scheme` when no theme was
    stamped, but the CSS renders dark in that case, so on a light-OS browser
@@ -284,11 +291,17 @@ had literal colours scattered through its component rules.
    nothing. The fallback is now `dark`, matching what the stylesheet actually
    renders. The OS preference is still not honoured anywhere (see *Theme
    selection*).
-8. **`vh-motion.js` reads `--vh-accent-rgb` once, at load**, and does not
-   re-read it when the theme is toggled. Its severity and flow colours are
-   dark literals (see *Where chart colours come from*).
-9. **`login.css` is dark only.** It hard-codes `#050810` and `#e6edf7` and has
-   no light variant.
+8. **Fixed 2026-09-16: the motion layer follows a theme change.**
+   `vh-motion.js` read `--vh-accent-rgb` once at load, so the hover spotlight
+   kept dark-theme cyan after a toggle. A `MutationObserver` on `data-theme`
+   re-reads the token and repaints the gradients built at setup; the per-frame
+   canvases already read it at draw time. Its severity and flow colours are
+   still dark literals (see *Where chart colours come from*).
+9. **Sign-in is dark on purpose, not by omission.** The theme is a per-browser
+   preference the app shell reads back; sign-in is reached before there is a
+   preference to honour, draws no toggle, and its animated scene is composed
+   for a near-black ground. Matching light would mean a second scene, not a
+   token swap. Recorded in `login.css` so it is not "fixed" by accident.
 10. **wp-admin has its own severity set.** `vulnhub-core/admin/assets/admin.css`
     defines `--vh-crit #b4232c`, `--vh-high #d97706`, `--vh-med #ca8a04`,
     `--vh-low #2563eb`, `--vh-info #64748b` and `--vh-ok #15803d`. The high

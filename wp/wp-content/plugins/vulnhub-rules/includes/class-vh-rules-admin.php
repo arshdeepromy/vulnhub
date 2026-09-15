@@ -107,6 +107,24 @@ final class VulnHub_Rules_Admin {
 	/**
 	 * Load the screen's CSS and JS on the rules section only.
 	 */
+	/**
+	 * Cache-busting version for one bundled asset: the plugin version plus the
+	 * file's own mtime.
+	 *
+	 * The plugin version alone moves only on release, so a CDN in front of the
+	 * portal (which caches wp-content for hours) serves the old stylesheet to
+	 * anyone who loaded the page recently -- new markup styled by old rules,
+	 * which is worse than a plainly stale page. The mtime changes exactly when
+	 * the bytes do. Mirrors VulnHub_Dash_App::asset_ver().
+	 *
+	 * @param string $rel Path relative to the plugin directory.
+	 */
+	private static function asset_ver( string $rel ): string {
+		$mtime = @filemtime( VULNHUB_RULES_DIR . $rel ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+
+		return $mtime ? VULNHUB_RULES_VERSION . '.' . $mtime : VULNHUB_RULES_VERSION;
+	}
+
 	public static function assets(): void {
 		if ( ! class_exists( 'VulnHub_Dash_App' ) || ! class_exists( 'VulnHub_Dash_Portal' ) ) {
 			return;
@@ -118,8 +136,8 @@ final class VulnHub_Rules_Admin {
 			return;
 		}
 
-		wp_enqueue_style( 'vulnhub-rules', VULNHUB_RULES_URL . 'assets/rules.css', array( 'vulnhub-app' ), VULNHUB_RULES_VERSION );
-		wp_enqueue_script( 'vulnhub-rules', VULNHUB_RULES_URL . 'assets/rules.js', array(), VULNHUB_RULES_VERSION, true );
+		wp_enqueue_style( 'vulnhub-rules', VULNHUB_RULES_URL . 'assets/rules.css', array( 'vulnhub-app' ), self::asset_ver( 'assets/rules.css' ) );
+		wp_enqueue_script( 'vulnhub-rules', VULNHUB_RULES_URL . 'assets/rules.js', array(), self::asset_ver( 'assets/rules.js' ), true );
 	}
 
 	/* -----------------------------------------------------------------

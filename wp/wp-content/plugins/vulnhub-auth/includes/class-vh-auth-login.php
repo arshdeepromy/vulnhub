@@ -56,6 +56,12 @@ final class VulnHub_Auth_Login {
 		add_action( 'wp_login_failed', array( __CLASS__, 'on_password_failure' ) );
 		add_action( 'admin_init', array( __CLASS__, 'force_enrolment' ) );
 		add_action( 'admin_notices', array( __CLASS__, 'enrolment_notice' ) );
+		/*
+		 * The portal equivalent of force_enrolment(). Priority 20, after
+		 * VulnHub_Dash_Portal::guard_portal() (10) has had its say about
+		 * signed-out visitors: authentication first, then enrolment.
+		 */
+		add_action( 'template_redirect', array( __CLASS__, 'force_enrolment_portal' ), 20 );
 	}
 
 	/* -----------------------------------------------------------------
@@ -483,6 +489,88 @@ final class VulnHub_Auth_Login {
 		}
 
 		wp_safe_redirect( add_query_arg( 'vh_mfa', 'required', admin_url( 'profile.php' ) ) . '#vulnhub-mfa' );
+		exit;
+	}
+
+	/**
+	 * Require enrolment on the portal, the way force_enrolment() does in
+	 * wp-admin.
+	 *
+	 * A portal-only account -- signed in, holding vulnhub_view, without
+	 * manage_options -- is redirected out of wp-admin, so the admin_init hook
+	 * above never ran for exactly the people the policy is usually written
+	 * for: everyday users of the product. "Required for selected roles" was
+	 * enforced against administrators and nobody else.
+	 *
+	 * Deliberately narrow. It acts only on the portal's own views, so a
+	 * marketing page, the privacy policy or an Elementor page built on
+	 * VulnHub widgets is never interrupted, and it leaves wp-admin to the
+	 * hook that already covers it.
+	 */
+	public static function force_enrolment_portal(): void {
+		/*
+		 * admin-post.php and admin-ajax.php are admin context and never reach
+		 * template_redirect; REST does not either. So the portal's forms and
+		 * its infinite-scroll endpoints keep working while a redirect is
+		 * pending -- which matters, because the enrolment form itself posts
+		 * to admin-post.php.
+		 */
+		if ( is_admin() || wp_doing_ajax() || ! is_user_logged_in() ) {
+			return;
+		}
+
+		if ( ! is_singular() || ! class_exists( 'VulnHub_Dash_App' ) || ! class_exists( 'VulnHub_Dash_Portal' ) ) {
+			return;
+		}
+
+		$view = VulnHub_Dash_App::view_for_post( get_post() );
+
+		// Not a portal page, or the sign-in screen -- which must stay
+		// reachable, and which redirect_signed_in() already owns.
+		if ( '' === $view || VulnHub_Dash_Portal::LOGIN_VIEW === $view ) {
+			return;
+		}
+
+		if ( ! VulnHub_Auth_Policy::must_enrol( wp_get_current_user() ) ) {
+			return;
+		}
+
+		/*
+		 * Loop safety, part one: there has to be somewhere to send them.
+		 *
+		 * portal_url() falls back to the site root when the page it wants is
+		 * missing, and the site root is the dashboard -- itself a portal view
+		 * this method would redirect again, forever. If the administration
+		 * page is not mapped, enrolment has no home in the portal and this
+		 * steps aside rather than trapping the person in a redirect they
+		 * cannot break.
+		 */
+		$pages = (array) get_option( 'vulnhub_dash_pages', array() );
+
+		if ( empty( $pages[ VulnHub_Dash_Portal::ADMIN_VIEW ] ) ) {
+			return;
+		}
+
+		/*
+		 * Part two: do not redirect somebody to where they already are. The
+		 * destination is one section of the admin view, so being on the admin
+		 * view is not enough to stop -- a person sitting on ?section=integrations
+		 * still needs sending along -- but being on this section is.
+		 */
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$section = isset( $_GET['section'] ) ? sanitize_key( wp_unslash( $_GET['section'] ) ) : '';
+
+		if ( VulnHub_Dash_Portal::ADMIN_VIEW === $view && VulnHub_Auth_Profile::SECTION === $section ) {
+			return;
+		}
+
+		$url = VulnHub_Auth_Profile::section_url( array( 'vh_mfa' => 'required' ) );
+
+		if ( '' === $url ) {
+			return;
+		}
+
+		wp_safe_redirect( $url );
 		exit;
 	}
 

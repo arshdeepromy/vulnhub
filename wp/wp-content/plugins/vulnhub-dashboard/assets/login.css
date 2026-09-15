@@ -9,6 +9,21 @@
  *
  * Scoped under `.vh-login` throughout: the app shell already styles headings,
  * links and inputs for the product UI, and this screen answers to none of it.
+ *
+ * DELIBERATELY DARK, in both themes. The values below are literals rather than
+ * `--vh-*` tokens and should stay that way:
+ *
+ *   - The theme is a per-browser preference stored in localStorage, read from
+ *     the app shell. Sign-in is the one screen a visitor reaches before there
+ *     is an account, a session or a stored preference to honour, and it does
+ *     not draw the toggle that would let them change it.
+ *   - The scene is the point. The sphere canvas, the vignette and the masked
+ *     grid are painted for a near-black ground; on a white one the whole
+ *     composition would have to be redrawn, not recoloured.
+ *
+ * So a light-mode reader gets a dark sign-in page and then a light product.
+ * That is the intended behaviour, not an oversight -- if the two ever have to
+ * match, the work is a second scene, not a token swap.
  */
 
 /* The scene is full-bleed, so the shell's centred, padded main is undone. */
