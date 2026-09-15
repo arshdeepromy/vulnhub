@@ -524,5 +524,189 @@ final class VulnHub_Tenable_Client {
 			'seconds' => (float) $seconds,
 		);
 	}
+
+	/**
+	 * Stream one chunk straight to a file, without ever holding it in memory.
+	 *
+	 * A chunk can be hundreds of megabytes; the normal path buffers the whole
+	 * body and json_decode()s it, which builds a multi-gigabyte array and
+	 * OOM-kills the worker. Here WordPress writes the response body directly to
+	 * disk (the `stream`/`filename` request options), so peak memory is a
+	 * socket buffer no matter how large the chunk is. Written to a temp file and
+	 * renamed, so a half-written chunk from a failure is never seen as complete.
+	 *
+	 * @param string $kind     Export kind.
+	 * @param string $uuid     Export uuid.
+	 * @param int    $chunk_id 1-based chunk number.
+	 * @param string $dest     Final destination path for the chunk.
+	 * @return int Bytes written, or 0 on failure.
+	 */
+	public function download_chunk_to_file( string $kind, string $uuid, int $chunk_id, string $dest ): int {
+		$url = $this->url( sprintf( '/%s/export/%s/chunks/%d', $kind, rawurlencode( $uuid ), $chunk_id ) );
+		$tmp = $dest . '.part';
+
+		$attempts = 0;
+
+		while ( true ) {
+			++$attempts;
+
+			if ( file_exists( $tmp ) ) {
+				wp_delete_file( $tmp );
+			}
+
+			$response = wp_remote_get( // phpcs:ignore WordPress.WP.AlternativeFunctions
+				$url,
+				array(
+					'headers'  => $this->headers(),
+					'timeout'  => 600,
+					'stream'   => true,
+					'filename' => $tmp,
+				)
+			);
+
+			if ( is_wp_error( $response ) ) {
+				if ( $attempts < 5 ) {
+					usleep( (int) round( min( 30.0, 2.0 * $attempts ) * 1000000 ) );
+					continue;
+				}
+				$this->trace( sprintf( 'Chunk %d of %s export %s stream failed: %s', $chunk_id, $kind, $uuid, $response->get_error_message() ) );
+				if ( file_exists( $tmp ) ) {
+					wp_delete_file( $tmp );
+				}
+				return 0;
+			}
+
+			$status = (int) wp_remote_retrieve_response_code( $response );
+
+			if ( ( 429 === $status || in_array( $status, array( 500, 502, 503, 504 ), true ) ) && $attempts < 5 ) {
+				$retry_after = (int) wp_remote_retrieve_header( $response, 'retry-after' );
+				$wait        = $retry_after > 0 ? min( 60, $retry_after ) : min( 30.0, 2.0 * $attempts );
+				usleep( (int) round( $wait * 1000000 ) );
+				continue;
+			}
+
+			if ( $status < 200 || $status >= 300 ) {
+				$this->trace( sprintf( 'Chunk %d of %s export %s failed (HTTP %d)', $chunk_id, $kind, $uuid, $status ) );
+				if ( file_exists( $tmp ) ) {
+					wp_delete_file( $tmp );
+				}
+				return 0;
+			}
+
+			break;
+		}
+
+		$bytes = (int) ( file_exists( $tmp ) ? filesize( $tmp ) : 0 );
+
+		if ( ! rename( $tmp, $dest ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions
+			if ( file_exists( $tmp ) ) {
+				wp_delete_file( $tmp );
+			}
+			return 0;
+		}
+
+		return $bytes;
+	}
+
+	/**
+	 * Run a complete export, streaming each chunk to disk instead of decoding
+	 * it in memory. Same queue/poll loop as run_export(), but chunks are written
+	 * straight to files the caller names, so a quarter-million-row export never
+	 * has to be held decoded. Completion is the same: the loop ends when Tenable
+	 * reports a terminal status, having first pulled every chunk it listed.
+	 *
+	 * @param string                     $kind      Export kind.
+	 * @param array<string,mixed>        $body      Request body.
+	 * @param callable(int):string       $dest_for  Returns the destination path for a chunk id.
+	 * @param callable(int,int):void     $on_saved  Called after each chunk saves (chunk id, bytes).
+	 * @param callable():void|null       $on_poll   Liveness beat every poll.
+	 * @return array{uuid:string,status:string,chunks:int,bytes:int,seconds:float}
+	 */
+	public function run_export_streamed( string $kind, array $body, callable $dest_for, callable $on_saved, ?callable $on_poll = null ): array {
+		$started = microtime( true );
+		$uuid    = $this->request_export( $kind, $body );
+
+		$this->trace( sprintf( 'Queued %s export %s (streamed)', $kind, $uuid ) );
+
+		$seen        = array();
+		$bytes_total = 0;
+		$attempts    = 0;
+		$wait        = self::POLL_FIRST_WAIT;
+		$status      = 'QUEUED';
+
+		while ( true ) {
+			++$attempts;
+
+			$state  = $this->export_status( $kind, $uuid );
+			$status = strtoupper( (string) ( $state['status'] ?? '' ) );
+
+			if ( $on_poll ) {
+				$on_poll();
+			}
+
+			foreach ( (array) ( $state['chunks_available'] ?? array() ) as $chunk_id ) {
+				$chunk_id = (int) $chunk_id;
+				if ( isset( $seen[ $chunk_id ] ) ) {
+					continue;
+				}
+				$seen[ $chunk_id ] = true;
+
+				$bytes        = $this->download_chunk_to_file( $kind, $uuid, $chunk_id, (string) $dest_for( $chunk_id ) );
+				$bytes_total += $bytes;
+
+				$on_saved( $chunk_id, $bytes );
+			}
+
+			if ( in_array( $status, self::TERMINAL_STATES, true ) ) {
+				break;
+			}
+
+			$elapsed = microtime( true ) - $started;
+
+			if ( $attempts >= self::POLL_MAX_ATTEMPTS || $elapsed >= self::POLL_TIMEOUT_SECONDS ) {
+				$status = 'TIMEOUT';
+				$this->trace(
+					sprintf(
+						'Gave up polling %s export %s after %d attempts / %.0fs (last state: %s)',
+						$kind,
+						$uuid,
+						$attempts,
+						$elapsed,
+						(string) ( $state['status'] ?? 'unknown' )
+					)
+				);
+				break;
+			}
+
+			usleep( (int) round( $wait * 1000000 ) );
+			$wait = min( self::POLL_MAX_WAIT, $wait * 1.5 );
+		}
+
+		$seconds = round( microtime( true ) - $started, 2 );
+
+		$this->trace(
+			sprintf(
+				'%s export %s finished as %s — %d chunk(s), %d bytes streamed in %.2fs',
+				ucfirst( $kind ),
+				$uuid,
+				$status,
+				count( $seen ),
+				$bytes_total,
+				$seconds
+			)
+		);
+
+		if ( 'FINISHED' !== $status ) {
+			$this->trace( sprintf( 'WARNING: %s export did not reach FINISHED; downloaded data may be partial.', $kind ) );
+		}
+
+		return array(
+			'uuid'    => $uuid,
+			'status'  => $status,
+			'chunks'  => count( $seen ),
+			'bytes'   => $bytes_total,
+			'seconds' => (float) $seconds,
+		);
+	}
 }
 

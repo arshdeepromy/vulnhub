@@ -30,6 +30,14 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 	private const LADDER = array( 'info', 'low', 'medium', 'high', 'critical' );
 
 	/**
+	 * Emit a progress heartbeat every this many findings while processing a
+	 * chunk. A vuln chunk holds tens of thousands of records; the run-row must
+	 * be updated mid-chunk or the logger's stall-reaper (STALL_SECONDS) marks a
+	 * healthy long import as failed.
+	 */
+	private const PROGRESS_HEARTBEAT = 2000;
+
+	/**
 	 * Fallback remediation SLA in days, used when an asset has no team yet —
 	 * which is normal on a first sync, because ownership mapping only runs
 	 * after the import completes.
@@ -475,6 +483,12 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 			@set_time_limit( 0 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors -- cron/CLI, no page waiting.
 		}
 
+		// The cron worker ships with a small memory_limit (128M). The staged
+		// sync streams both the download and the per-record import, so it does
+		// not need much, but give it comfortable headroom so a single large
+		// record or a WP HTTP buffer can never trip the limit mid-run.
+		@ini_set( 'memory_limit', '512M' ); // phpcs:ignore WordPress.PHP.NoSilencedErrors,WordPress.PHP.IniSet.memory_limit_Disallowed
+
 		$conn  = $this->id();
 		$state = VH_Tenable_Store::read_state( $conn );
 
@@ -588,10 +602,14 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 		}
 
 		/* --- vulns --- */
+		// Streamed to disk, never decoded here. A vuln chunk can be hundreds of
+		// megabytes; decoding one in memory built a multi-gigabyte array and was
+		// what OOM-killed the worker mid-download. The chunk is written straight
+		// to its file; decoding happens one record at a time in the processing
+		// phase (VH_Tenable_Store::stream_records).
 		$this->log( 'Downloading Tenable vulnerability export to disk…' );
 		$v_saved = 0;
-		$v_recs  = 0;
-		$vulns_job = $this->client()->run_export(
+		$vulns_job = $this->client()->run_export_streamed(
 			VulnHub_Tenable_Client::KIND_VULNS,
 			array(
 				'num_assets'            => $this->vuln_num_assets(),
@@ -603,10 +621,15 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 					'since'    => $since,
 				),
 			),
-			function ( array $chunk, int $chunk_id ) use ( $conn, &$v_saved, &$v_recs, &$state ) {
-				$bytes = VH_Tenable_Store::save_chunk( $conn, 'vulns', $chunk_id, (string) wp_json_encode( $chunk ) );
+			function ( int $chunk_id ) use ( $conn ): string {
+				return VH_Tenable_Store::chunk_path( $conn, 'vulns', $chunk_id );
+			},
+			function ( int $chunk_id, int $bytes ) use ( &$v_saved, &$state, $conn ) {
+				// The client streamed the raw chunk to disk; compress it in place
+				// now (~13:1 on this export) so the whole download stays small on
+				// disk. stream_records() reads it back through gzopen when processing.
+				VH_Tenable_Store::compress_chunk( $conn, 'vulns', $chunk_id );
 				++$v_saved;
-				$v_recs += count( $chunk );
 				$state['download']['vuln_chunks'] = $v_saved;
 				$state['download']['bytes']      += $bytes;
 				$this->report_stage( $state );
@@ -629,12 +652,16 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 		$est_key = ( (int) $state['since'] <= time() - 200 * DAY_IN_SECONDS ) ? 'dl_est_full' : 'dl_est_incr';
 		update_option( 'vulnhub_' . $est_key . '_' . $this->id(), (int) $state['download']['bytes'], false );
 
+		// Vuln records are counted as they stream in during processing, not
+		// here -- the streamed download never decodes a chunk, so the row count
+		// is not known until each record is parsed. records_total is left at the
+		// asset count as a floor; processing advances records_done past it.
 		$state['download']['status']         = 'done';
-		$state['process']['records_total']   = $a_recs + $v_recs;
+		$state['process']['records_total']   = $a_recs;
 		$state['process']['asset_chunks']    = $a_saved;
 		$state['process']['vuln_chunks']     = $v_saved;
 		$state['phase']                      = 'process';
-		$this->log( sprintf( 'Download complete: %d asset chunk(s), %d vuln chunk(s), %d records on disk.', $a_saved, $v_saved, $a_recs + $v_recs ) );
+		$this->log( sprintf( 'Download complete: %d asset chunk(s), %d vuln chunk(s), %d bytes on disk.', $a_saved, $v_saved, (int) $state['download']['bytes'] ) );
 		$this->report_stage( $state );
 
 		return $state;
@@ -676,15 +703,31 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 			VH_Tenable_Store::write_state( $conn, $state );
 		}
 
-		// Findings.
+		// Findings. Streamed one record at a time off disk (never the whole
+		// chunk decoded), so memory stays flat no matter how large the chunk is.
 		for ( $i = (int) $state['process']['chunk']; $i <= $vuln_chunks; $i++ ) {
-			$records = VH_Tenable_Store::read_chunk( $conn, 'vulns', $i );
+			VH_Tenable_Store::stream_records(
+				$conn,
+				'vulns',
+				$i,
+				function ( array $record ) use ( &$state ) {
+					$this->import_finding( $record );
+					++$state['process']['records_done'];
 
-			foreach ( $records as $record ) {
-				$this->import_finding( $record );
-				++$state['process']['records_done'];
-			}
-			unset( $records );
+					// Heartbeat mid-chunk, not just per chunk. A single vuln
+					// chunk holds tens of thousands of findings and can take
+					// well over the logger's STALL_SECONDS to import; without a
+					// heartbeat inside the loop the run-row looks frozen and the
+					// stall-reaper marks a perfectly healthy import as "failed
+					// (no progress for 10 minutes)". The resume checkpoint is
+					// still per-chunk (records_done is a display counter; a
+					// resumed chunk re-imports idempotently via upsert), so this
+					// cannot corrupt a resume.
+					if ( 0 === ( $state['process']['records_done'] % self::PROGRESS_HEARTBEAT ) ) {
+						$this->report_stage( $state );
+					}
+				}
+			);
 
 			// Checkpoint first, then free the chunk's disk (see the note in the
 			// asset loop): the resume point is durable before the bytes go.

@@ -163,9 +163,19 @@ services:
       wordpress:
         condition: service_started
     user: "33:33"
+    # flock -n: single-flight. A staged sync runs inline inside one
+    # `wp cron event run` and can last many minutes; without the lock the 60s
+    # loop starts a fresh overlapping run every tick, stacking multi-hundred-MB
+    # PHP workers into this container until the OOM killer takes one -- which is
+    # what killed the sync at the download->process boundary. -n means "skip
+    # this tick if a run is still going", so runs never overlap.
+    #
+    # tail -n 20, not `head -20`: head closes the pipe after 20 lines, and the
+    # next line the worker writes gets SIGPIPE -- a long run that emits >20
+    # lines was being killed mid-flight. tail drains the whole stream first.
     entrypoint: >
       sh -c "while true; do
-        wp cron event run --due-now --path=/var/www/html --quiet 2>&1 | head -20;
+        flock -n /tmp/vh-cron.lock wp cron event run --due-now --path=/var/www/html --quiet 2>&1 | tail -n 20;
         sleep 60;
       done"
     environment:

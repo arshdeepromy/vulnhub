@@ -35,6 +35,17 @@ denied`) so the raw scan data is never served back over HTTP. Chunks are written
 to a `.part` temp file and renamed, so a chunk file is only ever seen complete —
 a half-written chunk from a crash mid-write is never mistaken for a finished one.
 
+**Chunks are stored gzip-compressed.** A vuln export is ~92% a plugin-metadata
+block repeated on every finding, so it compresses ~13:1 — a multi-gigabyte
+download lands as a few hundred megabytes on disk. The file keeps its `.json`
+name but holds gzip bytes (`VH_Tenable_Store::GZIP_LEVEL`). Large vuln chunks are
+streamed to disk raw by the client and then compressed **in place** by
+`compress_chunk()`, a 1 MiB-buffered streaming gzip so peak memory is unchanged;
+small, already-decoded asset chunks are gzipped in `save_chunk()`. Every reader
+(`read_chunk()`, `stream_records()`) opens through `gzopen`, which transparently
+reads both gzip and legacy plain-JSON chunks — so a resume that straddles this
+change still reads chunks written before it.
+
 Progress is reported as **bytes on disk**, with a live download rate and an ETA
 derived from a stored estimate of the full/incremental export size
 (`vulnhub_dl_est_full_*` / `..._incr_*`). The vendor does **not** send a total
@@ -53,6 +64,15 @@ A chunk is deleted the moment it has been imported (`delete_chunk()`), so disk i
 freed as processing goes rather than only at the very end. This is safe against
 resume: the checkpoint has already advanced past a chunk before it is deleted, so
 a restart never looks for a chunk that is gone.
+
+The import loop emits a progress heartbeat every `PROGRESS_HEARTBEAT` (2000)
+findings, **not only once per chunk**. A single vuln chunk can hold tens of
+thousands of records and take several minutes to import; without a mid-chunk
+heartbeat the run-row would look frozen and the stall-reaper (below) would mark a
+perfectly healthy import failed. The resume checkpoint stays per-chunk —
+`records_done` is only a display counter, and a resumed chunk re-imports
+idempotently through `upsert_finding()` — so the extra heartbeats cannot corrupt
+a resume.
 
 ### 3. Finalize
 
@@ -91,6 +111,14 @@ drive resumption:
 A "Sync now" from the UI schedules `HOOK_SYNC_NOW` as a single WP-cron event
 (`queue_sync()`), so the request returns immediately and the work runs in the
 cron worker rather than the web request.
+
+**Single-flight.** The cron container runs `wp cron event run` under `flock -n`,
+so a run that lasts longer than the 60-second cron tick cannot be joined by a
+second overlapping worker. Overlapping staged syncs would otherwise stack
+multi-hundred-megabyte PHP processes into the container until the OOM killer took
+one — which is how a run died at the download→process boundary. `-n` means the
+next tick simply skips while a run is still going, and picks up again once it
+finishes.
 
 ---
 
@@ -167,6 +195,12 @@ for live progress. It reports the current phase, both progress bars (download
 bytes/rate/ETA and processing records), the exact last-sync timestamp and
 duration, and reaps a genuinely stuck run: a run whose heartbeat has been silent
 past `STALL_SECONDS` (600s) is marked failed rather than left "syncing" forever.
+
+For this to reap only *genuinely* stuck runs, every long-running phase must keep
+its heartbeat fresh: the download reports per chunk and on every vendor poll
+(`$on_poll`), and processing heartbeats every `PROGRESS_HEARTBEAT` findings within
+a chunk. A big-but-healthy chunk import that reported only at the chunk boundary
+would otherwise cross 600s of apparent silence and be falsely reaped.
 
 ---
 
