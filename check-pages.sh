@@ -7,8 +7,8 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-BASE="http://localhost:8093"
-USER="romy"
+BASE="${VULNHUB_URL:-http://localhost:8093}"
+USER="${WP_ADMIN_USER:-admin}"
 PASS="$(cat .admin_pass)"
 JAR="$(mktemp)"
 trap 'rm -f "$JAR"' EXIT

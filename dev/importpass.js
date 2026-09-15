@@ -1,7 +1,8 @@
+const VH_ROOT = process.env.VULNHUB_ROOT || require('path').resolve(__dirname, '..');
 /*
  * Upload a very large CSV through the actual browser UI.
  *
- * The shell harness in vh-import-test drives the same REST endpoints, but it
+ * The shell load-test harness drives the same REST endpoints, but it
  * is not the thing operators use. This is: a real file input, the real
  * adaptive slicer, the real progress panel. It stops short of starting the
  * import -- that path is covered by the load test -- and deletes the job it
@@ -14,8 +15,8 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 
 const BASE = 'http://localhost:8093';
-const FILE = process.argv[2] || '/home/romy/vh-import-test/tenable-500mb.csv';
-const PASS = fs.readFileSync('/home/romy/vulnhub/.portal_test_pass', 'utf8').trim();
+const FILE = process.argv[2] || process.env.VULNHUB_IMPORT_FILE || './tenable-500mb.csv';
+const PASS = fs.readFileSync(VH_ROOT + '/.portal_test_pass', 'utf8').trim();
 
 let passed = 0;
 let failed = 0;

@@ -4,38 +4,91 @@ Vulnerability, asset and ownership intelligence — built as WordPress plugins s
 there is no bespoke framework to maintain and security patching rides on
 WordPress's own update channel.
 
-Everything lives on the Kiro box under `/home/romy/vulnhub`.
+The whole application is a Docker Compose stack plus a set of plugins. Clone the
+repository anywhere, bring the stack up, and everything — WordPress, the
+database, the cron worker — runs in containers; nothing is tied to a particular
+host or path.
 
 ---
 
-## Running it
+## Getting started
 
 ```bash
-cd /home/romy/vulnhub
-docker compose ps            # stack status
-docker compose logs -f wordpress
+git clone https://github.com/arshdeepromy/vulnhub.git
+cd vulnhub
+cp .env.example .env          # set ports, DB name and secrets (see below)
+docker compose up -d          # build and start the whole stack
+docker compose ps             # confirm every service is running
+```
+
+The first boot installs WordPress and activates every VulnHub plugin. Open the
+site at the port you set (default **8093**) and log in with the admin account
+created on install. Out of the box the platform runs on a deterministic mock
+fleet, so every screen is populated before you connect a single real system —
+see **Going live** below to switch a connector over to live data.
+
+### Where things live
+
+Everything is relative to the directory you cloned into — there is no absolute
+path baked into the app:
+
+| Path | What it holds |
+|---|---|
+| `wp/wp-content/plugins/vulnhub-*` | the VulnHub plugins (this repo) |
+| `wp/wp-content/uploads/vulnhub-sync/` | staged raw sync data, per connector (see **Sync architecture**) |
+| `docker-compose.yml` | the stack definition |
+| `.env` / secret files | ports, DB name, and secrets — **not committed** |
+| `docs/` | design docs and developer contracts |
+| `dev/` | test and audit scripts (resolve the project root from `VULNHUB_ROOT`, defaulting to the repo) |
+
+### Secrets
+
+The stack reads its secrets from `.env` (copied from `.env.example`, never
+committed):
+
+```bash
+cp .env.example .env
+# then fill in — generate values with:
+#   openssl rand -hex 16   # DB_PASS and DB_ROOT_PASS
+#   openssl rand -hex 32   # VH_ENC_KEY
+```
+
+- `DB_PASS` / `DB_ROOT_PASS` — the database passwords
+- `VH_ENC_KEY` — becomes `VULNHUB_ENCRYPTION_KEY`, the key that encrypts stored connector credentials at rest, so a database dump alone never exposes them
+
+The dev/test scripts additionally read a `.admin_pass` file (gitignored,
+`chmod 600`) holding the admin password, and take the site URL and admin user
+from the `VULNHUB_URL` and `WP_ADMIN_USER` environment variables (defaulting to
+`http://localhost:8093` and `admin`) — so nothing about a particular install is
+hardcoded.
+
+### Day-to-day
+
+```bash
+docker compose logs -f vulnhub-wp
 ./lint.sh                    # php -l across every plugin file
 ./check-pages.sh             # log in and fetch every screen, report PHP errors
+./wp.sh <args>               # wp-cli inside the stack (resolves its own path)
 ```
 
 | Service | Port | What it is |
 |---|---|---|
-| `vulnhub-wp` | **8093** | WordPress 7.x + the seven VulnHub plugins |
+| `vulnhub-wp` | **8093** | WordPress 7.x + the VulnHub plugins |
 | `vulnhub-db` | internal | MariaDB 11 (`vh_` table prefix) |
 | `vulnhub-redis` | internal | object cache |
 | `vulnhub-cron` | — | runs `wp cron event run --due-now` every 60s (real cron, not page-load cron) |
 | `vulnhub-mailhog` | **8094** | catches outbound mail |
 
-Admin: `admin` — password in `.admin_pass` (chmod 600, alongside `.db_pass` and
-`.vh_enc_key`).
+The port mappings live in `docker-compose.yml`; change them there if 8093/8094
+are taken on your host.
 
 ---
 
-## The seven plugins
+## The plugins
 
 Each integration is its own plugin, so any one can be disabled or updated
 without touching the rest. They all build against the contract in
-`docs/CORE-API.md`.
+`docs/CORE-API.md`. The principal ones:
 
 | Plugin | Does |
 |---|---|
@@ -120,44 +173,95 @@ What each connector needs:
 
 ---
 
-## Publishing at vulnhub.example.com
+## Sync architecture
 
-The app is already correct behind the tunnel — verified by replaying a tunnel
-request (`Host: vulnhub.example.com`, `X-Forwarded-Proto: https`): HTTP 200, all 18
-absolute URLs emitted as `https://vulnhub.example.com`, zero `localhost` leakage, no
-mixed content. `wp-config` derives `WP_HOME`/`WP_SITEURL` from the request host
-and trusts `X-Forwarded-Proto` / `CF-Connecting-IP`, so the same install serves
-both `localhost:8093` and the public hostname without a config change.
+Large scanner exports are downloaded to disk first, then processed off disk, so
+a sync can never lose the whole run to a crash and never has to hold a
+multi-hundred-thousand-row export in memory. The full design is in
+`docs/SYNC.md`; the shape of it:
 
-The one remaining step needs the Cloudflare dashboard, because this tunnel is
-token-managed (its ingress lives in Cloudflare, not in a local config file, and
-there are no Cloudflare API credentials on this box):
+- **Two phases, two progress bars.** *Download* pulls the raw export chunk by
+  chunk into `wp-content/uploads/vulnhub-sync/<connector>/` and shows bytes on
+  disk (with a live rate and ETA); *Process* imports each chunk in bounded
+  batches and shows records done against the total. The connector card also
+  shows the exact last-sync date/time and how long the run took.
+- **Resumable.** Every step writes a checkpoint to `state.json`, so a killed
+  container or a reboot resumes from where it stopped rather than starting over.
+  A 5-minute cron sweep picks up any run left mid-flight.
+- **Self-cleaning.** Each raw chunk is deleted the moment it has been imported,
+  a restarting download clears any half-written chunks from an interrupted run,
+  and a completed run wipes its staging directory — so disk is freed as it goes,
+  not only at the end.
+- **Incremental and gap-safe.** After the first full pull, syncs fetch only what
+  changed since the last success (with an overlap window so nothing slips through
+  the gap), skip re-writing unchanged findings, and resolve findings the scanner
+  now reports fixed. The watermark only advances on a successful run.
+- **Reversible, scoped pruning.** A full Tenable sync retires assets Tenable has
+  dropped — but *only* assets Tenable itself owns, never assets contributed by
+  Intune, the CMDB or any other connector, and it aborts rather than retire an
+  implausibly large slice in one run.
 
-> Zero Trust → Networks → Tunnels → tunnel `59d0ba76-cb9c-48a5-ade0-3f967d0c10be`
-> → **Public Hostnames** → Add:
-> **Subdomain** `vul` · **Domain** `example.com` · **Service** `HTTP://localhost:8093`
+---
 
-The tunnel already serves `wpmcp.example.com`, so the zone is attached and DNS
-will be created automatically.
+## Analysing vulnerabilities
 
-Two things to do straight after it resolves:
+The dashboard groups the same findings three ways, each with a de-duplicated
+CSV export that shows exactly what is being exported (with a select-all count and
+a "select all matching the current filter" action):
+
+- **Findings** — the raw per-asset, per-vulnerability rows.
+- **Vulnerability on assets** — grouped by vulnerability, each expandable to the
+  affected assets and their owners. The export carries the vulnerability once and
+  the affected assets once, not the solution text repeated on every row.
+- **By product** — the assets that a single update would remediate. Expanding a
+  product shows every outdated asset; the export says "update to the highest
+  available version X, anything below is affected by these N vulnerabilities",
+  with the asset and owner list.
+
+An **EOL / in-support** filter runs across the tabs. It means the OS or the
+software *itself* is discontinued by the vendor (finding-level), not that an
+asset happens to carry one unsupported component — see `docs/LIFECYCLE.md`.
+
+---
+
+## Publishing on your own domain
+
+The app is host-agnostic. `wp-config` derives `WP_HOME`/`WP_SITEURL` from the
+request host and trusts `X-Forwarded-Proto` and `CF-Connecting-IP`, so the same
+install serves `localhost:8093` in development and whatever domain fronts it in
+production **without a config change** — every absolute URL is emitted for the
+host the request actually arrived on, with no `localhost` leakage or mixed
+content.
+
+To put it on a public domain, point any HTTPS reverse proxy at the WordPress
+container's port (default `8093`) and forward the standard headers:
+
+- terminate TLS at the proxy;
+- forward `Host` unchanged;
+- set `X-Forwarded-Proto: https` (and pass `CF-Connecting-IP` if you sit behind
+  Cloudflare) so WordPress builds `https://` URLs and logs the real client IP.
+
+Any of nginx, Caddy, Traefik or a Cloudflare Tunnel does this; nothing in the
+app is specific to a particular proxy.
+
+Two things to do straight after the domain resolves:
 
 1. **Turn on MFA** — VulnHub → Authentication → MFA policy → *Required for
    selected roles* (administrator at minimum). The TOTP implementation passes
    all 18 published RFC 6238 test vectors across SHA-1/256/512.
-2. Consider putting Cloudflare Access in front of `/wp-admin` and `/wp-login.php`
-   as a second gate.
+2. Consider putting an access gate (e.g. Cloudflare Access, or your proxy's own
+   auth) in front of `/wp-admin` and `/wp-login.php` as a second layer.
 
 See `docs/PERFORMANCE.md` for how the stack is tuned and why, and for how to
 tell a slow server from a slow network in one number.
 
-### Cloudflare caches the CSS. Assets are versioned by mtime.
+### A caching CDN and the CSS: assets are versioned by mtime.
 
-Cloudflare serves `wp-content` with `cache-control: max-age=14400`, so a
-stylesheet edit is invisible to anyone who loaded the portal in the last four
-hours: the HTML is dynamic and arrives fresh, the CSS does not. That combination
-is worse than a plain stale page, because new markup gets styled by old rules --
-it is how a finished popover reached a browser looking like unstyled fieldsets.
+A CDN in front of the site typically caches `wp-content` for hours, so a
+stylesheet edit is invisible to anyone who loaded the portal recently: the HTML
+is dynamic and arrives fresh, the CSS does not. That combination is worse than a
+plain stale page, because new markup gets styled by old rules -- it is how a
+finished popover can reach a browser looking like unstyled fieldsets.
 
 `VulnHub_Dash_App::asset_ver()` appends each file's own mtime to the plugin
 version, so the URL changes exactly when the bytes change and the edge treats it

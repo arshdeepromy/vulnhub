@@ -5,7 +5,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 BASE="http://localhost:8093"
-USER="romy"
+USER="${WP_ADMIN_USER:-admin}"
 PASS="$(cat .admin_pass)"
 JAR="$(mktemp)"
 CSV="wp/wp-content/plugins/vulnhub-cmdb/data/sample-cmdb.csv"

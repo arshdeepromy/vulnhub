@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       VulnHub CMDB
- * Plugin URI:        https://vulnhub.example.com
+ * Plugin URI:        https://github.com/arshdeepromy/vulnhub
  * Description:       Configuration management database integration for VulnHub — resolves the owning team, business service and site for assets that are not bound to a person, from ServiceNow, a Confluence page, or an uploaded CSV.
  * Version:           1.0.0
  * Requires at least: 6.5

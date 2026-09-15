@@ -9,7 +9,7 @@ round trip loses.
 
     python3 dev/form-audit.py
 """
-import re, subprocess, sys, urllib.parse
+import os, re, subprocess, sys, urllib.parse
 from pathlib import Path
 
 BASE = "http://localhost:8093"
@@ -18,7 +18,7 @@ JAR  = "/tmp/vh-form-audit-jar"
 
 subprocess.run(
     ["curl", "-s", "-c", JAR, "-b", JAR, "-d",
-     f"log=romy&pwd={(ROOT / '.admin_pass').read_text().strip()}"
+     f"log={os.environ.get('WP_ADMIN_USER','admin')}&pwd={(ROOT / '.admin_pass').read_text().strip()}"
      f"&wp-submit=Log+In&redirect_to={BASE}/wp-admin/&testcookie=1",
      "-o", "/dev/null", f"{BASE}/wp-login.php"],
     check=True,

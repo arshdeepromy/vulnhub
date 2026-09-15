@@ -12,10 +12,10 @@ worse than no tooling is tooling that stops working when a package moves.
 
 Configuration, in order of precedence:
 
-    VULNHUB_URL     default https://vulnhub.example.com
+    VULNHUB_URL     default http://localhost:8093
     VULNHUB_USER    default vulnhub-mcp
     VULNHUB_TOKEN   or the contents of VULNHUB_TOKEN_FILE
-    VULNHUB_TOKEN_FILE  default /home/romy/vulnhub/.mcp_token
+    VULNHUB_TOKEN_FILE  default <repo>/.mcp_token
 
 The token is a WordPress application password. It is read from disk and used
 as HTTP basic auth; it is never logged, and WordPress will only accept it over
@@ -30,9 +30,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-BASE = os.environ.get("VULNHUB_URL", "https://vulnhub.example.com").rstrip("/")
+BASE = os.environ.get("VULNHUB_URL", "http://localhost:8093").rstrip("/")
 USER = os.environ.get("VULNHUB_USER", "vulnhub-mcp")
-TOKEN_FILE = os.environ.get("VULNHUB_TOKEN_FILE", "/home/romy/vulnhub/.mcp_token")
+TOKEN_FILE = os.environ.get("VULNHUB_TOKEN_FILE",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".mcp_token"))
 API = BASE + "/wp-json/vulnhub-mcp/v1"
 TIMEOUT = 60
 
@@ -61,7 +62,7 @@ def call(method: str, path: str, params=None, body=None):
     req.add_header("Accept", "application/json")
     # Cloudflare sits in front of the tunnel and bans urllib's default
     # user-agent outright (error 1010), so identify ourselves properly.
-    req.add_header("User-Agent", "VulnHub-MCP/1.0 (+https://vulnhub.example.com)")
+    req.add_header("User-Agent", "VulnHub-MCP/1.0 (+https://github.com/arshdeepromy/vulnhub)")
     auth = base64.b64encode(f"{USER}:{token()}".encode()).decode()
     req.add_header("Authorization", "Basic " + auth)
 

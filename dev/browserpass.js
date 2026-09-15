@@ -1,3 +1,4 @@
+const VH_ROOT = process.env.VULNHUB_ROOT || require('path').resolve(__dirname, '..');
 /*
  * Drive every VulnHub screen in headless Chromium at desktop and phone widths.
  *
@@ -16,7 +17,7 @@ const path = require('path');
 const { chromium } = require('playwright');
 
 const BASE = 'http://localhost:8093';
-const ROOT = '/home/romy/vulnhub';
+const ROOT = VH_ROOT;
 const OUT = path.join(ROOT, 'dev/shots');
 
 const WIDTHS = [

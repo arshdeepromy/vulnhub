@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       VulnHub Advisory Alerts
- * Plugin URI:        https://vulnhub.example.com
+ * Plugin URI:        https://github.com/arshdeepromy/vulnhub
  * Description:       Watches free advisory and zero-day feeds — EUVD, Microsoft MSRC, CISA, GitHub, Red Hat, Ubuntu, or any RSS or JSON source you add — and tells you which of them can actually reach your estate, matched against the software and operating systems the inventory says you run.
  * Version:           1.0.0
  * Requires at least: 6.5

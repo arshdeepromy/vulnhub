@@ -1,3 +1,4 @@
+const VH_ROOT = process.env.VULNHUB_ROOT || require('path').resolve(__dirname, '..');
 /*
  * Static-eye design audit: walks every VulnHub screen and reports the visual
  * defects a human would notice but an HTTP check never will -- controls with
@@ -11,7 +12,7 @@ const path = require('path');
 const { chromium } = require('playwright');
 
 const BASE = 'http://localhost:8093';
-const ROOT = '/home/romy/vulnhub';
+const ROOT = VH_ROOT;
 
 const WIDTHS = [
   { name: 'desktop', width: 1440, height: 900 },

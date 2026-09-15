@@ -32,19 +32,19 @@ dependencies. It is a thin client for the REST surface above.
 ## Credentials
 
 The server authenticates as the `vulnhub-mcp` WordPress account using an
-application password held in `/home/romy/vulnhub/.mcp_token` (chmod 600).
+application password held in `/path/to/vulnhub/.mcp_token` (chmod 600).
 That account has the `vulnhub_admin` role and no WordPress administration
 rights, so a mistake in an agent's prompt cannot reach wp-admin.
 
 WordPress only accepts application passwords over HTTPS, so the server talks to
-`https://vulnhub.example.com` through the Cloudflare tunnel rather than to
-`localhost:8093`. Cloudflare bans urllib's default user-agent outright with
+a public domain through a fronting CDN rather than to
+`localhost:8093`. some CDNs (Cloudflare among them) ban urllib's default user-agent outright with
 error 1010, which is why the client sets its own.
 
 To rotate the credential:
 
 ```bash
-cd /home/romy/vulnhub
+cd /path/to/vulnhub
 ./wp.sh user application-password list vulnhub-mcp          # find the old one
 ./wp.sh user application-password delete vulnhub-mcp <uuid>
 ./wp.sh user application-password create vulnhub-mcp "MCP server" --porcelain \
@@ -59,11 +59,11 @@ chmod 600 .mcp_token
   "mcpServers": {
     "vulnhub": {
       "command": "python3",
-      "args": ["/home/romy/vulnhub/mcp/vulnhub_mcp.py"],
+      "args": ["/path/to/vulnhub/mcp/vulnhub_mcp.py"],
       "env": {
         "VULNHUB_URL": "https://vulnhub.example.com",
         "VULNHUB_USER": "vulnhub-mcp",
-        "VULNHUB_TOKEN_FILE": "/home/romy/vulnhub/.mcp_token"
+        "VULNHUB_TOKEN_FILE": "/path/to/vulnhub/.mcp_token"
       }
     }
   }
@@ -76,7 +76,7 @@ this box.
 ## Checking it by hand
 
 ```bash
-cd /home/romy/vulnhub
+cd /path/to/vulnhub
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"vulnhub_coverage_summary","arguments":{}}}' \

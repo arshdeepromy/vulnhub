@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       VulnHub Threat Context
- * Plugin URI:        https://vulnhub.example.com
+ * Plugin URI:        https://github.com/arshdeepromy/vulnhub
  * Description:       Answers "how would somebody actually reach this?" — extracts CVE ids from scanner titles and descriptions, enriches them from NVD, CISA KEV and FIRST EPSS, and sorts every open finding into the route an attacker would have to take: delivered to a person, reachable from the internet, or only usable once they are already inside.
  * Version:           1.0.0
  * Requires at least: 6.5

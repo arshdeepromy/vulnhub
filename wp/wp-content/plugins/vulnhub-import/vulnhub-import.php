@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       VulnHub Import
- * Plugin URI:        https://vulnhub.example.com
+ * Plugin URI:        https://github.com/arshdeepromy/vulnhub
  * Description:       Streaming, resumable, de-duplicating CSV import for VulnHub — chunked browser uploads, byte-offset checkpointing and cron-driven continuation, so a 300 MB Tenable or CMDB export imports without ever being held in memory.
  * Version:           1.0.0
  * Requires at least: 6.5
