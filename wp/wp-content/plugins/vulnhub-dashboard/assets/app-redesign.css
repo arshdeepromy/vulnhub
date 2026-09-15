@@ -2067,3 +2067,16 @@ html.vh-js .vh-savebar.is-shown { display: flex; }
 }
 .vh-remediate__do { font-size: 13.5px; color: var(--vh-ink); }
 .vh-remediate__why { font-size: 12.5px; color: var(--vh-ink-2); }
+
+/* Live product search on /products/ (behaviour in app.js). The input inherits
+   the base field styling from app.css; this only lays out the toolbar row. */
+.vh-prodsearch { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; }
+.vh-prodsearch__input { flex: 1 1 auto; max-width: 440px; }
+.vh-prodsearch__count { font-size: 12.5px; color: var(--vh-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.vh-prodsearch__empty { margin: 0; padding: 20px 14px; text-align: center; color: var(--vh-muted); font-size: 13px; }
+
+/* The accordion rule `.vh-prodlist .vh-prodrow { display: block }` above (for the
+   vulnerabilities "By product" tab, whose rows are <details> accordions) also
+   matches the /products/ list, which shares the .vh-prodlist class -- that stacked
+   the product icon above its name. Keep the full products list's rows inline. */
+ul.vh-prodlist--full > .vh-prodrow { display: flex; align-items: center; gap: 12px; }
