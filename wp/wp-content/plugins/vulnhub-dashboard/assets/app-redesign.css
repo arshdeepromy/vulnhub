@@ -2047,7 +2047,7 @@ html.vh-js .vh-savebar.is-shown { display: flex; }
 .vh-sync-progress__lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; opacity: .7; }
 
 /* "By product" tab: expandable product rows + remediation line. */
-.vh-prodlist .vh-prodrow { display: block; }
+.vh-prodlist--exp .vh-prodrow { display: block; } /* accordion rows only (vulnerabilities By product tab); see vh-prodlist--exp */
 .vh-prodrow__exp { display: block; }
 .vh-prodrow__sum { display: flex; align-items: center; gap: 12px; cursor: pointer; list-style: none; padding: 2px 0; }
 .vh-prodrow__sum::-webkit-details-marker { display: none; }
@@ -2075,14 +2075,7 @@ html.vh-js .vh-savebar.is-shown { display: flex; }
 .vh-prodsearch__count { font-size: 12.5px; color: var(--vh-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .vh-prodsearch__empty { margin: 0; padding: 20px 14px; text-align: center; color: var(--vh-muted); font-size: 13px; }
 
-/* The accordion rule `.vh-prodlist .vh-prodrow { display: block }` above (for the
-   vulnerabilities "By product" tab, whose rows are <details> accordions) also
-   matches the /products/ list, which shares the .vh-prodlist class -- that stacked
-   the product icon above its name. Keep the full products list's rows inline. */
-ul.vh-prodlist--full > .vh-prodrow { display: flex; align-items: center; gap: 12px; }
-
-/* A row the live search hides sets the [hidden] attribute, but the display rules
-   above (the accordion's display:block and the inline display:flex) outrank the
-   UA [hidden] { display:none }, so the row would stay visible. Re-assert the hide
-   with matching specificity. */
+/* A row the live search hides sets the [hidden] attribute, but .vh-prodrow's base
+   display:flex outranks the UA [hidden] { display:none }, so a hidden row would
+   stay visible. Re-assert the hide at matching specificity. */
 ul.vh-prodlist--full > .vh-prodrow[hidden] { display: none; }

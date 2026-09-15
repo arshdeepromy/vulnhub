@@ -1340,7 +1340,7 @@ final class VulnHub_Dash_App {
 					'poc', 'hosting', 'asset', 'state',
 				) );
 				?>
-				<ul class="vh-prodlist">
+				<ul class="vh-prodlist vh-prodlist--exp">
 					<?php foreach ( $vh_prows as $vh_pr ) : ?>
 						<?php
 						$vh_pa   = (int) $vh_pr['assets'];
