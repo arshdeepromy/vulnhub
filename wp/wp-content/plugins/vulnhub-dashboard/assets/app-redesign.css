@@ -2080,3 +2080,9 @@ html.vh-js .vh-savebar.is-shown { display: flex; }
    matches the /products/ list, which shares the .vh-prodlist class -- that stacked
    the product icon above its name. Keep the full products list's rows inline. */
 ul.vh-prodlist--full > .vh-prodrow { display: flex; align-items: center; gap: 12px; }
+
+/* A row the live search hides sets the [hidden] attribute, but the display rules
+   above (the accordion's display:block and the inline display:flex) outrank the
+   UA [hidden] { display:none }, so the row would stay visible. Re-assert the hide
+   with matching specificity. */
+ul.vh-prodlist--full > .vh-prodrow[hidden] { display: none; }
