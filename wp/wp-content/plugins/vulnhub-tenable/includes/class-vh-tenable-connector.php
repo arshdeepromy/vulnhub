@@ -186,7 +186,14 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 				'label'   => __( 'Only import assets seen in the last N days', 'vulnhub' ),
 				'type'    => 'number',
 				'default' => 90,
-				'help'    => __( 'Applied as the last_assessed filter on the asset export, and as the since filter on the vulnerability export. Keeps decommissioned kit out of the inventory.', 'vulnhub' ),
+				'help'    => __( 'Applied as the last_assessed filter on the asset export of a full resync (including the first sync), so an asset Tenable has not scanned in this many days is not imported, and a Tenable-only asset outside the window is retired. Keeps decommissioned kit out of the inventory. Incremental syncs only ever see assets scanned since the last sync, so they are unaffected. Findings keep their full history either way.', 'vulnhub' ),
+			),
+			array(
+				'key'     => 'full_sync_days',
+				'label'   => __( 'Full resync every N days', 'vulnhub' ),
+				'type'    => 'number',
+				'default' => 7,
+				'help'    => __( 'Syncs are incremental: they fetch only what Tenable has seen since the last successful sync, and only assets scanned in that window. A periodic full resync re-reads the whole inventory, so asset details that changed without a rescan are refreshed and assets Tenable has dropped are retired. The first sync due after this many days runs as a full one. 0 turns the schedule off; "Full resync" on the connector card still works.', 'vulnhub' ),
 			),
 			array(
 				'key'     => 'chunk_size',
@@ -323,6 +330,123 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 		return in_array( $phase, array( 'download', 'process', 'finalize' ), true );
 	}
 
+	/**
+	 * Live syncs are incremental from a watermark, so "everything" is a
+	 * different run from "what changed". Mock always imports the whole fixture.
+	 */
+	public function supports_full_sync(): bool {
+		return ! $this->is_mock();
+	}
+
+	/**
+	 * Remember that the next fresh run should be a full resync. Cleared only
+	 * when a full run completes, so a request survives being queued, an
+	 * interrupted run being resumed first, or the full run itself dying part
+	 * way (its state.json already says is_full, so the resume stays full).
+	 */
+	public function request_full_sync(): void {
+		update_option( $this->full_request_option(), 1, false );
+	}
+
+	/**
+	 * The pending-request flag lives in its own option, not in the connector
+	 * settings array. Settings are saved whole from an in-process copy, so a
+	 * long-running sync saving its watermark at the end would write back the
+	 * copy it loaded at the start -- silently erasing a request made from the
+	 * UI while it ran.
+	 */
+	private function full_request_option(): string {
+		return 'vulnhub_full_sync_requested_' . $this->id();
+	}
+
+	private function full_requested(): bool {
+		return (bool) get_option( $this->full_request_option(), false );
+	}
+
+	/**
+	 * Days between scheduled full resyncs; 0 means never on a schedule.
+	 */
+	private function full_sync_days(): int {
+		return max( 0, min( 365, $this->settings->get_int( $this->id(), 'full_sync_days', 7 ) ) );
+	}
+
+	/**
+	 * When the last full resync started (unix seconds), or 0 if none is known.
+	 *
+	 * Installs that completed their first sync before this was recorded have
+	 * a watermark but no timestamp. That first sync was a full one by
+	 * definition, so the watermark stands in for it -- otherwise upgrading
+	 * would make the very next sync a surprise full resync. It is written back
+	 * the first time it is read: the watermark moves on every incremental run,
+	 * so reading it live would keep pushing the next full resync away forever.
+	 */
+	private function last_full_sync_at(): int {
+		$at = $this->settings->get_int( $this->id(), 'last_full_sync_at', 0 );
+
+		if ( $at > 0 ) {
+			return $at;
+		}
+
+		$watermark = (int) $this->settings->get( $this->id(), 'sync_watermark', 0 );
+
+		if ( $watermark > 0 ) {
+			$this->settings->set( $this->id(), 'last_full_sync_at', $watermark );
+		}
+
+		return $watermark;
+	}
+
+	/**
+	 * Why the next fresh run should be a full resync, or '' for incremental.
+	 */
+	private function full_sync_reason(): string {
+		if ( (int) $this->settings->get( $this->id(), 'sync_watermark', 0 ) <= 0 ) {
+			return 'first sync';
+		}
+		if ( $this->full_requested() ) {
+			return 'requested';
+		}
+
+		$days = $this->full_sync_days();
+		$last = $this->last_full_sync_at();
+
+		if ( $days > 0 && $last > 0 && time() - $last >= $days * DAY_IN_SECONDS ) {
+			return sprintf( 'scheduled, last full resync %s', gmdate( 'Y-m-d', $last ) );
+		}
+
+		return '';
+	}
+
+	public function full_sync_note(): string {
+		if ( $this->is_mock() ) {
+			return '';
+		}
+
+		$last = $this->last_full_sync_at();
+		$days = $this->full_sync_days();
+
+		if ( $this->full_requested() ) {
+			return __( 'A full resync has been requested and runs as the next sync.', 'vulnhub' );
+		}
+		if ( $last <= 0 ) {
+			return __( 'The first sync downloads everything; later syncs fetch only what changed.', 'vulnhub' );
+		}
+
+		$when = wp_date( get_option( 'date_format' ), $last );
+
+		if ( $days <= 0 ) {
+			/* translators: %s: date of the last full resync. */
+			return sprintf( __( 'Last full resync %s. Scheduled full resyncs are off.', 'vulnhub' ), $when );
+		}
+
+		return sprintf(
+			/* translators: 1: date of the last full resync, 2: date the next one is due. */
+			__( 'Last full resync %1$s; the next is due %2$s. Syncs in between fetch only what changed.', 'vulnhub' ),
+			$when,
+			wp_date( get_option( 'date_format' ), $last + $days * DAY_IN_SECONDS )
+		);
+	}
+
 	public function test_connection(): array {
 		if ( $this->is_mock() ) {
 			$devices = count( \VulnHub\Core\Mock::devices() );
@@ -397,12 +521,16 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 			'assets_created'    => 0,
 			'assets_updated'    => 0,
 			'assets_skipped'    => 0,
+			// Retired by a full resync's prune, reported again, and put back.
+			'assets_restored'   => 0,
 			'vulns'             => 0,
 			'findings'          => 0,
 			'findings_created'  => 0,
 			'findings_fixed'    => 0,
 			'findings_reopened' => 0,
 			'findings_skipped'  => 0,
+			// Re-sent by the scanner with nothing moved; only last-seen was touched.
+			'findings_unchanged' => 0,
 			'sev_critical'      => 0,
 			'sev_high'          => 0,
 			'sev_medium'        => 0,
@@ -423,10 +551,10 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 	 * findings and to last_fixed for fixed ones, so this window catches new
 	 * detections and resolutions alike.
 	 */
-	private function since_for_run(): int {
+	private function since_for_run( bool $full = false ): int {
 		$watermark = (int) $this->settings->get( $this->id(), 'sync_watermark', 0 );
 
-		if ( $watermark > 0 ) {
+		if ( $watermark > 0 && ! $full ) {
 			return max( 0, $watermark - DAY_IN_SECONDS );
 		}
 
@@ -477,7 +605,11 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 	 * @return array{ok:bool,message:string}
 	 */
 	protected function do_sync_staged( array $args = array() ): array {
-		unset( $args );
+		// A caller that runs the sync directly (not through the REST queue)
+		// can still ask for a full resync; it is recorded the same way.
+		if ( ! empty( $args['full'] ) ) {
+			$this->request_full_sync();
+		}
 
 		if ( function_exists( 'set_time_limit' ) ) {
 			@set_time_limit( 0 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors -- cron/CLI, no page waiting.
@@ -497,19 +629,36 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 		// Fresh run when there is no state, or the last one is finished.
 		if ( ! $state || in_array( $phase, array( '', 'done', 'failed' ), true ) ) {
 			VH_Tenable_Store::clear( $conn );
-			$since = $this->since_for_run();
-			$state = array(
+			/*
+			 * Full or incremental is decided once, here, and carried in the
+			 * state so a resumed run stays whatever it started as. It used to
+			 * be inferred from how far back `since` reached, which only ever
+			 * came out full on the very first run -- so pruning, and any asset
+			 * change Tenable made without a rescan, never happened again.
+			 */
+			$reason = $this->full_sync_reason();
+			$full   = '' !== $reason;
+			$since  = $this->since_for_run( $full );
+			$state  = array(
 				'phase'    => 'download',
 				'started'  => vh_now(),
 				'since'    => $since,
-				'is_full'  => ( $since <= time() - 200 * DAY_IN_SECONDS ),
+				'is_full'  => $full,
 				'download' => array( 'assets_chunks' => 0, 'vuln_chunks' => 0, 'bytes' => 0, 'status' => 'downloading' ),
 				'process'  => array( 'stage' => 'assets', 'chunk' => 1, 'records_done' => 0, 'records_total' => 0 ),
 			);
 			VH_Tenable_Store::write_state( $conn, $state );
-			$this->log( sprintf( 'Staged sync: fresh run, since %s.', gmdate( 'Y-m-d H:i', (int) $state['since'] ) ) );
+			$this->log(
+				$full
+					? sprintf( 'Staged sync: fresh FULL resync (%s), since %s; assets scanned within %d days.', $reason, gmdate( 'Y-m-d H:i', $since ), $this->asset_days() )
+					: sprintf( 'Staged sync: fresh incremental run, since %s.', gmdate( 'Y-m-d H:i', $since ) )
+			);
 		} else {
-			$this->log( sprintf( 'Staged sync: resuming at phase "%s".', $phase ) );
+			$this->log( sprintf( 'Staged sync: resuming %s run at phase "%s".', empty( $state['is_full'] ) ? 'incremental' : 'full', $phase ) );
+
+			if ( empty( $state['is_full'] ) && $this->full_requested() ) {
+				$this->log( 'A full resync has been requested; it starts once this run has finished.' );
+			}
 		}
 
 		$this->reset_counts();
@@ -537,6 +686,13 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 			VH_Tenable_Store::write_state( $conn, $state );
 			$this->report_stage( $state );
 			$this->advance_watermark( $state );
+
+			if ( ! empty( $state['is_full'] ) ) {
+				$started = strtotime( (string) ( $state['started'] ?? vh_now() ) . ' UTC' ) ?: time();
+				$this->settings->set( $conn, 'last_full_sync_at', $started );
+				delete_option( $this->full_request_option() );
+			}
+
 			VH_Tenable_Store::clear( $conn );
 
 			return array( 'ok' => true, 'message' => $this->summary_message() );
@@ -577,7 +733,10 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 			array(
 				'chunk_size' => $this->asset_chunk_size(),
 				'filters'    => array(
-					'last_assessed' => $since,
+					// Incremental: assets scanned since the watermark. Full: the
+					// whole inventory, bounded by the asset_days freshness window
+					// -- the larger timestamp is the narrower of the two.
+					'last_assessed' => max( $since, time() - $this->asset_days() * DAY_IN_SECONDS ),
 					'is_licensed'   => true,
 					'is_deleted'    => false,
 					'is_terminated' => false,
@@ -649,7 +808,7 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 		// "X MB of ~Y MB" against, kept per size class (a full first run and a
 		// small incremental are wildly different, so they must not overwrite
 		// each other's estimate).
-		$est_key = ( (int) $state['since'] <= time() - 200 * DAY_IN_SECONDS ) ? 'dl_est_full' : 'dl_est_incr';
+		$est_key = ! empty( $state['is_full'] ) ? 'dl_est_full' : 'dl_est_incr';
 		update_option( 'vulnhub_' . $est_key . '_' . $this->id(), (int) $state['download']['bytes'], false );
 
 		// Vuln records are counted as they stream in during processing, not
@@ -797,13 +956,14 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 
 	private function summary_message(): string {
 		return sprintf(
-			/* translators: 1: assets, 2: vulnerability definitions, 3: findings, 4: fixed findings, 5: reopened findings. */
-			__( 'Imported %1$d assets, %2$d vulnerability definitions and %3$d findings (%4$d already remediated, %5$d reopened).', 'vulnhub' ),
+			/* translators: 1: assets, 2: vulnerability definitions, 3: findings, 4: fixed findings, 5: reopened findings, 6: findings re-sent with nothing changed. */
+			__( 'Imported %1$d assets, %2$d vulnerability definitions and %3$d findings (%4$d already remediated, %5$d reopened, %6$d unchanged).', 'vulnhub' ),
 			(int) $this->counts['assets'],
 			(int) $this->counts['vulns'],
 			(int) $this->counts['findings'],
 			(int) $this->counts['findings_fixed'],
-			(int) $this->counts['findings_reopened']
+			(int) $this->counts['findings_reopened'],
+			(int) ( $this->counts['findings_unchanged'] ?? 0 )
 		);
 	}
 
@@ -1110,6 +1270,8 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 	 * @param int                            $chunk_id Chunk number.
 	 */
 	public function import_asset_chunk( array $records, int $chunk_id ): void {
+		$seen_ids = array();
+
 		foreach ( $records as $record ) {
 			$this->bump( 'processed' );
 
@@ -1130,6 +1292,7 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 			}
 
 			++$this->counts['assets'];
+			$seen_ids[] = (int) $result['id'];
 
 			if ( $result['created'] ) {
 				$this->bump( 'created' );
@@ -1149,6 +1312,24 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 		}
 
 		$this->log( sprintf( 'Asset chunk %d: %d record(s) processed.', $chunk_id, count( $records ) ) );
+
+		/*
+		 * Undo the full-resync prune for anything Tenable is reporting again.
+		 * Per chunk, and before any findings are imported: Lifecycle::set()
+		 * restores the asset's archived findings from prev_state, so the
+		 * finding import that follows updates live rows rather than archived
+		 * ones -- and a resume that starts at the findings stage has nothing
+		 * left half-done here. A no-op (one get_option) when nothing is marked.
+		 */
+		$restored = \VulnHub\Core\Repo::restore_pruned_tenable( $seen_ids );
+
+		if ( $restored ) {
+			$this->counts['assets_restored'] += array_sum( $restored );
+
+			foreach ( $restored as $status => $n ) {
+				$this->log( sprintf( 'Returned %d asset(s) to "%s": a full resync had retired them as missing, and Tenable reports them again.', $n, $status ) );
+			}
+		}
 	}
 
 	/**
@@ -1612,6 +1793,10 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 
 		if ( 'fixed' === $state ) {
 			++$this->counts['findings_fixed'];
+		}
+
+		if ( ! empty( $result['unchanged'] ) ) {
+			++$this->counts['findings_unchanged'];
 		}
 
 		if ( $result['created'] ) {

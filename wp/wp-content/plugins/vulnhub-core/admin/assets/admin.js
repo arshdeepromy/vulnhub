@@ -100,8 +100,18 @@
 
 		if ( action === 'sync' ) {
 			event.preventDefault();
+
+			var full = button.getAttribute( 'data-vh-full' ) === '1';
+			// Not data-vh-confirm: the portal's app.js confirms those itself, which
+			// would ask twice on the portal copy of this screen.
+			var ask  = button.getAttribute( 'data-vh-sync-confirm' );
+
+			if ( ask && ! window.confirm( ask ) ) {
+				return;
+			}
+
 			busy( button, cfg.i18n.syncing );
-			api( '/connectors/' + id + '/sync', { method: 'POST', data: { force: true } } )
+			api( '/connectors/' + id + '/sync', { method: 'POST', data: full ? { force: true, full: true } : { force: true } } )
 				.then( function ( result ) {
 					flash( result.message || 'Sync finished.', result.ok ? 'success' : 'error' );
 					if ( result.ok ) {

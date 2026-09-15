@@ -722,7 +722,27 @@ final class VulnHub_MCP_Tools {
 			array( 'connector' => $id )
 		);
 
-		return (array) $connector->sync( array( 'full' => ! empty( $args['full'] ) ) );
+		$full = ! empty( $args['full'] );
+
+		// Same routing as the REST endpoint: a long-running connector is queued
+		// rather than run inside the agent's request, and a full resync is
+		// recorded on the connector so the queued run picks it up.
+		if ( $connector->async_sync() ) {
+			if ( $full && $connector->supports_full_sync() ) {
+				$connector->request_full_sync();
+			}
+
+			\VulnHub\Core\Scheduler::queue_sync( $id );
+
+			return array(
+				'ok'      => true,
+				'queued'  => true,
+				'full'    => $full && $connector->supports_full_sync(),
+				'message' => 'Sync queued in the background. Poll the connector status or the sync activity log for progress.',
+			);
+		}
+
+		return (array) $connector->sync( array( 'full' => $full ) );
 	}
 
 	/* ------------------------------------------------------------ people */
