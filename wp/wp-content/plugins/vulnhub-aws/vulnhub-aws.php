@@ -1,7 +1,6 @@
 <?php
 /**
  * Plugin Name:       VulnHub AWS
- * Plugin URI:        https://github.com/arshdeepromy/vulnhub
  * Description:       Reads network exposure straight from the AWS account: which instances the internet can actually reach, and on which ports.
  * Version:           0.3.0
  * Requires at least: 6.4

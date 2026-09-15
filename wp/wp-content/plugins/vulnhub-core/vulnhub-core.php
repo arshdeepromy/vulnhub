@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       VulnHub Core
- * Plugin URI:        https://github.com/arshdeepromy/vulnhub
+ * Plugin URI:        https://vul.romynz.com
  * Description:       Foundation for the VulnHub vulnerability &amp; asset management platform — data model, connector framework, encrypted credential vault, ownership mapping engine, RBAC and REST API. Every VulnHub integration plugin builds on this.
  * Version:           1.0.0
  * Requires at least: 6.5

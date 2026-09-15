@@ -9,7 +9,7 @@ Headless Chromium comes from Playwright, already on the box. `NODE_PATH` points
 Node at the copy that ships with `@playwright/mcp`; there is nothing to install.
 
 ```bash
-cd /srv/vulnhub
+cd /home/romy/vulnhub
 export NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules
 
 node dev/browserpass.js                 # 17 screens x desktop + phone
@@ -20,7 +20,7 @@ node dev/probe.js <url> <width>         # every element past the viewport, with 
 ```
 
 Do **not** run these under `sudo` — Playwright's browsers live in
-`/srv/.cache/ms-playwright`, and root cannot see them.
+`/home/romy/.cache/ms-playwright`, and root cannot see them.
 
 `browserpass.js` writes `dev/shots/<screen>--<viewport>[-dark].png` plus a
 `report.json`. It logs in by reading `.admin_pass` off disk and handing it

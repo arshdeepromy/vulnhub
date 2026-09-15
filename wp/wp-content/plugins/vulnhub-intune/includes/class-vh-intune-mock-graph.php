@@ -158,7 +158,7 @@ final class VulnHub_Intune_Mock_Graph {
 			'countryLetterCode' => 'NZ',
 			'verifiedDomains' => array(
 				array(
-					'name'      => 'example.com',
+					'name'      => 'romynz.com',
 					'isDefault' => true,
 					'type'      => 'Managed',
 				),

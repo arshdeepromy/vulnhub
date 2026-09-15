@@ -134,7 +134,7 @@ so a media transcode cannot starve it.
 
 ## Where it landed
 
-Through the tunnel, at the public hostname:
+Through the tunnel, at `vul.romynz.com`:
 
 | page | median TTFB |
 |---|---|

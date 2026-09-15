@@ -30,7 +30,7 @@ final class VulnHub_Cmdb_Mock {
 	/**
 	 * Instance host used to build believable reference `link` values.
 	 */
-	private const INSTANCE = 'https://example.service-now.com';
+	private const INSTANCE = 'https://romynz.service-now.com';
 
 	/**
 	 * Asset types this connector claims from the shared fleet.

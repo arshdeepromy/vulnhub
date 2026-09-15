@@ -2,11 +2,11 @@
   "mcpServers": {
     "vulnhub": {
       "command": "python3",
-      "args": ["/srv/vulnhub/mcp/vulnhub_mcp.py"],
+      "args": ["/home/romy/vulnhub/mcp/vulnhub_mcp.py"],
       "env": {
-        "VULNHUB_URL": "https://your-domain.example",
+        "VULNHUB_URL": "https://vul.romynz.com",
         "VULNHUB_USER": "vulnhub-mcp",
-        "VULNHUB_TOKEN_FILE": "/srv/vulnhub/.mcp_token"
+        "VULNHUB_TOKEN_FILE": "/home/romy/vulnhub/.mcp_token"
       }
     }
   }

@@ -285,7 +285,7 @@ final class VulnHub_Jira_Mock {
 			'self'         => $this->site_url() . '/rest/api/3/user?accountId=5f8a1c2d4e6b7a0012345678',
 			'accountId'    => '5f8a1c2d4e6b7a0012345678',
 			'accountType'  => 'atlassian',
-			'emailAddress' => 'vulnhub-automation@example.com',
+			'emailAddress' => 'vulnhub-automation@romynz.com',
 			'displayName'  => 'VulnHub Automation',
 			'active'       => true,
 			'timeZone'     => 'Pacific/Auckland',

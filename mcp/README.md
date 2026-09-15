@@ -32,20 +32,19 @@ dependencies. It is a thin client for the REST surface above.
 ## Credentials
 
 The server authenticates as the `vulnhub-mcp` WordPress account using an
-application password held in `/srv/vulnhub/.mcp_token` (chmod 600).
+application password held in `/home/romy/vulnhub/.mcp_token` (chmod 600).
 That account has the `vulnhub_admin` role and no WordPress administration
 rights, so a mistake in an agent's prompt cannot reach wp-admin.
 
-WordPress only accepts application passwords over HTTPS, so the server needs
-to talk to the site's public HTTPS hostname (e.g. through whatever reverse
-proxy or tunnel you publish it behind) rather than to `localhost:8093`
-directly. If that's Cloudflare, note it bans urllib's default user-agent
-outright with error 1010, which is why the client sets its own.
+WordPress only accepts application passwords over HTTPS, so the server talks to
+`https://vul.romynz.com` through the Cloudflare tunnel rather than to
+`localhost:8093`. Cloudflare bans urllib's default user-agent outright with
+error 1010, which is why the client sets its own.
 
 To rotate the credential:
 
 ```bash
-cd /srv/vulnhub
+cd /home/romy/vulnhub
 ./wp.sh user application-password list vulnhub-mcp          # find the old one
 ./wp.sh user application-password delete vulnhub-mcp <uuid>
 ./wp.sh user application-password create vulnhub-mcp "MCP server" --porcelain \
@@ -60,25 +59,24 @@ chmod 600 .mcp_token
   "mcpServers": {
     "vulnhub": {
       "command": "python3",
-      "args": ["/srv/vulnhub/mcp/vulnhub_mcp.py"],
+      "args": ["/home/romy/vulnhub/mcp/vulnhub_mcp.py"],
       "env": {
-        "VULNHUB_URL": "https://your-domain.example",
+        "VULNHUB_URL": "https://vul.romynz.com",
         "VULNHUB_USER": "vulnhub-mcp",
-        "VULNHUB_TOKEN_FILE": "/srv/vulnhub/.mcp_token"
+        "VULNHUB_TOKEN_FILE": "/home/romy/vulnhub/.mcp_token"
       }
     }
   }
 }
 ```
 
-`VULNHUB_URL` must be set to wherever you've published the site (see the main
-README's "Publishing behind a reverse proxy or tunnel" section) — application
-passwords require HTTPS, so `localhost:8093` alone won't work here.
+Every value has a working default, so `command` and `args` alone are enough on
+this box.
 
 ## Checking it by hand
 
 ```bash
-cd /srv/vulnhub
+cd /home/romy/vulnhub
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"vulnhub_coverage_summary","arguments":{}}}' \

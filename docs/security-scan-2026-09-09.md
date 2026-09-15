@@ -1,7 +1,7 @@
 # VulnHub app — unauthenticated security scan
 
 **Target:** VulnHub — Vulnerability & Asset Management (WordPress)
-**Origin scanned:** http://localhost:8093 (also reachable at the deployment's public hostname via a Cloudflare tunnel)
+**Origin scanned:** http://localhost:8093 (public edge: https://vul.romynz.com via Cloudflare tunnel)
 **Date:** 2026-09-09
 **Scope of this pass:** what a stranger with only the login-page URL can reach — no credentials.
 **Method:** `curl` for the HTTP/API surface (faster and more precise than a browser for this),
@@ -99,6 +99,6 @@ Two files, both under the bind-mounted `./wp` so they survive container recreati
 
 ### Edge note
 
-Scanned the origin (`localhost:8093`). At the public hostname, Cloudflare may already mask the
-Server banner and enforce HTTPS/HSTS; confirm HSTS is set at the edge, since the origin is plain
-HTTP inside the tunnel.
+Scanned the origin (`localhost:8093`). At `vul.romynz.com` Cloudflare may already mask the Server
+banner and enforce HTTPS/HSTS; confirm HSTS is set at the edge, since the origin is plain HTTP
+inside the tunnel.

@@ -14,8 +14,8 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 
 const BASE = 'http://localhost:8093';
-const FILE = process.argv[2] || '/srv/vh-import-test/tenable-500mb.csv';
-const PASS = fs.readFileSync('/srv/vulnhub/.portal_test_pass', 'utf8').trim();
+const FILE = process.argv[2] || '/home/romy/vh-import-test/tenable-500mb.csv';
+const PASS = fs.readFileSync('/home/romy/vulnhub/.portal_test_pass', 'utf8').trim();
 
 let passed = 0;
 let failed = 0;

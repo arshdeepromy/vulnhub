@@ -17,7 +17,7 @@ const path = require('path');
 const { chromium } = require('playwright');
 
 const BASE = 'http://localhost:8093';
-const ROOT = '/srv/vulnhub';
+const ROOT = '/home/romy/vulnhub';
 const OUT = path.join(ROOT, 'dev/shots');
 
 const results = [];

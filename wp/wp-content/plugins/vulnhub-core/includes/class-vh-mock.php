@@ -91,7 +91,7 @@ final class Mock {
 		foreach ( $dept_names as $i => $dept ) {
 			$fn     = $first[ $i % count( $first ) ];
 			$ln     = $last[ ( $i * 3 + 7 ) % count( $last ) ];
-			$upn    = strtolower( "{$fn}.{$ln}@example.com" );
+			$upn    = strtolower( "{$fn}.{$ln}@romynz.com" );
 			$office = $offices[ $i % count( $offices ) ];
 
 			$managers[ $dept ] = $upn;
@@ -123,7 +123,7 @@ final class Mock {
 			$dept   = $dept_names[ self::rnd( count( $dept_names ) ) ];
 			$titles = $departments[ $dept ];
 			$office = $offices[ self::rnd( count( $offices ) ) ];
-			$upn    = strtolower( "{$fn}.{$ln}{$i}@example.com" );
+			$upn    = strtolower( "{$fn}.{$ln}{$i}@romynz.com" );
 
 			$people[] = array(
 				'id'                => sprintf( '%08x-%04x-4b2c-8d3e-%012x', 0xC0000000 + $i * 977, $i, 0xD00000000000 + $i * 31 ),
@@ -315,7 +315,7 @@ final class Mock {
 		return array(
 			'seq'                => $n,
 			'hostname'           => $hostname,
-			'fqdn'               => strtolower( $hostname ) . '.corp.example.com',
+			'fqdn'               => strtolower( $hostname ) . '.corp.romynz.com',
 			'asset_type'         => $type,
 			'ipv4'               => sprintf( '10.%d.%d.%d', 'server' === $type ? 20 : 10, $octet3, 10 + ( $n % 240 ) ),
 			'mac'                => strtoupper( implode( ':', str_split( substr( md5( $hostname ), 0, 12 ), 2 ) ) ),
