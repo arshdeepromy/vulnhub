@@ -84,7 +84,13 @@ final class VulnHub_El_Widgets {
 	 * `var(--vh-*)` colours and looks broken while it is being laid out.
 	 */
 	public static function editor_styles(): void {
-		wp_enqueue_style( 'vulnhub-app', VULNHUB_DASH_URL . 'assets/app.css', array(), VULNHUB_DASH_VERSION );
+		// mtime, not the bare plugin version: the editor canvas suffers the same
+		// stale-CSS problem as the portal, and app.css belongs to the dashboard
+		// plugin, so its directory is the one to stat.
+		$app_mtime = @filemtime( VULNHUB_DASH_DIR . 'assets/app.css' ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		$app_ver   = $app_mtime ? VULNHUB_DASH_VERSION . '.' . $app_mtime : VULNHUB_DASH_VERSION;
+
+		wp_enqueue_style( 'vulnhub-app', VULNHUB_DASH_URL . 'assets/app.css', array(), $app_ver );
 	}
 
 	/* =================================================================

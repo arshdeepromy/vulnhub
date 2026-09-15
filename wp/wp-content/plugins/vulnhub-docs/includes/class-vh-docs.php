@@ -157,6 +157,24 @@ final class VulnHub_Docs {
 	 * Assets
 	 * ============================================================== */
 
+	/**
+	 * Cache-busting version for one bundled asset: the plugin version plus the
+	 * file's own mtime.
+	 *
+	 * The plugin version alone moves only on release, so a CDN in front of the
+	 * portal (which caches wp-content for hours) serves the old stylesheet to
+	 * anyone who loaded the page recently -- new markup styled by old rules,
+	 * which is worse than a plainly stale page. The mtime changes exactly when
+	 * the bytes do. Mirrors VulnHub_Dash_App::asset_ver().
+	 *
+	 * @param string $rel Path relative to the plugin directory.
+	 */
+	private static function asset_ver( string $rel ): string {
+		$mtime = @filemtime( VULNHUB_DOCS_DIR . $rel ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+
+		return $mtime ? VULNHUB_DOCS_VERSION . '.' . $mtime : VULNHUB_DOCS_VERSION;
+	}
+
 	public static function assets(): void {
 		$pages = (array) get_option( 'vulnhub_dash_pages', array() );
 		$id    = (int) ( $pages[ self::VIEW ] ?? 0 );
@@ -165,8 +183,8 @@ final class VulnHub_Docs {
 			return;
 		}
 
-		wp_enqueue_style( 'vulnhub-docs', VULNHUB_DOCS_URL . 'assets/docs.css', array(), VULNHUB_DOCS_VERSION );
-		wp_enqueue_script( 'vulnhub-docs', VULNHUB_DOCS_URL . 'assets/docs.js', array(), VULNHUB_DOCS_VERSION, true );
+		wp_enqueue_style( 'vulnhub-docs', VULNHUB_DOCS_URL . 'assets/docs.css', array(), self::asset_ver( 'assets/docs.css' ) );
+		wp_enqueue_script( 'vulnhub-docs', VULNHUB_DOCS_URL . 'assets/docs.js', array(), self::asset_ver( 'assets/docs.js' ), true );
 	}
 
 	/* =================================================================

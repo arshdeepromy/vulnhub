@@ -925,6 +925,25 @@ final class VulnHub_Dash_Widgets {
 			$hosts = array( home_url() );
 		}
 
+		/*
+		 * Rebuild the materialised product table first, so the widgets below
+		 * render from it rather than from the aggregate it replaces.
+		 *
+		 * This is the call the rebuild's own docblock always claimed existed
+		 * and never did. Without it the summary was built once and left to go
+		 * stale at the next bust, after which every product query -- the
+		 * dashboard widget, /products/, and every scope filter on it -- fell
+		 * through to product_rows_live(): measured at 0.7-1.3s per scope on
+		 * 435k findings, paid by whoever opened the page first after a sync,
+		 * per scope, because the transient in front of it is keyed by epoch
+		 * and empties every time the data moves. The rebuild costs about five
+		 * seconds of cron time and turns all of that into an index range.
+		 */
+		$summary = null;
+		if ( ! self::product_summary_is_current() ) {
+			$summary = self::rebuild_product_summary();
+		}
+
 		$ids = array_column( self::default_layout(), 'id' );
 
 		/*
@@ -954,6 +973,8 @@ final class VulnHub_Dash_Widgets {
 				'hosts'   => count( $hosts ),
 				'seconds' => round( microtime( true ) - $started, 2 ),
 				'epoch'   => self::epoch(),
+				// null when the summary was already current for this epoch.
+				'summary' => $summary,
 			),
 			false
 		);
@@ -3281,6 +3302,17 @@ final class VulnHub_Dash_Widgets {
 		$built  = array();
 		$rows_w = 0;
 
+		/*
+		 * Read the epoch BEFORE the build, not after. The rebuild takes
+		 * several seconds, which is ample room for a finishing sync to bust
+		 * the cache half way through; stamping the epoch afterwards would
+		 * label rows built from the old data as current for the new one, and
+		 * the summary would serve them until the next bust. Taken first, a
+		 * concurrent bust simply makes the summary read as stale -- the safe
+		 * direction, costing one live aggregate rather than wrong numbers.
+		 */
+		$epoch = self::epoch();
+
 		foreach ( array_keys( self::product_scopes() ) as $scope ) {
 			$rows = self::product_rows_live( 0, (string) $scope );
 
@@ -3324,7 +3356,7 @@ final class VulnHub_Dash_Widgets {
 		update_option(
 			self::SUMMARY_KEY,
 			array(
-				'epoch'  => self::epoch(),
+				'epoch'  => $epoch,
 				'scopes' => $built,
 				'rows'   => $rows_w,
 				'at'     => time(),
@@ -3333,6 +3365,29 @@ final class VulnHub_Dash_Widgets {
 		);
 
 		return array( 'scopes' => count( $built ), 'rows' => $rows_w );
+	}
+
+	/**
+	 * Is the materialised product summary already current?
+	 *
+	 * The hourly warm is a safety net that usually finds nothing to do, and
+	 * rebuilding five scopes costs about five seconds of query time. Skipping
+	 * when the epoch has not moved keeps that cost tied to data actually
+	 * changing rather than to the clock.
+	 */
+	private static function product_summary_is_current(): bool {
+		$state = (array) get_option( self::SUMMARY_KEY, array() );
+
+		if ( (string) ( $state['epoch'] ?? '' ) !== self::epoch() ) {
+			return false;
+		}
+
+		// A scope added since the last build is a reason to rebuild even at
+		// the same epoch.
+		$want = array_map( 'strval', array_keys( self::product_scopes() ) );
+		$have = array_map( 'strval', (array) ( $state['scopes'] ?? array() ) );
+
+		return array() === array_diff( $want, $have );
 	}
 
 	/**

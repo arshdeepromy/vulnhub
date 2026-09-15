@@ -318,9 +318,9 @@ version, so the URL changes exactly when the bytes change and the edge treats it
 as a new object. Nothing to purge, nothing to remember on deploy. New CSS or JS
 in `vulnhub-dashboard/assets/` is covered once it is registered through
 `asset_ver()`; a new *plugin* that enqueues its own assets needs the same
-treatment, not a bare version constant. Core and vulnhub-elementor do; several
-add-on plugins (alerts, docs, backup, rules, import, threat) still enqueue with a
-bare version constant, so their CSS/JS edits can sit behind a CDN cache.
+treatment, not a bare version constant. Every VulnHub plugin that ships assets
+now does this — each with its own small helper rather than a shared dependency,
+so a plugin can be disabled without taking the others' versioning with it.
 
 Worth knowing when a change looks like it did not land: check the `?ver=` on the
 stylesheet in the browser's network tab before re-reading the CSS.

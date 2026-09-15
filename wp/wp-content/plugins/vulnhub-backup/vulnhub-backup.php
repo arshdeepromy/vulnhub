@@ -151,6 +151,23 @@ add_action(
 );
 
 /**
+ * Cache-busting version for one bundled asset: the plugin version plus the
+ * file's own mtime.
+ *
+ * The plugin version alone moves only on release, so a CDN in front of the
+ * portal serves the old file to anyone who loaded the page recently -- new
+ * markup styled by old rules. The mtime changes exactly when the bytes do.
+ * Mirrors VulnHub_Dash_App::asset_ver().
+ *
+ * @param string $rel Path relative to the plugin directory.
+ */
+function vulnhub_backup_asset_ver( string $rel ): string {
+	$mtime = @filemtime( VULNHUB_BACKUP_DIR . $rel ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+
+	return $mtime ? VULNHUB_BACKUP_VERSION . '.' . $mtime : VULNHUB_BACKUP_VERSION;
+}
+
+/**
  * Enqueue this screen's own script/style, on top of the shared vulnhub-app
  * bundle every other integration screen depends on for visual consistency.
  */
@@ -166,8 +183,8 @@ add_action(
 			return;
 		}
 
-		wp_enqueue_style( 'vulnhub-backup', VULNHUB_BACKUP_URL . 'assets/backup.css', array( 'vulnhub-app' ), VULNHUB_BACKUP_VERSION );
-		wp_enqueue_script( 'vulnhub-backup', VULNHUB_BACKUP_URL . 'assets/backup.js', array(), VULNHUB_BACKUP_VERSION, true );
+		wp_enqueue_style( 'vulnhub-backup', VULNHUB_BACKUP_URL . 'assets/backup.css', array( 'vulnhub-app' ), vulnhub_backup_asset_ver( 'assets/backup.css' ) );
+		wp_enqueue_script( 'vulnhub-backup', VULNHUB_BACKUP_URL . 'assets/backup.js', array(), vulnhub_backup_asset_ver( 'assets/backup.js' ), true );
 
 		vulnhub_backup_load();
 

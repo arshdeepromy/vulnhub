@@ -217,6 +217,18 @@ final class Scheduler {
 			return;
 		}
 		$connector->sync( array( 'mode' => 'manual', 'force' => true, 'ignore_lock' => true ) );
+
+		/*
+		 * Same reason as run_sync() below, and easy to miss: this is the path
+		 * every manual sync takes -- the Sync now button, the REST endpoint,
+		 * the MCP tool and the resume sweep -- and it did not recalculate.
+		 * So a machine whose findings had just been imported kept whatever
+		 * coverage state the last nightly run left on it: one asset here was
+		 * reading "Not in Tenable" on the assets list while carrying a Tenable
+		 * uuid, a Tenable chip and 25 Tenable findings, until housekeeping
+		 * caught up hours later.
+		 */
+		Coverage::recalculate();
 	}
 
 	/**

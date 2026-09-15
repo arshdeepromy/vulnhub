@@ -391,16 +391,24 @@ under a different hash, so compute
 
 ## Known GUI issues
 
-Found while auditing the docs against the code. These are open, not fixed:
-
-1. **`rebuild_product_summary()` has no caller.** The product summary table is
-   never populated. The product roll-up runs as a live aggregate in a 6-hour
-   transient.
-2. **Admin sections overflow at 390px.** The last browser pass measured every
-   admin section overflowing by 21–571px at phone width, and it predates the
-   rail.
+Nothing found in the September 2026 audit is still open. What was found, and
+what it took, is recorded below.
 
 ### Fixed 2026-09-16
+
+- **Admin sections overflowed at phone width.** Every mirrored wp-admin screen
+  pushed the page sideways at 390px: 12px of it was structural (the context bar
+  and footer cancel 26px of `.vh-main` padding, but the phone rule sets 14px),
+  the rest came from `.form-table` refusing to stack and from `wp-list-table`
+  being wider than the screen. Core's `admin.css` is deliberately not loaded on
+  the portal, so the portal stylesheet handles it: rows stack below 768px,
+  controls cap at 100%, and wide tables scroll inside their own frame. Page
+  overflow is now 0 on every section.
+- **Chart axis labels in narrow widgets.** The phone fix only helped at phone
+  widths; a three-column panel on a wide screen scales the same SVG down just
+  as hard (3.9px at a 360px panel). `.vh-chart-wrap` is now a container-query
+  context, so axis text follows the panel's own width: 9.3-11.7px across the
+  range, with the viewport rules kept as the fallback.
 
 - **Most widespread vulnerabilities** bars linked to
   `vulnerabilities?vuln_id=<id>`, which the screen never read, so every bar

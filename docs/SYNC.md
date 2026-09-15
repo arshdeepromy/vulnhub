@@ -81,6 +81,13 @@ summary is persisted, the watermark advances to when the run started, and the
 staging directory is wiped. **Only a full resync** additionally retires assets
 the scanner has dropped (see *Pruning* below) and records `last_full_sync_at`.
 
+Scan-coverage states are stored on the asset, not computed per render, so they
+are recalculated by the scheduler once the connector returns —
+`Scheduler::run_sync()` for a scheduled run and `run_sync_now()` for every
+manual one (the button, REST, MCP and the resume sweep). The manual path used
+to skip it, which left an asset whose findings had just been imported reading
+"Not in Tenable" until the nightly housekeeping run caught up.
+
 ---
 
 ## Resumability

@@ -14,7 +14,27 @@
   'use strict';
   var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var body = document.body; if (!body || !body.classList.contains('vh-app')) return;
-  var accent = (getComputedStyle(body).getPropertyValue('--vh-accent-rgb') || '94,224,255').trim();
+  var accent = readAccent();
+  var glows = [];
+
+  function readAccent() {
+    return (getComputedStyle(body).getPropertyValue('--vh-accent-rgb') || '94,224,255').trim();
+  }
+
+  /*
+   * The accent differs per theme (cyan in dark, blue in light) and the toggle
+   * swaps it by stamping data-theme on <html> -- no reload. Everything that
+   * draws per frame re-reads `accent` on its own, but a canvas or a gradient
+   * built once at setup kept whichever theme happened to be showing at load,
+   * so toggling to light left cyan glows on a white card. Re-read the token
+   * when the attribute changes and repaint what does not repaint itself.
+   */
+  new MutationObserver(function () {
+    var next = readAccent();
+    if (next === accent) return;
+    accent = next;
+    glows.forEach(function (paint) { paint(); });
+  }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   var speed = parseFloat(body.getAttribute('data-vh-motion') || '1');
   var dpr = Math.min(2, window.devicePixelRatio || 1);
 
@@ -251,7 +271,11 @@
   /* 6. hover spotlight */
   if (!reduced) document.querySelectorAll('.vh-card, .vh-tile, .vh-w, .vh-connector, .vh-panel').forEach(function (el) {
     var glow = document.createElement('span'); glow.setAttribute('aria-hidden', 'true');
-    glow.style.cssText = 'position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .3s;z-index:0;background:radial-gradient(240px circle at var(--mx,50%) var(--my,50%),rgba(' + accent + ',.10),transparent 60%)';
+    var paint = function () {
+      glow.style.cssText = 'position:absolute;inset:0;pointer-events:none;opacity:' + (glow.style.opacity || '0') + ';transition:opacity .3s;z-index:0;background:radial-gradient(240px circle at var(--mx,50%) var(--my,50%),rgba(' + accent + ',.10),transparent 60%)';
+    };
+    paint();
+    glows.push(paint);
     el.insertBefore(glow, el.firstChild);
     el.addEventListener('mousemove', function (e) { var b = el.getBoundingClientRect(); glow.style.setProperty('--mx', (e.clientX - b.left) + 'px'); glow.style.setProperty('--my', (e.clientY - b.top) + 'px'); glow.style.opacity = '1'; });
     el.addEventListener('mouseleave', function () { glow.style.opacity = '0'; });
