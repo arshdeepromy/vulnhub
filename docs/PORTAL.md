@@ -396,6 +396,16 @@ what it took, is recorded below.
 
 ### Fixed 2026-09-16
 
+- **The widget export menu rendered behind the widget.** `app.css` lifts every
+  direct child of a widget above the decorative flow canvas with
+  `.vh-w > * { position: relative; z-index: 1 }`, which makes the header and
+  the body two stacking contexts at the same level — so the body, second in the
+  DOM, painted over the header, and the menu's own `z-index: 25` could never
+  escape the header's context. It only showed where a widget put something in
+  the corner the menu drops into: *Vulnerabilities by severity and age* has
+  `.vh-matrix__tools` (Copy table / Copy as TSV) absolutely positioned there,
+  overlapping the open menu by 168x28px and taking the clicks. The header now
+  outranks the body (`z-index: 3`).
 - **Admin sections overflowed at phone width.** Every mirrored wp-admin screen
   pushed the page sideways at 390px: 12px of it was structural (the context bar
   and footer cancel 26px of `.vh-main` padding, but the phone rule sets 14px),
