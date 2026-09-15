@@ -9,8 +9,8 @@
  *
  * Two jobs, and they are deliberately separate.
  *
- * The first is a widget library. Everything the portal draws -- the twenty-one
- * dashboard widgets, the coverage charts, the estate explorer, the team wall --
+ * The first is a widget library. Everything the portal draws -- every
+ * dashboard widget in the registry, the coverage charts, the estate explorer, the team wall --
  * is already a server-rendered function inside vulnhub-dashboard. Wrapping each
  * one in an `\Elementor\Widget_Base` costs almost nothing and means somebody can
  * assemble a briefing page, a wallboard or a team landing page by dragging,
