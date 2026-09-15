@@ -1,40 +1,62 @@
-<p>Everything in VulnHub lives in one portal. The top bar carries the primary navigation on the left, and — for administrators — an <strong>Administration</strong> link and your account menu on the right, along with a light/dark theme toggle. This page walks through each destination.</p>
+<p>Everything in VulnHub lives in one portal, with a dark "attack surface" design by default. Navigation is a 64px icon rail down the left edge; hover it (or tab into it) to reveal the labels. At the foot of the rail are the light/dark toggle (your choice is remembered in this browser), the <strong>Administration</strong> link for administrators, and your account menu with <em>Security &amp; MFA</em> and <em>Sign out</em>. The page itself sits in a centred column beside the rail, so on a wide or zoomed-out screen the spare space is shared evenly on both sides. On a phone the rail becomes a bar across the top and the page uses the full width. This page walks through each destination.</p>
 
 <h2>The primary navigation</h2>
 
+<p>In rail order:</p>
+
 <div class="vh-defs">
   <div><span class="k">Dashboard</span><span class="v">The widget board — the at-a-glance picture of exposure, coverage, ownership and remediation. Fully covered in <a href="?doc=dashboard">The dashboard, widget by widget</a>.</span></div>
-  <div><span class="k">Vulnerabilities</span><span class="v">The findings list: every open (or closed) finding, with a rich set of filters. This is where dashboard drill-downs land. See <a href="?doc=vulnerabilities">The Vulnerabilities list</a>.</span></div>
-  <div><span class="k">Assets</span><span class="v">The asset register: every machine, its owner, coverage state, reachability and findings. See <a href="?doc=assets">Assets &amp; owners</a>.</span></div>
+  <div><span class="k">Vulnerabilities</span><span class="v">The findings list, with <em>Findings</em>, <em>By product</em> and <em>Vulnerability on assets</em> tabs over the same filters. This is where dashboard drill-downs land. See <a href="?doc=vulnerabilities">The Vulnerabilities list</a>.</span></div>
+  <div><span class="k">Alerts</span><span class="v">Advisory and zero-day alerts from the configured feeds, with the assets each one touches (present when the advisory-watch plugin is active). The icon carries a count of new alerts that match your estate.</span></div>
+  <div><span class="k">Assets</span><span class="v">The asset register: every machine, its owner, scan and endpoint coverage, the systems that know it, and its open exposure. See <a href="?doc=assets">Assets &amp; owners</a>.</span></div>
   <div><span class="k">Tickets</span><span class="v">Remediation tickets raised in Jira, their status, and the verification result when they close. See <a href="?doc=tickets-exceptions">Tickets &amp; exceptions</a>.</span></div>
   <div><span class="k">Exceptions</span><span class="v">The risk-acceptance register: formally accepted risks, with reasons, approvers and expiry dates.</span></div>
-  <div><span class="k">Vendors</span><span class="v">Exposure grouped by vendor.</span></div>
+  <div><span class="k">Vendors</span><span class="v">Every hardware maker and software owner in the estate, with exposure, clickable counts (assets, products, findings, critical, uncovered, archived), advisory and risk-rating links; filter by Hardware / Software / Uncovered. See <a href="?doc=products-vendors">Products &amp; vendors</a>.</span></div>
   <div><span class="k">Docs</span><span class="v">This handbook and developer wiki.</span></div>
 </div>
 
-<p><strong>Products</strong> (exposure grouped by software product) is reached from the "View all products" control on the dashboard's <em>Exposure by product</em> widget rather than from the main nav. If the advisory-watch plugin is active, an <strong>Alerts</strong> destination appears too, sometimes with a badge counting new advisories that match your estate.</p>
+<p>Pages built in Elementor on VulnHub data (for example <em>Security overview</em> and <em>Estate and ownership</em>) appear in the rail after Docs. <strong>Products</strong> (exposure grouped by software product) is reached from the "View all" control on the dashboard's <em>Exposure by product</em> widget rather than from the rail, and the full departments list from the <em>Vulnerabilities by department</em> widget.</p>
 
 <h2>The Administration area</h2>
 
-<p>Administrators reach the admin area from the <strong>Administration</strong> link in the top bar (it only appears if you hold the manage capability). Its sections are grouped into <em>Data</em>, <em>Integrations</em> and <em>Platform</em>:</p>
+<p>Administrators reach the admin area from the <strong>Administration</strong> link at the foot of the rail (it only appears if you hold the manage capability). A <em>Filter sections…</em> box at the top of its side nav finds a section by name. Sections are grouped into <em>Data</em>, <em>Integrations</em> and <em>Platform</em>; the exact list depends on which plugins are active.</p>
 
+<h3>Data</h3>
+<div class="vh-defs">
+  <div><span class="k">Imports</span><span class="v">Upload large CMDB and Tenable CSV exports (resumable, up to very large files).</span></div>
+  <div><span class="k">Rules</span><span class="v">The asset-classification rules — categorise and prioritise assets and decide who owns what.</span></div>
+  <div><span class="k">Advisory feeds</span><span class="v">The sources the Alerts screen reads; generic RSS/JSON adapters take a URL.</span></div>
+  <div><span class="k">Departments</span><span class="v">Upload an Entra user export to fill in each existing person's department, then filter and chart by it. See <a href="?doc=departments">Departments</a>.</span></div>
+  <div><span class="k">Threat context</span><span class="v">Where exploit intelligence comes from, the EPSS threshold, and the reachability (exposure) rule.</span></div>
+  <div><span class="k">Teams &amp; SLAs</span><span class="v">Remediation owners, Jira routing and per-severity response targets.</span></div>
+  <div><span class="k">Jira routing</span><span class="v">Which service desk, request type and team a ticket lands on.</span></div>
+</div>
+
+<h3>Integrations</h3>
+<div class="vh-defs">
+  <div><span class="k">Integrations</span><span class="v">Configure, test and sync each connector. A red dot on this entry means a connector's last run failed.</span></div>
+  <div><span class="k">AWS accounts</span><span class="v">Every AWS account read for network exposure, and what each last managed to read.</span></div>
+  <div><span class="k">Tenable, Intune, CMDB, Jira, Automation, Backup</span><span class="v">wp-admin screens mirrored into the portal (marked <em>WP</em>).</span></div>
+</div>
+
+<h3>Platform</h3>
 <div class="vh-defs">
   <div><span class="k">Admin overview</span><span class="v">Connector health, data freshness, and what needs attention.</span></div>
-  <div><span class="k">Integrations</span><span class="v">Configure Tenable, Intune, Jira, CMDB and single sign-on.</span></div>
-  <div><span class="k">Imports</span><span class="v">Upload large CMDB and Tenable CSV exports (resumable, up to very large files).</span></div>
-  <div><span class="k">Rules</span><span class="v">The asset-classification rules — categorise and prioritise assets and decide who owns what. Also where the exposure rule (observed / asserted) is set.</span></div>
-  <div><span class="k">Departments</span><span class="v">Upload an Entra user export to fill in each existing person's department, then filter and chart by it. See <a href="?doc=departments">Departments</a>.</span></div>
-  <div><span class="k">Teams &amp; SLAs</span><span class="v">Remediation owners, Jira routing and per-severity response targets.</span></div>
+  <div><span class="k">Authentication, End of life</span><span class="v">Mirrored wp-admin screens (marked <em>WP</em>): sign-in, SSO and MFA policy; the end-of-life release table.</span></div>
+  <div><span class="k">People</span><span class="v">Portal accounts, their roles, and who still has access.</span></div>
+  <div><span class="k">Your security</span><span class="v">Your own multi-factor authentication: enrol an authenticator app, see and regenerate recovery codes. This is where the account menu's <em>Security &amp; MFA</em> link goes.</span></div>
+  <div><span class="k">AI access</span><span class="v">Connect an AI assistant (MCP) with your own permissions.</span></div>
   <div><span class="k">Sync activity</span><span class="v">Every connector run, with its full log. Start here when data looks stale.</span></div>
   <div><span class="k">Audit trail</span><span class="v">Who changed what, and when.</span></div>
-  <div><span class="k">Settings</span><span class="v">Platform behaviour, ownership policy, retention, and thresholds (e.g. the EPSS threshold).</span></div>
+  <div><span class="k">Appearance</span><span class="v">The portal header/footer and the Elementor pages built on VulnHub data.</span></div>
+  <div><span class="k">Settings</span><span class="v">Platform behaviour, ownership policy and retention.</span></div>
   <div><span class="k">Documentation</span><span class="v">A link straight to this wiki.</span></div>
 </div>
 
-<p>Integration plugins (Jira, Backup, and others) add their own sections here automatically. Which sections you see depends on your role — see the <a href="?doc=portal-framework">Portal framework</a> page for how access is gated.</p>
+<p>The admin shell also shows a <em>MOCK DATA</em> badge while sample data is on, connector health in its top bar, and when each source last refreshed in its footer. See the <a href="?doc=portal-framework">Portal framework</a> page for how sections are registered and gated.</p>
 
 <h2>Who can see what</h2>
 
-<p>Access is capability-based. In short: <strong>Viewers</strong> can read the portal; <strong>Analysts</strong> can also triage, raise tickets, request exceptions and run syncs; <strong>Approvers</strong> can approve exceptions; <strong>Administrators</strong> can do everything, including configure connectors. A "portal-only" user is one who can use the portal but is kept out of the WordPress admin entirely. The specifics are in <a href="?doc=portal-framework">Portal, views &amp; navigation</a>.</p>
+<p>Access is capability-based. In short: <strong>Viewers</strong> can read the portal; <strong>Analysts</strong> can also triage, raise tickets, request exceptions, run syncs and read the audit trail; <strong>Approvers</strong> can read, request and approve exceptions and read the audit trail; <strong>Administrators</strong> can do everything, including configure connectors. The <strong>Administration</strong> link needs the manage capability; a few admin sections (Sync activity, AI access, Documentation and some mirrored screens) only need view access but are then reached by URL. A "portal-only" user is one who can use the portal but is kept out of the WordPress admin. The capability table is on <a href="?doc=extending">Filters &amp; extension points</a>.</p>
 
 <div class="vh-tip"><p><strong>Getting around fast.</strong> Almost every number on the dashboard is a link into the Vulnerabilities or Assets list with the right filters already applied — so the quickest way to "the list behind this figure" is to click the figure, not to rebuild the filter by hand.</p></div>

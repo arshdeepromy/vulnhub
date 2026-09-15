@@ -1,46 +1,52 @@
-<p>The <strong>Vulnerabilities</strong> screen is the findings list — one row per open (or closed) finding. It is where every dashboard drill-down lands, and every filter it offers is expressible in the URL, so a link can carry an exact query. This page explains what each filter selects.</p>
+<p>The <strong>Vulnerabilities</strong> screen is the findings list — one row per finding. It is where every dashboard drill-down lands, and every filter it offers is expressible in the URL, so a link can carry an exact query. This page explains the tabs, what each filter selects, and how to read a row.</p>
 
-<div class="vh-note"><p><strong>Findings, not vulnerabilities.</strong> Despite the name, each row is a <em>finding</em> — one vulnerability on one asset. The same vulnerability appearing on 40 machines is 40 rows. Filter by a vulnerability (<code>vuln_id</code>) to see all its findings at once.</p></div>
+<div class="vh-note"><p><strong>Findings, not vulnerabilities.</strong> Despite the name, each row on the <em>Findings</em> tab is a <em>finding</em> — one vulnerability on one asset. The same vulnerability appearing on 40 machines is 40 rows. To see one vulnerability across every asset, use the <em>Vulnerability on assets</em> tab, or open its detail page with <code>?vuln=&lt;id&gt;</code>.</p></div>
+
+<h2>Three tabs over the same filters</h2>
+<div class="vh-defs">
+  <div><span class="k">Findings</span><span class="v">One row per finding. <em>Export CSV</em> (with a column picker) exports the whole filtered set, and the button shows its count.</span></div>
+  <div><span class="k">By product</span><span class="v">The products behind the filtered findings, ranked by assets affected. Expand one for "Update X to version Y or later", what that clears, and its outdated assets; <em>Export remediation CSV</em> produces the patch list. See <a href="?doc=products-vendors">Products &amp; vendors</a>.</span></div>
+  <div><span class="k">Vulnerability on assets</span><span class="v">One row per vulnerability (paged by vulnerability) with exploit and patch chips; expand one for its affected assets and their owners.</span></div>
+</div>
+<p>The tabs carry every active filter, so switching tabs regroups the same set rather than starting over.</p>
 
 <h2>The default view</h2>
-<p>Out of the box the list shows <strong>reportable, open</strong> findings — live findings (open or reopened), not excepted, on in-scope assets (see <a href="?doc=lifecycle">lifecycle scoping</a>). That is the set a reported number is about. Widen it with the lifecycle and state controls below.</p>
+<p>Out of the box the list shows <strong>open</strong> findings (open or reopened) on assets in the reporting scope (see <a href="?doc=lifecycle">lifecycle scoping</a>). Findings covered by an approved exception are still listed, shown dimmed, and there is no control to hide them. A line under the tabs says which estate is being counted, with a link to include every asset. Rows are sorted by risk score until you choose a column.</p>
 
-<h2>The filters</h2>
-
-<h3>State &amp; lifecycle</h3>
+<h2>The controls</h2>
 <div class="vh-defs">
-  <div><span class="k">State</span><span class="v">Open (the default, = open + reopened), or a specific state. Dashboard links pass <code>state=open_any</code>.</span></div>
-  <div><span class="k">Lifecycle scope</span><span class="v"><strong>Reportable</strong> (default), <strong>In service (all)</strong>, <strong>All</strong>, or a specific lifecycle status — how much of the estate to include.</span></div>
-  <div><span class="k">Excepted</span><span class="v">Whether to include, exclude or show only findings covered by an approved exception.</span></div>
-  <div><span class="k">Overdue</span><span class="v">Only findings past their SLA due date. (The dashboard's "Past SLA" tile links here.)</span></div>
-</div>
-
-<h3>Severity &amp; age</h3>
-<div class="vh-defs">
-  <div><span class="k">Severity</span><span class="v">One or more of Critical / High / Medium / Low / Info. There is also an "exclude" form (used by the Downloads widget to say "not info").</span></div>
-  <div><span class="k">Age</span><span class="v">By how long a finding has been open: <em>new</em> (under 30 days), <em>mid</em> (30–90), <em>old</em> (over 90). The severity-and-age matrix links here.</span></div>
-  <div><span class="k">Patch available</span><span class="v">Whether the vendor has published a fix. "No patch available" is the set that needs a decision rather than a patch window.</span></div>
-</div>
-
-<h3>Attack path (from the threat widget)</h3>
-<div class="vh-defs">
-  <div><span class="k">Route</span><span class="v"><span class="vh-tag vh-tag--edge">edge</span>, <span class="vh-tag vh-tag--user">user</span> or <span class="vh-tag vh-tag--inside">inside</span> — see <a href="?doc=classification">Routes, delivery &amp; reachability</a>. The <em>edge</em> filter additionally restricts to internet-facing assets; <em>inside</em> also folds in edge findings on unreachable machines.</span></div>
-  <div><span class="k">Delivery</span><span class="v">Within the user route: email, website or download.</span></div>
-  <div><span class="k">Exploit (poc)</span><span class="v"><code>poc=1</code> restricts to findings with a working exploit — what the attack-path widget counts.</span></div>
-  <div><span class="k">Zone / platform</span><span class="v">Install-path zone (e.g. <em>downloads</em>) and OS platform (windows/linux/macos) — used by the Downloads-folder widget.</span></div>
-</div>
-
-<h3>Where &amp; who</h3>
-<div class="vh-defs">
-  <div><span class="k">Product</span><span class="v">A software product slug — every finding for that product (the <em>Exposure by product</em> drill-down).</span></div>
-  <div><span class="k">Vulnerability</span><span class="v"><code>vuln_id</code> — all findings of one scanner definition (the "Most widespread" drill-down).</span></div>
-  <div><span class="k">Team</span><span class="v">Findings on assets owned by a team (the <em>Exposure by team</em> drill-down).</span></div>
-  <div><span class="k">Department</span><span class="v">Findings on devices owned by people in a department (from the Entra enrichment — see <a href="?doc=departments">Departments</a>). The <em>Vulnerabilities by department</em> widget drills here, and Export CSV carries it.</span></div>
+  <div><span class="k">Search</span><span class="v">Free text — CVE, host, owner, plugin and so on — across the finding, its vulnerability and its asset.</span></div>
+  <div><span class="k">Patch</span><span class="v"><em>Patch available</em> or <em>No patch available</em>. "No patch available" is the set that needs a decision (a compensating control, an exception or a decommission) rather than a patch window.</span></div>
+  <div><span class="k">Lifecycle support</span><span class="v"><em>End of life only</em> or <em>In support only</em> (<code>support=eol|insupport</code>). End of life means the operating system or the software <em>itself</em> is discontinued, not that the asset carries one unsupported component.</span></div>
+  <div><span class="k">Severity</span><span class="v">A single severity: Critical / High / Medium / Low / Info.</span></div>
   <div><span class="k">Asset type</span><span class="v">Workstation / server / mobile / network / cloud / appliance.</span></div>
-  <div><span class="k">Search</span><span class="v">Free-text across the finding, its vulnerability and its asset.</span></div>
+  <div><span class="k">Team</span><span class="v">Findings on assets owned by a team (the <em>Exposure by team</em> drill-down).</span></div>
+  <div><span class="k">Department</span><span class="v">Findings on devices owned by people in a department (present when the departments plugin is active — see <a href="?doc=departments">Departments</a>). The <em>Vulnerabilities by department</em> widget drills here, and Export CSV carries it.</span></div>
+  <div><span class="k">Age</span><span class="v">By how long a finding has been open: <em>Under 30 days</em> (<code>new</code>), <em>30–90 days</em> (<code>mid</code>), <em>Over 90 days</em> (<code>old</code>). The severity-and-age matrix links here.</span></div>
+  <div><span class="k">Lifecycle</span><span class="v"><strong>Reporting scope</strong> (default), <strong>Everything with an owner expectation</strong>, <strong>Every asset, including retired</strong>, or a single lifecycle status.</span></div>
+  <div><span class="k">Past SLA only</span><span class="v">Only findings past their SLA due date (<code>overdue=1</code>; the dashboard's "Past SLA" tile links here).</span></div>
+</div>
+<p><em>Apply</em> keeps any URL-only filters you arrived with; <em>Reset</em> clears everything.</p>
+
+<h2>URL-only filters</h2>
+<p>Some filters have no control of their own. They arrive on a link from the dashboard, show a banner saying what they restrict (with a <em>Clear this filter</em> link), and survive <em>Apply</em>:</p>
+<div class="vh-defs">
+  <div><span class="k">State</span><span class="v"><code>state</code> — defaults to <code>open_any</code> (open + reopened).</span></div>
+  <div><span class="k">Product</span><span class="v"><code>product=&lt;slug&gt;</code> — every finding for that product (the <em>Exposure by product</em> drill-down).</span></div>
+  <div><span class="k">Route</span><span class="v"><code>route=</code><span class="vh-tag vh-tag--edge">edge</span>, <span class="vh-tag vh-tag--user">user</span> or <span class="vh-tag vh-tag--inside">inside</span> — see <a href="?doc=classification">Routes, delivery &amp; reachability</a>. The <em>edge</em> filter additionally restricts to internet-facing assets and adds a <em>Reachable via</em> column; <em>inside</em> also folds in edge findings on unreachable machines.</span></div>
+  <div><span class="k">Delivery</span><span class="v"><code>delivery=email|website|download</code> — within the user route.</span></div>
+  <div><span class="k">Exploit</span><span class="v"><code>poc=1</code> restricts to findings with a working exploit — what the attack-path widget counts.</span></div>
+  <div><span class="k">Zone / platform / not-severity</span><span class="v"><code>zone</code> (install-path zone, e.g. <em>downloads</em>), <code>platform</code> (windows / linux / macos) and <code>sev_not</code> (exclude a severity) — used by the Downloads-folder widget.</span></div>
+  <div><span class="k">Hosting</span><span class="v"><code>hosting=&lt;environment&gt;</code> — servers in one hosting environment (the <em>Servers by hosting environment</em> widget).</span></div>
+  <div><span class="k">Asset</span><span class="v"><code>asset=&lt;id&gt;</code> — every finding on one machine.</span></div>
 </div>
 
 <h2>Reading a row</h2>
-<p>Each row shows the finding's severity, the vulnerability title, the asset it is on, its state, age and risk score, and any attached ticket or exception. Opening a finding shows the scanner's output (the evidence), the solution, the CVEs and exploit evidence, and the actions available to you — <strong>raise a ticket</strong> or <strong>request an exception</strong> (subject to your role). See <a href="?doc=tickets-exceptions">Tickets &amp; exceptions</a>.</p>
+<p>Each row shows severity, the vulnerability (expand <em>What the scanner reports</em> for the description, fix and scores, or follow <em>Full detail</em>), the asset, its location, the vulnerable file path, the owner (names are masked until you press the eye in the column header), the due date and any ticket. With <code>route=edge</code> a <em>Reachable via</em> column lists the listening services. The row's <strong>Ticket</strong> button (raise-ticket permission, no ticket yet) raises one straight away, and <strong>Except</strong> starts an exception request. Select rows to <em>Export selected</em> or <em>Raise ticket for selected</em>, or select every match across pages. More rows load as you scroll. Sort by severity, vulnerability, asset or due date. See <a href="?doc=tickets-exceptions">Tickets &amp; exceptions</a>.</p>
+
+<p>The <em>Except</em> button opens the exception request form inside the portal (the Exception register screen renders it in place), so it works for portal-only accounts.</p>
+
+<h2>A vulnerability's detail page</h2>
+<p><code>?vuln=&lt;id&gt;</code> opens one vulnerability: <strong>Scoring</strong> (CVSS v3 and v2, VPR, exploit, patch published date, CVEs), <strong>Exposure</strong> (assets affected, still open, fixed, past SLA), <strong>How to fix it</strong>, <strong>What this is</strong> with references, and a paged <strong>Affected assets</strong> table with its own state filter (open / fixed / any) and export.</p>
 
 <div class="vh-tip"><p><strong>Filters compose, and they live in the URL.</strong> Because every filter is a query parameter, you can bookmark or share a precise view — "open, exploitable, edge-route findings on servers" is just a link. That is exactly how the dashboard hands you a pre-filtered list when you click a number.</p></div>

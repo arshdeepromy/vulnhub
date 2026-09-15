@@ -4,15 +4,19 @@
 
 <h2>Actions — the events to listen on</h2>
 <div class="vh-defs">
-  <div><span class="k">vulnhub_sync_complete</span><span class="v">Fired after any connector finishes (with status + connector id). The main integration seam — asset classification (pri 10), ownership mapping (pri 20), reachability rebuild and cache-busting all hang off it.</span></div>
-  <div><span class="k">vulnhub_import_complete</span><span class="v">A CSV import finished; triggers the same housekeeping cascade as a sync.</span></div>
+  <div><span class="k">vulnhub_sync_complete</span><span class="v">Fired after any connector finishes, with <code>($connector_id, $status, $stats)</code>. The main integration seam — asset classification (pri 10), ownership mapping (pri 20), reachability rebuild, and the dashboard's cache bust (pri 99) and warm (pri 100) all hang off it.</span></div>
+  <div><span class="k">vulnhub_import_complete</span><span class="v">A CSV import job finished successfully. Passes <code>$type</code> (<code>tenable</code> / <code>cmdb</code>), <code>$job_id</code> and the job counters, after merge, roll-ups, mapping and coverage have run.</span></div>
   <div><span class="k">vulnhub_coverage_recalculated</span><span class="v">Coverage states were recomputed.</span></div>
   <div><span class="k">vulnhub_register_connectors</span><span class="v">Register a new connector object.</span></div>
   <div><span class="k">vulnhub_dash_render_view_&lt;view&gt;</span><span class="v">Render a contributed portal view.</span></div>
   <div><span class="k">vulnhub_render_portal_section</span><span class="v">Render a plugin-owned admin section.</span></div>
   <div><span class="k">vulnhub_render_admin_page</span><span class="v">Render a wp-admin screen registered via <code>vulnhub_admin_pages</code>.</span></div>
   <div><span class="k">vulnhub_run_automations / vulnhub_verify_closures</span><span class="v">Ticket automation and closure-verification passes (Jira listens).</span></div>
+  <div><span class="k">vulnhub_portal_header / vulnhub_portal_footer / vulnhub_portal_notice</span><span class="v">Print a replacement header or footer (when the matching <code>vulnhub_portal_has_custom_header</code> / <code>_footer</code> filter returns true), or anything above the main region of every portal view.</span></div>
+  <div><span class="k">vulnhub_portal_login_top / vulnhub_portal_login_bottom</span><span class="v">Add markup to the sign-in screen.</span></div>
 </div>
+
+<p><code>vulnhub_import_complete</code> fires once a CSV import job finishes successfully, after merge, roll-ups, ownership mapping and <code>Coverage::recalculate()</code> have run. It passes <code>$type</code> (<code>tenable</code> or <code>cmdb</code>), <code>$job_id</code> and the job's counters. Listeners that only want the signal should register with <code>accepted_args</code> 0, because the first argument is the import type, not a connector id.</p>
 
 <h2>Filters — the data and UI to extend</h2>
 
@@ -21,7 +25,10 @@
   <div><span class="k">vulnhub_dash_views</span><span class="v">Add a portal view (page + nav). See <a href="?doc=portal-framework">Portal framework</a>.</span></div>
   <div><span class="k">vulnhub_portal_nav_extra</span><span class="v">Add a primary-nav link (<code>label</code>, <code>url</code>, optional <code>icon</code>/<code>active</code>).</span></div>
   <div><span class="k">vulnhub_portal_sections</span><span class="v">Add an admin section.</span></div>
-  <div><span class="k">vulnhub_admin_pages</span><span class="v">Register a wp-admin screen (auto-mirrored into the portal admin).</span></div>
+  <div><span class="k">vulnhub_admin_pages</span><span class="v">Register a wp-admin screen (auto-mirrored into the portal admin as <code>screen-&lt;slug&gt;</code>).</span></div>
+  <div><span class="k">vulnhub_portal_has_custom_header / vulnhub_portal_has_custom_footer</span><span class="v">Return true to replace the portal's own rail or footer (vulnhub-elementor uses these for Theme Builder templates).</span></div>
+  <div><span class="k">vulnhub_admin_screen_url</span><span class="v">Rewrite where a VulnHub admin-screen URL points; the dashboard uses it to keep form redirects inside the portal.</span></div>
+  <div><span class="k">vulnhub_portal_login_wordmark / _login_host / _request_access_url / _privacy_url / _terms_url / _status_url</span><span class="v">Brand and link the sign-in screen (all prefixed <code>vulnhub_portal_</code>).</span></div>
 </div>
 
 <h3>Widgets &amp; cache</h3>
@@ -47,7 +54,7 @@
   <div><span class="k">vulnhub_cloud_reachable_assets</span><span class="v">Contribute asset ids a cloud connector has proven reachable (the AWS connector feeds this).</span></div>
   <div><span class="k">vulnhub_asset_risk_score</span><span class="v">Adjust the per-asset risk expression (the rules engine multiplies by priority weight here).</span></div>
   <div><span class="k">vulnhub_reportable_statuses / vulnhub_user_bound_asset_types</span><span class="v">Redefine which lifecycle statuses are "reportable", and which asset types must resolve to a person.</span></div>
-  <div><span class="k">option vulnhub_threat_epss_min</span><span class="v">The EPSS threshold (default 0.10). Also <code>vulnhub_threat_exposure_rule</code> selects the reachability rule.</span></div>
+  <div><span class="k">option vulnhub_threat_epss_min</span><span class="v">The EPSS threshold (default 0.10). Also <code>vulnhub_threat_exposure_rule</code> selects the reachability rule. Both are set under <strong>Admin → Threat context</strong>.</span></div>
 </div>
 
 <h3>Products, icons &amp; integrations</h3>
@@ -79,6 +86,20 @@
 <pre>wp vulnhub threat refresh     # re-pull NVD / KEV / EPSS and rebuild attack paths
 wp vulnhub threat classify    # re-place every definition on a route
 wp vulnhub threat status      # feed freshness and counts</pre>
-<p>Connector syncs, imports, coverage recomputation and product classification have their own commands and admin controls. Watch any run under <strong>Admin → Sync activity</strong>.</p>
+<p>Core also ships:</p>
+<pre>wp vulnhub classify-apps        # stamp the bundling app on findings from their scanner output
+wp vulnhub classify-products    # [--dry-run] stamp product / kind / slug onto every vulnerability definition
+wp vulnhub merge-duplicates     # merge split asset rows for one machine (the same sweep every import runs)
+wp vulnhub stale-records        # list name-only CMDB records being held; --collect, --forget</pre>
+<p>Connector syncs and imports have no CLI command of their own: start them from the admin area, the MCP tool, or <code>POST vulnhub/v1/connectors/&lt;id&gt;/sync</code>. Watch any run under <strong>Admin → Sync activity</strong>.</p>
+
+<h2>Connectors: incremental and full resyncs</h2>
+<p>A connector that syncs incrementally from a watermark (Tenable, for live data) can also be asked to fetch everything the source holds. The base <code>Connector</code> class has three hooks for this, all no-ops by default:</p>
+<div class="vh-defs">
+  <div><span class="k">supports_full_sync()</span><span class="v">Return true if "everything" is a different run from "what changed". This is what shows the <strong>Full resync</strong> button on the connector card.</span></div>
+  <div><span class="k">request_full_sync()</span><span class="v">Record that the next fresh run should be full. It is a request, not a run: the sync is dispatched to cron and may first finish an interrupted run, so the intent has to outlive the web request. Tenable stores it in its own option (not the connector settings array, which a running sync saves back whole and would overwrite) and clears it only when a full run completes.</span></div>
+  <div><span class="k">full_sync_note()</span><span class="v">One line for the connector card — last full resync, when the next is due, or a pending request.</span></div>
+</div>
+<p><code>POST vulnhub/v1/connectors/&lt;id&gt;/sync</code> with <code>full=true</code> calls <code>request_full_sync()</code> and <strong>queues</strong> the run in the background for any connector whose <code>async_sync()</code> is true; the MCP <code>vulnhub_sync_connector</code> tool routes the same way. Only a connector that syncs inline receives <code>full</code> directly in <code>do_sync( $args )</code>. Tenable decides full-or-incremental once when a fresh run starts (first sync, a pending request, or <em>Full resync every N days</em> elapsed) and records it in the run's <code>state.json</code>, so a resumed run stays whatever it started as. See <a href="?doc=data-sources">Where the data comes from</a> for what each kind of run fetches.</p>
 
 <div class="vh-tip"><p><strong>Adding a whole new data source?</strong> Extend the abstract <code>Connector</code>, register it on <code>vulnhub_register_connectors</code>, write assets/findings through Core's <code>Repo</code> (so fingerprinting, dedup, lifecycle and roll-ups come for free), store secrets through the encrypted settings store, and let <code>vulnhub_sync_complete</code> do the rest. See <a href="?doc=data-sources">Where the data comes from</a> and <a href="?doc=data-model">the schema</a>.</p></div>

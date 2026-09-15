@@ -56,11 +56,20 @@ cp .env.example .env
 - `DB_PASS` / `DB_ROOT_PASS` — the database passwords
 - `VH_ENC_KEY` — becomes `VULNHUB_ENCRYPTION_KEY`, the key that encrypts stored connector credentials at rest, so a database dump alone never exposes them
 
-The dev/test scripts additionally read a `.admin_pass` file (gitignored,
-`chmod 600`) holding the admin password, and take the site URL and admin user
-from the `VULNHUB_URL` and `WP_ADMIN_USER` environment variables (defaulting to
-`http://localhost:8093` and `admin`) — so nothing about a particular install is
-hardcoded.
+The dev/test scripts read their credentials from gitignored, `chmod 600` files
+next to the compose file, never from the command line:
+
+- `.admin_pass` — the admin password, used by most browser passes
+  (`dev/browserpass.js`, `interact.js`, `probe.js`, `designaudit.js`, …);
+- `.portal_test_pass` — the password of a portal-only test account, used by
+  `boardpass.js`, `importpass.js` and `portaluser.js`;
+- `VH_COOKIE` (environment) — a pre-minted logged-in cookie, used by
+  `railhover.js`, which needs no password at all (`VH_BASE` overrides its URL).
+
+The Node passes still assume `http://localhost:8093` and a fixed admin username;
+`VULNHUB_URL` and `WP_ADMIN_USER` are **not** read by them (only the repo's
+`dev/form-audit.py` honours `WP_ADMIN_USER`). Adjust the constant at the top of a
+script if your install differs. See `docs/BROWSER-PASS.md`.
 
 ### Day-to-day
 
@@ -92,14 +101,29 @@ without touching the rest. They all build against the contract in
 
 | Plugin | Does |
 |---|---|
-| **vulnhub-core** | Data model (14 tables), connector framework, encrypted credential vault, ownership mapping engine, RBAC, REST API, admin portal |
+| **vulnhub-core** | Data model (14 tables), connector framework, encrypted credential vault, ownership mapping engine, RBAC, REST API, the wp-admin screens |
 | **vulnhub-tenable** | Tenable VM export API → assets, vulnerabilities, tags. Owns closure verification |
 | **vulnhub-intune** | Microsoft Graph → managed devices, users, departments, offices, groups |
 | **vulnhub-cmdb** | ServiceNow / Confluence / CSV → business service, team and site for non-user assets |
 | **vulnhub-jira** | Ticket creation with real ADF, status sync, the automation engine, reopen-on-failed-verification |
 | **vulnhub-auth** | TOTP MFA + recovery codes, Okta OIDC, Entra ID OIDC, generic OIDC, LDAP/AD |
-| **vulnhub-dashboard** | The front-end application served at your own domain |
+| **vulnhub-dashboard** | The front-end application served at your own domain — every portal view, the dashboard board, and the portal **Administration** area (`/portal-admin/`), which mirrors core's wp-admin screens so nobody needs wp-admin |
 | **vulnhub-threat** | CVE ids out of the scanner's own text, enriched from NVD, CISA KEV and FIRST EPSS, and turned into the route an attacker would have to take. Owns the attack-path widget |
+
+The rest extend the platform the same way:
+
+| Plugin | Does |
+|---|---|
+| **vulnhub-alerts** | Watches advisory and zero-day feeds (EUVD, MSRC, CISA, GitHub, Red Hat, Ubuntu, any RSS/JSON source) and matches them to software and OS actually in the estate. Adds the **Alerts** view |
+| **vulnhub-aws** | Reads network exposure straight from AWS accounts — which instances the internet can reach, and on which ports |
+| **vulnhub-backup** | Batched, resumable database and `wp-content` backup and restore, with optional S3 push and retention |
+| **vulnhub-departments** | Enriches existing people with their Entra department; adds a department filter, widget, page and export. Never creates people |
+| **vulnhub-docs** | The built-in handbook and developer wiki, as the portal's **Docs** view |
+| **vulnhub-elementor** | VulnHub data as 14 Elementor widgets, and the portal header/footer handed to the Elementor Pro Theme Builder (`docs/ELEMENTOR.md`) |
+| **vulnhub-hosting** | Classifies servers as cloud (AWS / Azure / GCP) or on-prem; adds the hosting filter and widget |
+| **vulnhub-import** | Streaming, resumable, de-duplicating CSV import (chunked browser upload, byte-offset checkpoints). Powers **Administration → Imports** |
+| **vulnhub-mcp** | A machine-facing surface so an agent can read the estate, correct the CMDB and work the coverage-gap list. Adds **Administration → AI access** |
+| **vulnhub-rules** | Ordered, testable rules that classify assets (environment, criticality, type, service, priority weight) before ownership mapping. Adds **Administration → Rules** |
 
 ---
 
@@ -121,7 +145,8 @@ userless devices — they surface under **Ownership → Unresolved assets** and 
 the dashboard's "Ownership gaps" panel, which is exactly the operational gap
 list this rule exists to produce.
 
-Rules are administrator-editable at **VulnHub → Ownership → Mapping rules**:
+Rules are administrator-editable at **Administration → Teams & SLAs** in the
+portal (wp-admin: **VulnHub → Ownership → Mapping rules**):
 priority-ordered, each with a match condition and an assignment, and each able
 to stop the chain. After the rules run, any asset with an owner but no team or
 location inherits them from that person's Entra ID department and office.
@@ -132,7 +157,7 @@ location inherits them from that person's Entra ID department and office.
 
 A ticket closing in Jira is treated as a claim, not proof. When Jira reports
 `statusCategory: done`, the ticket is marked awaiting verification. After the
-configured delay (**Settings → Closure verification delay**, default 24h — give
+configured delay (**Administration → Settings → Closure verification delay**, default 24h — give
 the scanner time to have run again), the Tenable plugin re-checks every covered
 finding and records one of:
 
@@ -150,7 +175,8 @@ reshaped into the real vendor JSON and pushed through **the same normalisation
 code the live path uses**, so switching over is a credential change, not a code
 change.
 
-Per connector, at **VulnHub → Integrations**:
+Per connector, at **Administration → Integrations** in the portal (wp-admin:
+**VulnHub → Integrations**):
 
 1. Paste credentials (encrypted at rest with XChaCha20-Poly1305 using
    `VULNHUB_ENCRYPTION_KEY` from wp-config — a database dump alone does not
@@ -169,7 +195,7 @@ What each connector needs:
 - **CMDB** — ServiceNow instance + token, or Confluence page ids, or just upload
   a CSV (the CSV path has a mapping UI and a dry-run preview).
 - **Okta / Entra SSO** — the redirect URI to register is shown on
-  **VulnHub → Authentication → Single sign-on**.
+  **Administration → Authentication** (wp-admin: **VulnHub → Authentication → Single sign-on**).
 
 ---
 
@@ -200,33 +226,49 @@ multi-hundred-thousand-row export in memory. The full design is in
   on the cron worker stops the 60-second loop stacking overlapping runs into an
   out-of-memory kill — and the import reports progress within each chunk, so a
   long-but-healthy run is never falsely reaped as stalled.
-- **Incremental and gap-safe.** After the first full pull, syncs fetch only what
-  changed since the last success (with an overlap window so nothing slips through
-  the gap), skip re-writing unchanged findings, and resolve findings the scanner
-  now reports fixed. The watermark only advances on a successful run.
-- **Reversible, scoped pruning.** A full Tenable sync retires assets Tenable has
+- **Incremental and gap-safe.** Most runs fetch what Tenable has *seen* since the
+  last successful run (minus a 24-hour overlap): every finding a scan re-observed
+  in that window — changed or not — plus findings fixed in it, and only the
+  assets scanned in it. Findings that come back unchanged get a light "last seen"
+  update instead of a full rewrite, and the summary counts them as *unchanged*.
+  The watermark only advances on a successful run.
+- **Periodic full resyncs.** An incremental run cannot see asset changes made
+  without a rescan, or assets Tenable has deleted. A full resync re-reads the
+  whole inventory: on the first sync, every *Full resync every N days* (default
+  7), or on demand with **Full resync** on the connector card (or `full=true` on
+  the sync endpoint). Full vs incremental is decided by the stored watermark, not
+  by what is in the database — after emptying tables, request a full resync.
+- **Reversible, scoped pruning.** A full resync retires assets Tenable has
   dropped — but *only* assets Tenable itself owns, never assets contributed by
   Intune, the CMDB or any other connector, and it aborts rather than retire an
-  implausibly large slice in one run.
+  implausibly large slice in one run. Incremental runs never prune. A retired
+  asset comes back on its own: the prune records what each asset was before it
+  was retired, and the next sync that sees the asset again restores that status
+  and its archived findings. Retiring it by hand instead drops that marker, so
+  a deliberate decision is never undone.
 
 ---
 
 ## Analysing vulnerabilities
 
-The dashboard groups the same findings three ways, each with a de-duplicated
-CSV export that shows exactly what is being exported (with a select-all count and
-a "select all matching the current filter" action):
+The **Vulnerabilities** page shows the same filtered findings three ways, as tabs
+that carry every active filter between them (`?tab=products`, `?tab=vuln_assets`),
+each with a de-duplicated CSV export that shows exactly what is being exported
+(with a select-all count and a "select all matching the current filter" action):
 
 - **Findings** — the raw per-asset, per-vulnerability rows.
-- **Vulnerability on assets** — grouped by vulnerability, each expandable to the
-  affected assets and their owners. The export carries the vulnerability once and
-  the affected assets once, not the solution text repeated on every row.
 - **By product** — the assets that a single update would remediate. Expanding a
   product shows every outdated asset; the export says "update to the highest
   available version X, anything below is affected by these N vulnerabilities",
   with the asset and owner list.
+- **Vulnerability on assets** — grouped by vulnerability, each expandable to the
+  affected assets and their owners. The export carries the vulnerability once and
+  the affected assets once, not the solution text repeated on every row.
 
-An **EOL / in-support** filter runs across the tabs. It means the OS or the
+Separately, the dashboard's *Exposure by product* widget opens a full **Products**
+page from its "View all" link.
+
+A **Lifecycle support** (EOL / in-support) filter runs across the tabs. It means the OS or the
 software *itself* is discontinued by the vendor (finding-level), not that an
 asset happens to carry one unsupported component — see `docs/LIFECYCLE.md`.
 
@@ -254,7 +296,7 @@ app is specific to a particular proxy.
 
 Two things to do straight after the domain resolves:
 
-1. **Turn on MFA** — VulnHub → Authentication → MFA policy → *Required for
+1. **Turn on MFA** — Administration → Authentication → MFA policy → *Required for
    selected roles* (administrator at minimum). The TOTP implementation passes
    all 18 published RFC 6238 test vectors across SHA-1/256/512.
 2. Consider putting an access gate (e.g. Cloudflare Access, or your proxy's own
@@ -274,8 +316,11 @@ finished popover can reach a browser looking like unstyled fieldsets.
 `VulnHub_Dash_App::asset_ver()` appends each file's own mtime to the plugin
 version, so the URL changes exactly when the bytes change and the edge treats it
 as a new object. Nothing to purge, nothing to remember on deploy. New CSS or JS
-in `vulnhub-dashboard/assets/` is covered automatically; a new *plugin* that
-enqueues its own assets needs the same treatment, not a bare version constant.
+in `vulnhub-dashboard/assets/` is covered once it is registered through
+`asset_ver()`; a new *plugin* that enqueues its own assets needs the same
+treatment, not a bare version constant. Core and vulnhub-elementor do; several
+add-on plugins (alerts, docs, backup, rules, import, threat) still enqueue with a
+bare version constant, so their CSS/JS edits can sit behind a CDN cache.
 
 Worth knowing when a change looks like it did not land: check the `?ver=` on the
 stylesheet in the browser's network tab before re-reading the CSS.
@@ -311,10 +356,18 @@ stylesheet in the browser's network tab before re-reading the CSS.
   counted as *once inside* rather than at the perimeter. Also why the NVD year
   files are parsed with a line reader rather than `json_decode`, and why the
   refresh is a cron job and not a button.
-- **Chart palette** — `docs/PALETTE.md` records every colour, the validator
-  output that justifies it, and why severity is treated as a *semantic heat*
-  scale that never carries meaning by hue alone (labels, fixed order, 2px gaps
-  and a table view on every chart).
+- **Portal shell and layout** — `docs/PORTAL.md` covers how a view is routed,
+  the 64px icon rail, the administration area and the extension points. The page
+  column is capped at 1440px (`--vh-content-max` in `app-redesign.css`) and
+  centres in the space right of the rail, so a wide or zoomed-out window grows
+  equal gutters on both sides; below 768px the rail becomes a top bar and the
+  column goes full width.
+- **Chart palette** — `docs/PALETTE.md` records every colour token in the dark
+  (default) and light themes, where charts take their colours from, measured
+  contrast ratios, and why severity is treated as a *semantic heat* scale that
+  should never carry meaning by hue alone. It is honest about where that rule
+  does not yet hold (not every chart has a table view) and lists the known
+  contrast failures in the light theme.
 - **Credentials** — a blank secret field on submit means "keep the stored
   value"; secrets are never echoed back into a form, only a mask.
 - **`tenable_uuid` is deliberately not UNIQUE.** It was, and that silently

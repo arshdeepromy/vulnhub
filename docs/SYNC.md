@@ -76,9 +76,10 @@ a resume.
 
 ### 3. Finalize
 
-On a **full** sync only, assets the scanner has dropped are retired (see
-*Pruning* below), rollups are recomputed, the watermark is advanced, and the
-staging directory is wiped.
+Every run, full or incremental: per-asset roll-ups are recomputed, the run
+summary is persisted, the watermark advances to when the run started, and the
+staging directory is wiped. **Only a full resync** additionally retires assets
+the scanner has dropped (see *Pruning* below) and records `last_full_sync_at`.
 
 ---
 
@@ -86,7 +87,7 @@ staging directory is wiped.
 
 Every step writes a checkpoint to `state.json` (atomic temp-file + rename, so a
 checkpoint is never read back half-written). The state carries the phase, the
-`since` watermark for the run, whether it is a full sync, and per-phase progress:
+`since` watermark for the run, whether it is a full resync (`is_full`), and per-phase progress:
 
 ```jsonc
 {
@@ -110,7 +111,13 @@ drive resumption:
 
 A "Sync now" from the UI schedules `HOOK_SYNC_NOW` as a single WP-cron event
 (`queue_sync()`), so the request returns immediately and the work runs in the
-cron worker rather than the web request.
+cron worker rather than the web request. A connector whose `async_sync()` is true
+is **always** queued this way — including a full resync, which records the
+request on the connector (`request_full_sync()`) and then queues the same run.
+(`full=true` used to force the sync inline in the web request, and the staged
+sync ignored the flag.) The MCP `vulnhub_sync_connector` tool routes the same
+way; only connectors that sync inline (`async_sync()` false) still run inside the
+request.
 
 **Single-flight.** The cron container runs `wp cron event run` under `flock -n`,
 so a run that lasts longer than the 60-second cron tick cannot be joined by a
@@ -139,30 +146,132 @@ you ever suspect a staging directory has been orphaned.
 
 ---
 
-## Incremental and gap-safe
+## Incremental runs
 
-After the first successful full pull, syncs are incremental:
+Most runs are incremental. "Incremental" means *what Tenable has seen since the
+last sync*, not *what changed* — the distinction matters for sizing and for what
+a run can miss.
 
-- **Watermark with overlap.** `since_for_run()` returns the last successful
-  watermark minus a 24-hour overlap window, so a finding that changed right on the
-  boundary is never skipped. The first sync looks back `first_sync_days` (default
-  3650, i.e. effectively all history).
+### The window
+
+- **Watermark with overlap.** `since_for_run()` returns the watermark of the last
+  successful run minus a 24-hour overlap, so anything that changed right on the
+  boundary is picked up twice rather than not at all.
 - **Watermark advances only on success.** `advance_watermark()` runs in
-  `finalize`, so a failed or interrupted run never moves the boundary forward and
-  never leaves a gap.
-- **Vendor `since` covers both directions.** Tenable's `since` filter returns
-  both still-open findings (by `last_found`) and newly fixed ones (by
-  `last_fixed`), so an incremental pull sees closures as well as new detections.
-- **Skip-unchanged.** `Repo::upsert_finding()` has a fast path that skips
-  re-writing a finding whose state has not changed, so an incremental run touches
-  only what actually moved.
+  `finalize` and sets the watermark to when *that run started*. A failed or
+  interrupted run never moves it, so the next run re-covers the same window.
+
+### What each export returns
+
+| Export | Filter sent | What Tenable returns |
+|---|---|---|
+| Vulnerabilities | `since` = watermark − 24h, `state` = OPEN, REOPENED, FIXED | OPEN/REOPENED findings **seen** on or after `since`, and FIXED findings **fixed** on or after `since` |
+| Assets | `last_assessed` = max(`since`, now − `asset_days`) | Assets **scanned** (credentialed or not) after that time |
+
+Tenable defines `since` per state: OPEN/REOPENED findings are included when they
+were "seen on or after the since date", FIXED findings when they were "fixed on
+or after the since date". It cannot be combined with `first_found`,
+`last_found` or `last_fixed`.
+
+So an incremental run re-downloads every finding a scan re-observed in the
+window, **even if nothing about it changed**. Its size tracks how much of the
+estate was scanned, not how much changed. A measured example (a live account,
+one sync ~24h after the previous one): 21,662 findings on 570 assets in 63
+seconds — 17,329 were still-open findings simply seen again, 2,856 were fixed in
+the window, and 1,271 had been first found in the window (most already imported
+by the overlapping previous run).
+
+### What an incremental run cannot see
+
+- **Asset changes without a rescan.** A hostname, tag or attribute changed in
+  Tenable on an asset that was not scanned in the window is not in the asset
+  export.
+- **Deleted or terminated assets.** The asset export asks for
+  `is_deleted: false, is_terminated: false`, and an incremental export only
+  holds recently scanned hosts, so absence means nothing — pruning is left to
+  full resyncs.
+- **Findings on assets that were not rescanned** stay exactly as they were.
+- **Vulnerability-definition updates** (exploit flag, VPR, solution text) only
+  arrive when some finding for that plugin is seen again.
+
+A periodic full resync (below) is what catches all of these.
+
+### Skip-unchanged
+
+`Repo::upsert_finding()` has a fast path, but it is not a no-op: every re-sent
+finding still costs one light UPDATE of `last_found`, `last_fixed`,
+`last_synced_at`, `updated_at` and `scan_uuid`. The full row rewrite (plugin
+output parsing, product and path-zone derivation) happens only when the state,
+severity or risk score changed, or the finding is being reopened or suppressed.
+The fast path returns `unchanged: true`, and the run summary reports those as
+`N unchanged` so an incremental run's numbers are not read as 20k updates.
+
+---
+
+## Full resyncs
+
+A full resync re-reads everything the scanner holds: `since` = now −
+`first_sync_days` (default 3650, i.e. all history), and the asset export bounded
+only by the `asset_days` freshness window.
+
+### When a run is full
+
+Decided **once**, when a fresh run starts, by `full_sync_reason()` — and
+carried in `state.json` as `is_full`, so a resumed run stays whatever it started
+as. A run is full when any of these hold, checked in order:
+
+1. **First sync.** The watermark is 0 — nothing has ever completed.
+2. **Requested.** The option `vulnhub_full_sync_requested_<connector>` is set.
+   Any of these set it: the **Full resync** button on the connector card,
+   `POST vulnhub/v1/connectors/<id>/sync` with `full=true`, the MCP
+   `vulnhub_sync_connector` tool with `full`, or calling
+   `$connector->sync( array( 'full' => true ) )` directly.
+3. **Scheduled.** `full_sync_days` (Tenable setting *Full resync every N days*,
+   default 7; 0 turns the schedule off) have passed since `last_full_sync_at`.
+
+The request flag is cleared only when a full run **completes**, so a request
+survives being queued, an interrupted incremental run being resumed first, or
+the full run itself dying part way. It lives in its own option rather than in
+the connector's settings array on purpose: settings are saved whole from an
+in-process copy, so a long sync saving its watermark at the end would write back
+the copy it loaded at the start and silently erase a request made while it ran.
+
+`last_full_sync_at` is written when a full run completes (the run's start time).
+Installs whose first sync predates this field have a watermark but no timestamp;
+the first read backfills it **once** from the watermark — it is stored, not
+re-derived, because the watermark moves on every incremental run and would push
+the next scheduled full resync away forever.
+
+The download-size estimate behind the progress bar is kept per class
+(`vulnhub_dl_est_full_*` / `..._incr_*`), chosen from the run's `is_full`.
+
+### `asset_days` on a full resync
+
+*Only import assets seen in the last N days* (default 90) is sent as
+`last_assessed` = now − `asset_days`. An asset Tenable has not scanned in that
+window is not in the export, is not refreshed, and — if Tenable is its only
+source — is retired by pruning. Findings keep their full history either way:
+the vulnerability export still uses `first_sync_days`. On an incremental run the
+watermark window is almost always the narrower bound, so the setting has no
+effect there. Check this value before a full resync: a short window (say 15
+days) retires every Tenable-only asset that has gone quiet for longer.
+
+### Starting from an empty database
+
+Full-or-incremental is decided by the **stored watermark**, not by what is in the
+tables. A brand-new install (watermark 0) pulls everything. But if the findings
+or assets tables are emptied while the connector settings survive, the next run
+is still incremental and fetches only the last day or so — nothing refills the
+history. After clearing data, press **Full resync** (or send `full=true`).
 
 ---
 
 ## Pruning (Tenable-scoped, reversible, safeguarded)
 
-On a full sync, `Repo::retire_absent_tenable()` retires assets that Tenable used
-to report and no longer does. It is deliberately conservative:
+On a **full resync only**, `Repo::retire_absent_tenable()` retires assets that
+Tenable used to report and are absent from the full asset export (switch:
+`prune_absent`, default on). Incremental runs never prune — their asset export
+is only the recently scanned hosts. It is deliberately conservative:
 
 - **Scoped to Tenable-owned assets.** Only assets with
   `primary_source = 'tenable'` and no id from any other connector
@@ -170,8 +279,26 @@ to report and no longer does. It is deliberately conservative:
   `aws_instance_id`, `gcp_instance_id`, `cmdb_id`, `cmdb_key` all empty) are
   candidates. Assets contributed by Intune, the CMDB, AWS, etc. are never
   touched.
-- **Reversible.** Retirement sets `lifecycle_status = 'missing'`; it does not
-  delete the row. If the asset reappears in a later scan it comes back.
+- **Reversible, and reversed automatically.** Retirement goes through
+  `Lifecycle::set( …, 'missing' )`: the row is not deleted, and its open
+  findings are archived with their prior state remembered. The prune also
+  records a **marker** for each asset it retires — the option
+  `vulnhub_tenable_pruned_assets`, asset id → the lifecycle status it had
+  before (plus when). Whenever a Tenable asset import (full *or* incremental)
+  sees a marked asset again, `Repo::restore_pruned_tenable()` returns it to that
+  exact status through `Lifecycle::set()`, so its archived findings come back
+  from `prev_state`. This happens per asset chunk, before any findings are
+  imported, and the sync log says `Returned N asset(s) to "<status>"…`.
+- **A person's decision wins.** Only the prune's own retirements are undone.
+  Any other lifecycle change to a marked asset — somebody marking it retired,
+  lost, or even `missing` on purpose, or returning it to service by hand —
+  fires `vulnhub_lifecycle_changed`, and `Repo::forget_pruned_tenable()` drops
+  its marker, so a later scan leaves that decision alone. An asset whose status
+  is no longer `missing` when it is seen just loses its marker. (The prune writes
+  its markers *after* its own move, and the restore removes them *before* its
+  move, so neither erases or re-triggers itself through that listener.)
+  Retirements made before this marker existed have none and stay *missing*
+  until someone returns them to service.
 - **Safety abort.** If the set of "seen" uuids is empty, or more than 15% of the
   candidate assets would be retired in one run, the prune aborts and retires
   nothing — a truncated or failed export can't wipe the fleet.
@@ -207,6 +334,9 @@ would otherwise cross 600s of apparent silence and be falsely reaped.
 ## Adding staged sync to another connector
 
 1. Route `do_sync()` to a staged path for live data and a direct path for mock.
+   If the source supports incremental pulls, return `true` from
+   `supports_full_sync()`, honour `request_full_sync()`, and decide full vs
+   incremental once per fresh run, stored in the state.
 2. Implement `download_to_disk()` / `process_from_disk()` / `finalize_sync()`
    against `VH_Tenable_Store` (or a per-connector store built the same way).
 3. Return `true` from `resumable_sync()` while a run is in a resumable phase.

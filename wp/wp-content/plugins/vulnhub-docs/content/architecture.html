@@ -4,9 +4,9 @@
 
 <p>The application runs as a Docker Compose stack (<code>~/vulnhub</code>): a <code>wordpress:php8.3-apache</code> container serving the app on port 8093, MariaDB 11, a Redis object cache, a WP-CLI container, a cron loop container that runs <code>wp cron event run --due-now</code> every 60 seconds, and MailHog for captured mail. The portal answers both on <code>localhost:8093</code> and behind a Cloudflare tunnel at the public hostname — which is why widget HTML is cached per host (absolute links get baked in).</p>
 
-<h2>The fifteen plugins</h2>
+<h2>The eighteen plugins</h2>
 
-<p>All boot on <code>plugins_loaded</code> at priority 20, after guarding that <code>function vulnhub()</code> exists (Core loads first alphabetically, but the guard makes the dependency explicit).</p>
+<p>Core boots on <code>plugins_loaded</code> at priority 5 and then fires <code>vulnhub_register_connectors</code>, which is where the connector plugins (Tenable, Intune, CMDB, Jira, AWS, Auth) register. Most other plugins boot on <code>plugins_loaded</code> at priority 20. Plugins load alphabetically, so <code>vulnhub-alerts</code>, <code>vulnhub-auth</code> and <code>vulnhub-dashboard</code> load <em>before</em> Core: none of them may test for <code>vulnhub()</code> at file scope — they check on <code>plugins_loaded</code> instead.</p>
 
 <h3>The spine</h3>
 <div class="vh-defs">
@@ -22,7 +22,9 @@
   <div><span class="k">vulnhub-intune</span><span class="v">Microsoft Intune &amp; Entra ID — device inventory, management and identity signals.</span></div>
   <div><span class="k">vulnhub-cmdb</span><span class="v">CMDB reconciliation — authoritative asset ownership, location and lifecycle.</span></div>
   <div><span class="k">vulnhub-aws</span><span class="v">AWS accounts and cloud exposure signal.</span></div>
-  <div><span class="k">vulnhub-import</span><span class="v">Batched, resumable CSV import for very large CMDB and Tenable exports.</span></div>
+  <div><span class="k">vulnhub-import</span><span class="v">Batched, resumable CSV import for very large CMDB and Tenable exports. Microsoft Defender device data also arrives through this CSV path.</span></div>
+  <div><span class="k">vulnhub-departments</span><span class="v">Enriches existing people with their Entra department; adds the Department filter, the <em>Vulnerabilities by department</em> widget, a hidden <code>departments</code> view and an admin section. Never creates users.</span></div>
+  <div><span class="k">vulnhub-hosting</span><span class="v">Classifies servers as cloud (AWS / Azure / GCP) or on-prem; adds the <code>hosting</code> findings filter and the <em>Servers by hosting environment</em> widget.</span></div>
 </div>
 
 <h3>Workflow &amp; output</h3>
@@ -33,14 +35,16 @@
   <div><span class="k">vulnhub-mcp</span><span class="v">A Model Context Protocol server: lets an AI agent read and (audited) write the estate over JSON-RPC, authenticated by bearer tokens.</span></div>
   <div><span class="k">vulnhub-auth</span><span class="v">Identity: portal sign-in, SSO (Okta / Entra / generic OIDC), MFA, LDAP/AD, and the people directory.</span></div>
   <div><span class="k">vulnhub-elementor</span><span class="v">Exposes the live dashboard widgets as Elementor widgets and lets Elementor Pro build the portal header/footer.</span></div>
+  <div><span class="k">vulnhub-docs</span><span class="v">This handbook: a contributed <code>docs</code> view and a Documentation admin section.</span></div>
 </div>
 
 <h2>How a request flows</h2>
 
 <ol>
   <li>A visitor hits a portal page (say <code>/vulnerabilities</code>). Each portal page is a normal WP page whose only content is the shortcode <code>[vulnhub_app view="…"]</code>.</li>
-  <li><code>vulnhub-dashboard</code> swaps the theme template for its own shell (<code>templates/app.php</code>) via <code>template_include</code>, renders the nav, and calls <code>render_view($view)</code> inside the main region.</li>
-  <li><code>render_view()</code> checks access (<code>gate()</code> → needs <code>Caps::VIEW</code>), then dispatches: a plugin-contributed view is drawn by its <code>vulnhub_dash_render_view_&lt;view&gt;</code> action; the built-in views fall through a switch.</li>
+  <li>On <code>template_redirect</code>, <code>guard_portal()</code> sends a logged-out visitor to <code>/sign-in/</code>, and <code>redirect_signed_in()</code> sends a signed-in visitor who lands on sign-in to the dashboard.</li>
+  <li><code>vulnhub-dashboard</code> swaps the theme template for its own shell (<code>templates/app.php</code>) via <code>template_include</code>, renders the icon rail (unless a custom header is assigned), and calls <code>render_view($view)</code> inside the main region.</li>
+  <li><code>render_view()</code> draws the sign-in view first if that is the request; otherwise it checks access (<code>gate()</code> → needs <code>Caps::VIEW</code>), then dispatches: a plugin-contributed view is drawn by its <code>vulnhub_dash_render_view_&lt;view&gt;</code> action; the built-in views fall through a switch.</li>
   <li>The view asks Core's <code>Repo</code> for numbers. Dashboard widgets render through a serve-stale cache keyed by a per-widget epoch, so most requests never touch the database.</li>
 </ol>
 
@@ -48,9 +52,10 @@
 
 <ol>
   <li>A connector (Tenable, Intune, CMDB, AWS) runs on its cron schedule, or an operator uploads a CSV through <code>vulnhub-import</code>.</li>
-  <li>Rows are upserted into <code>assets</code> / <code>vulns</code> / <code>findings</code>; each finding is de-duplicated by a fingerprint; findings a scan no longer reports are closed.</li>
+  <li>Rows are upserted into <code>assets</code> / <code>vulns</code> / <code>findings</code>; each finding is de-duplicated by a fingerprint. A finding changes state because the scanner reports it changed (Tenable sends <code>FIXED</code> / <code>REOPENED</code>), and a finding re-sent unchanged only has its last-seen time moved.</li>
   <li>On <code>vulnhub_sync_complete</code>, the classification chain runs: the rules engine classifies assets (priority 10), then Core's ownership mapping resolves owners (priority 20), then the threat plugin rebuilds exposure and attack paths.</li>
   <li>The same hook busts the widget cache for exactly the sources that connector moved, so the dashboard reflects the new data without rebuilding everything.</li>
+  <li>A CSV import does <em>not</em> fire <code>vulnhub_sync_complete</code>: the import runner merges duplicates, rolls up, runs ownership mapping and recalculates coverage itself, and the widget cache is busted through <code>vulnhub_coverage_recalculated</code>.</li>
 </ol>
 
 <div class="vh-note"><p><strong>The golden rule of coupling here:</strong> plugins never call into each other directly. A connector fires <code>vulnhub_sync_complete</code>; the threat plugin, the rules engine, the widget cache and Jira all <em>listen</em>. To add behaviour, hook an existing action rather than editing another plugin. The hooks worth knowing are catalogued in <a href="?doc=extending">Filters &amp; extension points</a>.</p></div>

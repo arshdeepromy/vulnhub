@@ -1,8 +1,8 @@
-<p>The dashboard is a board of <strong>widgets</strong> you can rearrange. Each widget answers one question and — almost always — every number on it is a link that opens the exact list of findings or assets it counted. This page explains all 37 widgets: what each shows, what its figures mean, how the data is filtered, and where clicking takes you.</p>
+<p>The dashboard is a board of <strong>widgets</strong> you can rearrange. Each widget answers one question and — almost always — every number on it is a link that opens the exact list of findings or assets it counted. This page explains all 39 widgets (36 in core, plus three added by the threat, departments and hosting plugins): what each shows, what its figures mean, how the data is filtered, and where clicking takes you.</p>
 
-<div class="vh-note"><p><strong>How the board works.</strong> Drag the handle on any widget to rearrange; use <em>Customise</em> to add or remove widgets from the picker or reset to defaults. Your layout is saved to your account. Each widget's header has an export menu — <strong>CSV</strong> / <strong>Copy as TSV</strong> when the widget has tabular data, and <strong>PNG</strong> / <strong>SVG</strong> when it draws a chart. Widgets are grouped in the picker as <em>Exposure</em>, <em>End of life</em>, <em>Tenable coverage</em>, <em>Defender coverage</em>, <em>Ownership</em> and <em>Remediation</em>.</p></div>
+<div class="vh-note"><p><strong>How the board works.</strong> Drag the handle on any widget to rearrange (or focus the handle and use the arrow keys); use <em>Customise</em> to add or remove widgets from the picker or <em>Reset to default</em>. Customise needs JavaScript. Your layout is saved to your account. Each widget's header has an export menu — <strong>CSV</strong> / <strong>Copy as TSV</strong> when the widget has tabular data, and <strong>PNG</strong> / <strong>SVG</strong> when it draws a chart. Widgets are grouped in the picker as <em>Exposure</em>, <em>End of life</em>, <em>Tenable coverage</em>, <em>Defender coverage</em>, <em>Ownership</em> and <em>Remediation</em>.</p></div>
 
-<div class="vh-warn"><p><strong>Two things to know before reading numbers.</strong> (1) <strong>Tenable coverage % and Defender coverage % are not comparable</strong> — they use different denominators (Defender additionally excludes device classes no agent runs on). That is why they are in separate groups. (2) A few Exposure widgets (<em>Findings by age</em>, <em>Impact funnel</em>, <em>Impact by OS</em>, <em>Impact by family</em>, <em>Most widespread vulnerabilities</em>) are <strong>not</strong> filtered to the reporting scope, so their totals can be larger than the scoped headline figures. Everywhere else, "reportable" scope applies (see <a href="?doc=lifecycle">Finding lifecycle &amp; scoping</a>).</p></div>
+<div class="vh-warn"><p><strong>Two things to know before reading numbers.</strong> (1) <strong>Tenable coverage % and Defender coverage % are not comparable</strong> — they use different denominators (Defender additionally excludes device classes no agent runs on). That is why they are in separate groups. (2) A few widgets (<em>Findings by age</em>, <em>Impact funnel</em>, <em>Impact by OS</em>, <em>Impact by family</em>, <em>Most widespread vulnerabilities</em>, <em>Most exposed assets</em>, <em>Exposure by team</em>) are <strong>not</strong> filtered to the reporting scope, so their totals can be larger than the scoped headline figures. Everywhere else, "reportable" scope applies (see <a href="?doc=lifecycle">Finding lifecycle &amp; scoping</a>).</p></div>
 
 <h2>The attack-path widget: How an attacker gets in</h2>
 
@@ -18,7 +18,8 @@
 <h2>Group: Exposure</h2>
 
 <h3>Headline figures</h3>
-<p>Four big KPI tiles. <strong>Critical open</strong> = open, non-excepted critical findings on in-scope assets (with the high count beside it). <strong>Past SLA</strong> = open findings past their due date. <strong>Not scanned by Tenable</strong> = in-scope assets with a Tenable coverage gap (with coverage % beside it). <strong>Closed but still detected</strong> = tickets Jira marked done that Tenable still sees. The first two carry a 30-day sparkline. Each tile links to the matching filtered list.</p>
+<p>Four big KPI tiles. <strong>Critical open</strong> = open, non-excepted critical findings on in-scope assets (with the high count beside it). <strong>Past SLA</strong> = open findings past their due date. <strong>Not scanned by Tenable</strong> = in-scope assets with a Tenable coverage gap (with coverage % beside it). <strong>Closed but still detected</strong> = tickets Jira marked done that Tenable still sees. <em>Critical open</em> links to the open criticals, <em>Past SLA</em> to <code>overdue=1</code>, <em>Not scanned</em> to <code>assets?coverage=gap&amp;life=reportable</code>, and <em>Closed but still detected</em> to the (unfiltered) Tickets screen. The first two tiles carry a 30-day sparkline.</p>
+<p>The <em>Past SLA</em> tile's sparkline plots the overdue trend from the nightly snapshot. Snapshots only began recording recently, so the line is short until 30 days of history accumulate.</p>
 
 <h3>Open findings over time (trend)</h3>
 <p>A four-line chart (Critical/High/Medium/Low) of open findings per day over the last 30 days. It reads a nightly <em>snapshot</em> table, not live data, so it shows the <em>direction of travel</em> — is exposure rising or falling.</p>
@@ -36,7 +37,8 @@
 <p>A four-stage funnel: <em>Open findings</em> → <em>Critical or high</em> → <em>With a public exploit</em> (the vuln has <code>exploit_available</code>) → <em>And nobody has a ticket</em>. The last stage is the unmanaged-risk number that matters most. (Not scope-filtered.)</p>
 
 <h3>Most widespread vulnerabilities</h3>
-<p>A bar chart of the vulnerabilities affecting the most assets (critical/medium and above), largest first. "Fix these once and the number moves." Each bar links to that vulnerability's findings. (Filters on the definition's severity; not scope-filtered.)</p>
+<p>A bar chart of the critical, high and medium vulnerabilities affecting the most assets, largest first. "Fix these once and the number moves." (Filters on the definition's severity; not scope-filtered.)</p>
+<p>Each bar opens that vulnerability's detail page (<code>?vuln=&lt;id&gt;</code>) with its affected assets.</p>
 
 <h3>Most exposed assets</h3>
 <p>The machines with the highest stored risk score, with the owner (person, else team, else "Unassigned") and their open critical/high counts — who to chase first. Each hostname links to the single-asset view.</p>
@@ -74,7 +76,7 @@
 <p>A donut with the headline coverage percentage in the centre — how much of the in-scope estate Tenable has a record of. The sub-line names the assets excluded from the figure (by lifecycle status, and un-scannable kit) and links to them.</p>
 
 <h3>Tenable coverage by device type / by site / by source system</h3>
-<p>The same coverage bar, broken down three ways, worst coverage first: by <strong>device type</strong>, by <strong>site/location</strong> (the "Unclassified"/unplaced row usually holds the most gaps), and by <strong>source system</strong> (of the machines <em>this</em> system says exist, how many Tenable knows — plus a "claimed by one system alone" flag for machines to doubt). Every bar links to those gap assets. (By-site and by-source are in the picker.)</p>
+<p>The same coverage bar, broken down three ways, worst coverage first: by <strong>device type</strong>, by <strong>site/location</strong> (the "Unclassified"/unplaced row usually holds the most gaps), and by <strong>source system</strong> (of the machines <em>this</em> system says exist, how many Tenable knows — plus a "claimed by one system alone" flag for machines to doubt). Every bar links to those gap assets. (By device type and by source system are on the default board; by site is in the picker.)</p>
 
 <h3>Tenable coverage of the CMDB</h3>
 <p>A meter + gap tile focused on the CMDB register specifically: of the assets the CMDB says exist, how many Tenable has a record of. The gap tile links to the CMDB assets Tenable is missing.</p>
@@ -93,7 +95,7 @@
 <p>Worst-first breakdowns by device type and source system, and a meter focused on the CMDB register — "onboarded" counts as covered, "onboarded but sensor quiet" is surfaced separately. Bars and tiles link to the assets with no sensor.</p>
 
 <h3>Defender gap list / Defender gaps in the CMDB register</h3>
-<p>Tables of in-scope assets with no reporting Defender sensor, ordered by criticality, with why it is a gap, who knows it, the owner and the last sensor report. The CMDB variant leads the default board.</p>
+<p>Tables of in-scope assets with no reporting Defender sensor, ordered by criticality, with why it is a gap, who knows it, the owner and the last sensor report. The CMDB variant is near the end of the default board; the general list is in the picker.</p>
 
 <h2>Group: Ownership</h2>
 
@@ -101,7 +103,7 @@
 <p>A severity-stacked bar per team (top 8 by critical→high→total) — who currently carries the open findings. "Unassigned" is findings on assets with no team. The team label links to that team's findings; each severity segment links to that severity within the team.</p>
 
 <h3>Vulnerabilities by department</h3>
-<p>The same shape as Exposure by team, but grouped by the <strong>department</strong> that owns the device (finding → asset → owner → department), largest first. Selecting a bar opens that department's findings; a coloured segment opens it filtered to one severity. Departments come from an Entra export you upload under Admin → Departments — see <a href="?doc=departments">Departments</a>. (Present once at least one person has a department.)</p>
+<p>The same shape as Exposure by team, but grouped by the <strong>department</strong> that owns the device (finding → asset → owner → department), largest first. Selecting a bar opens that department's findings; a coloured segment opens it filtered to one severity. Departments come from an Entra export you upload under Admin → Departments — see <a href="?doc=departments">Departments</a>. The widget is always on the default board (after Exposure by team); until departments are recorded it says so and points to <em>Admin → Departments</em>. Its "all departments" link opens a dedicated, hidden departments page.</p>
 
 <h3>Ownership gaps</h3>
 <p>Workstations and mobiles, in scope, with <em>no owner person</em> — highest-risk first, so you know who has nobody to chase. Hostnames link to the asset; the footer opens the full "needs a user" list.</p>
@@ -123,5 +125,11 @@
 <h3>Exceptions expiring</h3>
 <p>Approved risk acceptances with an expiry date, soonest first. When one lapses its findings stop being excepted and re-enter the open counts — so this is your review queue. References link to the exceptions list. (In the picker.)</p>
 
+<h2>Servers by hosting environment</h2>
+<p>Added by the hosting plugin (Exposure group, full width, at the end of the default board). Servers are classified as cloud (AWS / Azure / GCP / other cloud) or on-prem, or left unclassified, from cloud instance ids, the location register and hostname naming. Each environment shows its server count, the Linux / Windows split and its open findings by severity, and links to its findings (<code>hosting=…</code>).</p>
+
+<h2>The default board</h2>
+<p>A new user's board, in order: Headline figures, How an attacker gets in, Vulnerabilities by severity and age, Exposure by product, Open findings over time, Findings by severity, Patch availability, Vulnerable software in Downloads folders, Platforms past end of life, Tenable coverage, Tenable coverage of the CMDB, Defender coverage of the CMDB, Tenable coverage by device type, Tenable coverage by source system, Defender coverage, Defender coverage by device type, Findings by age, Impact funnel, Exposure by team, Vulnerabilities by department, Ownership gaps, Most widespread vulnerabilities, Most exposed assets, Remediation health, Closure verification, Ticket flow, Tenable gaps in the CMDB register, Defender gaps in the CMDB register, Tenable gap list, Servers by hosting environment. Everything else is in the picker.</p>
+
 <h2>How the numbers stay fresh</h2>
-<p>Rendered widgets are cached per board with 15-minute freshness and up to 6-hour serve-stale, so a page load rarely waits on the database. When a connector sync finishes it <em>busts</em> only the widgets that read the data it moved (findings, assets, coverage, Defender, tickets, threat), and a background job re-renders them. So the board reflects new data within about a minute of a sync without ever rebuilding everything at once. If a figure looks stale, it is at most one refresh behind; an administrator can force a refresh from the object cache.</p>
+<p>Each widget's rendered HTML is cached for its host and language, fresh for 15 minutes and served stale for up to 6 hours while a background refresh runs, so a page load rarely waits on the database. A finished sync marks stale only the widgets that read the data it moved; saving Settings, a decommission, a coverage recalculation or an import marks everything stale. An hourly cron re-warms the board as a safety net. There is no manual refresh button — an administrator can run <code>wp cache flush</code>. See <a href="?doc=widget-framework">Building a widget</a> for the mechanics.</p>

@@ -1,7 +1,7 @@
-<p>The <strong>Assets</strong> screen is the register of every machine VulnHub knows about — merged from all your systems into one row each — with its owner, what has and hasn't scanned it, whether the internet can reach it, and the findings it carries. It is where coverage-gap drill-downs land.</p>
+<p>The <strong>Assets</strong> screen is the register of every machine VulnHub knows about — merged from all your systems into one row each — with its owner, what has and hasn't scanned it, which systems know it, and the open exposure it carries. It is where coverage-gap drill-downs land.</p>
 
 <h2>What one asset row represents</h2>
-<p>A single machine may be discovered by Tenable, managed by Intune, recorded in the CMDB and seen by Defender. VulnHub merges them by matching on the strongest identifier available (Tenable UUID → Intune id → Azure AD id → serial → hostname) and remembers every contributing system. So one row can carry facts from four sources, and the "Discovered by" / "Known from" column tells you which.</p>
+<p>A single machine may be discovered by Tenable, managed by Intune, recorded in the CMDB and seen by Defender. VulnHub merges them by matching on the strongest identifier available (Tenable UUID → Intune id → Azure AD id → serial → hostname) and remembers every contributing system. So one row can carry facts from four sources, and the <em>Known by</em> column tells you which (the asset page also names the system that first <em>discovered</em> it).</p>
 
 <h2>Key fields</h2>
 <div class="vh-defs">
@@ -14,19 +14,35 @@
 </div>
 
 <h2>Coverage — the blind-spot view</h2>
-<p>Every asset carries a <strong>Tenable coverage state</strong> and a <strong>Defender coverage state</strong>, precomputed so the coverage widgets are fast:</p>
-<div class="vh-defs">
-  <div><span class="k">Covered</span><span class="v">Tenable/Defender has a current record of it.</span></div>
-  <div><span class="k">Unscanned / silent</span><span class="v">Known to the tool but not scanned in the freshness window (Tenable), or onboarded but the sensor is quiet (Defender). Surfaced, but not counted as a gap.</span></div>
-  <div><span class="k">Gap</span><span class="v">Not in the tool at all, or no recent contact from anything — a genuine blind spot. This is what the "gap list" widgets and the <code>coverage=gap</code> / <code>defender=gap</code> filters select.</span></div>
-  <div><span class="k">Out of scope / other device</span><span class="v">Retired kit, or device classes nobody scans (printers, switches) — excluded from the coverage denominator so the percentage is honest.</span></div>
-</div>
+<p>Every asset carries a <strong>Tenable coverage state</strong> (the <em>Scan coverage</em> column) and a <strong>Defender coverage state</strong> (<em>EDR coverage</em>), precomputed so the coverage widgets are fast. The states marked <span class="vh-tag vh-tag--critical">gap</span> are the genuine blind spots that the gap-list widgets and the <code>coverage=gap</code> / <code>defender=gap</code> filters select:</p>
+<table>
+  <thead><tr><th>Tenable (scan coverage)</th><th>Defender (EDR coverage)</th></tr></thead>
+  <tbody>
+    <tr><td>Not in Tenable <span class="vh-tag vh-tag--critical">gap</span></td><td>Not in Defender <span class="vh-tag vh-tag--critical">gap</span></td></tr>
+    <tr><td>No recent contact <span class="vh-tag vh-tag--critical">gap</span></td><td>Seen, not onboarded <span class="vh-tag vh-tag--critical">gap</span></td></tr>
+    <tr><td>Never scanned</td><td>No recent contact <span class="vh-tag vh-tag--critical">gap</span></td></tr>
+    <tr><td>Scan is stale</td><td>Never reported</td></tr>
+    <tr><td>Covered</td><td>Sensor silent</td></tr>
+    <tr><td>Not a scanning target</td><td>Onboarded</td></tr>
+    <tr><td>Out of scope</td><td>Not an endpoint target</td></tr>
+    <tr><td></td><td>Out of scope</td></tr>
+  </tbody>
+</table>
+<p><em>Never scanned</em>, <em>Scan is stale</em>, <em>Never reported</em> and <em>Sensor silent</em> are surfaced but not counted as gaps. <em>Not a scanning target</em> / <em>Not an endpoint target</em> (printers, switches, appliances) and <em>Out of scope</em> (retired kit) are excluded from the coverage denominator so the percentage is honest.</p>
 <div class="vh-warn"><p><strong>The two coverage percentages are not the same measure.</strong> Tenable "covered" counts any Tenable record; Defender additionally excludes device classes no agent runs on. Compare each to itself over time, not to each other.</p></div>
 
 <h2>Reachability</h2>
-<p>Assets also carry an internet-facing verdict with its basis — <em>Reachable</em> (observed evidence), <em>Ruled out</em> (scanned, nothing listening) or <em>Never looked</em> (no port scan yet). This is what the attack-path widget's edge lane depends on; the full logic is on the <a href="?doc=classification">Routes, delivery &amp; reachability</a> page. A verdict a person sets by hand is preserved across rule passes.</p>
+<p>The threat plugin also gives each asset an internet-facing verdict with its basis — <em>Reachable</em> (observed evidence), <em>Ruled out</em> (scanned, nothing listening) or <em>Never looked</em> (no port scan yet). This is what the attack-path widget's edge lane depends on; the full logic is on the <a href="?doc=classification">Routes, delivery &amp; reachability</a> page. A verdict a person sets by hand is preserved across rule passes. The verdict is not shown on the Assets list or the asset page: it appears on the attack-path widget's reachability strip, and as the <em>Reachable via</em> column on the findings list when filtered to <code>route=edge</code>.</p>
 
 <h2>Filters &amp; drill-downs</h2>
-<p>The asset list can be filtered by coverage state (<code>coverage=gap</code>, <code>defender=gap</code>), lifecycle scope (<code>life=reportable</code> and friends), the system that knows it (<code>known=cmdb</code>, or <code>known=only:intune</code> for single-source machines to doubt), device type, team, location (<code>location_id=none</code> = unplaced), ownership gap (<code>needs_user=1</code>), and end-of-life release. A single asset opens to its full detail — identity, sources, coverage, reachability, and its findings.</p>
+<p>The list's controls are <strong>Search</strong> (hostname, IP, owner, serial), <strong>Type</strong>, <strong>Team</strong>, <strong>Site</strong> (including <em>No site recorded</em>), <strong>Scan coverage</strong> (any gap, or a specific Tenable state), <strong>Endpoint</strong> (no Defender sensor, or a specific state), <strong>Known by</strong> (a source, <code>only:&lt;source&gt;</code> for single-source machines to doubt, or <code>not:&lt;source&gt;</code>), <strong>Lifecycle</strong> (reporting scope, everything with an owner expectation, everything including retired, outside the reporting scope, out of service only, or one status) and <strong>Missing a user</strong>. Dashboard links can also carry <code>primary_source</code>, <code>operating_system</code>, <code>patch_group</code> and <code>eol</code>, shown as removable chips.</p>
+<p>Columns: Host, Scan coverage (Tenable), EDR coverage (Defender), Known by, Type, Operating system, Owner (masked until revealed), Team, Open exposure. Sort by host, type, owner or exposure; more rows load as you scroll. Under 640px the list restacks as cards.</p>
+<p>When the list is filtered by <strong>Known by</strong> (a source, or <em>only</em> that source), every row still shows all of its sources, but the one you filtered on is moved to the front of the <em>Known by</em> cell and highlighted with the accent colour and a dot, so you can scan down the column and confirm each row is what the filter says. Its tooltip notes that it is the filtered source. A <em>not known by</em> filter highlights nothing, because no row carries that source. Clicking any source chip filters the list to that source.</p>
+
+<h2>One asset</h2>
+<p><code>?asset=&lt;id&gt;</code> opens a machine's page: <strong>Ownership</strong> (owner, email, department, team, location, and what resolved it), <strong>Identity</strong> and lifecycle (FQDN, serial, hardware and support end, the systems that know it with their scan and sensor dates, criticality, business service, environment, patch group, last seen), <strong>Cloud</strong> (account, region, instance, network) where relevant, <strong>Open exposure</strong> by severity with tags, and its <strong>Open findings</strong>.</p>
+
+<h2>Decommissioning</h2>
+<p>With triage permission, tick assets and choose <strong>Mark decommissioned</strong>, <strong>Return to service</strong>, or <em>Another status…</em>; the same buttons sit on a single asset's page. Decommissioning takes the asset out of scan coverage and archives its open findings, so the totals stop counting risk you no longer carry. Nothing is deleted, and returning the asset to service puts every finding back as it was. You come back to the same filtered list.</p>
 
 <div class="vh-tip"><p><strong>The most valuable asset view is the gap list.</strong> A production server the CMDB vouches for but Tenable has never scanned is precisely the machine your dashboard <em>can't</em> see findings on — so the coverage-gap widgets, which land here, are often more important than the findings you already have.</p></div>

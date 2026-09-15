@@ -29,24 +29,53 @@
     $layout[] = array( 'id' =&gt; 'my_widget', 'width' =&gt; 6 );
     return $layout;
 } );</pre>
-<p>Existing users pick it up automatically: the framework tracks which widgets a user has <em>seen</em> (distinct from <em>removed</em>), appends a newly shipped widget once, and leaves it off if they later remove it. This is exactly how the attack-path widget inserts itself right after the headline.</p>
+<p>Only widgets placed in the default layout reach existing boards. The framework tracks which widgets a user has <em>seen</em> (distinct from <em>removed</em>): the next time someone who has saved a layout opens the dashboard, any default-layout widget they have never seen is appended at the <em>end</em> of their board at its default width and saved; if they remove it, it stays removed. Your filter's position (the attack-path widget splices itself in right after <code>headline</code>) only applies to users who have never saved a layout.</p>
+
+<div class="vh-note"><p><strong>Register early.</strong> <code>all()</code> memoises the registry for the rest of the request, so hook <code>vulnhub_dashboard_widgets</code> on <code>plugins_loaded</code> or <code>init</code>, not later.</p></div>
 
 <h2>Widths &amp; groups</h2>
 <p>The grid is 12 columns. Legal widths are <strong>3, 4, 6, 8, 12</strong>; anything else is snapped back to the widget's default. The picker groups are <em>Exposure</em>, <em>End of life</em>, <em>Tenable coverage</em>, <em>Defender coverage</em>, <em>Ownership</em> and <em>Remediation</em> — the coverage groups are deliberately separate so their non-comparable percentages aren't mistaken for one number.</p>
 
 <h2>What the framework does for you</h2>
 <ul>
-  <li><strong>The frame &amp; header</strong> — title, summary, a keyboard-operable drag handle, and the export menu (PNG/SVG when there's an SVG, CSV/TSV when there's a <code>data</code> callback).</li>
-  <li><strong>Per-user layout</strong> — arrangement is saved to user meta and sanitised on save (unknown ids dropped, widths snapped), whether saved by drag (REST) or the JS-off Customise form (admin-post). A user can never store a widget they can't see.</li>
-  <li><strong>CSV export</strong> — served from a nonced <code>admin-post.php</code> endpoint, gated by <code>Caps::VIEW</code>, straight from your <code>data</code> callback.</li>
+  <li><strong>The frame &amp; header</strong> — markup <code>section.vh-w.vh-w--{width}[data-vh-widget][data-vh-width]</code> containing <code>header.vh-w__head</code> and <code>div.vh-w__body</code>; title, summary, a drag handle that also responds to arrow keys, and the export menu. PNG/SVG appear only when your rendered HTML contains <code>&lt;svg</code>; CSV appears when there's a <code>data</code> callback. <code>vh-motion.js</code> keys its animations off <code>data-vh-widget</code>.</li>
+  <li><strong>Per-user layout</strong> — stored in user meta <code>vulnhub_dashboard_layout</code>, with the ids a user has ever had in <code>vulnhub_dashboard_seen</code>. It is sanitised on save (unknown ids and duplicates dropped, widths snapped), whether saved by drag (<code>POST vulnhub-dashboard/v1/layout</code>), by the Customise panel's Save (<code>admin-post.php?action=vulnhub_save_layout</code>), or reset (<code>/layout/reset</code>). Customise needs JavaScript; without it the board still renders from the saved layout. A user can never store a widget they can't see.</li>
+  <li><strong>CSV export</strong> — served from a nonced <code>admin-post.php</code> endpoint (<code>vulnhub_widget_csv</code>), gated by <code>Caps::VIEW</code>, straight from your <code>data</code> callback.</li>
 </ul>
+
+<div class="vh-warn"><p><strong>"Copy as TSV" copies the first <code>&lt;table&gt;</code> in the widget</strong>, not the <code>data</code> callback. A widget that draws no table gets a copy button with nothing to copy, so render a table view (even a visually hidden one) if you want that button to work.</p></div>
 
 <h2>The cache — read this before you wonder why a change didn't show</h2>
 <p>Rendered widget HTML is cached in a transient keyed <code>vh_w_&lt;md5(id|locale|home_url)&gt;</code> (the host is in the key because widget HTML carries absolute links and this app answers on two hostnames). There are two horizons: <strong>15-minute freshness</strong> and <strong>6-hour serve-stale</strong>. On render the board serves the cached copy immediately and, if stale, queues a background re-render — so a sync never makes a visitor wait.</p>
 
-<p>Invalidation is by <strong>epoch stamp</strong> travelling inside the cache entry, not in the key — so a bust marks markup stale rather than hiding it. Each widget's stamp is composed from its <code>depends</code> sources plus a global floor. When a connector finishes, <code>bust_for_connector()</code> maps it to the sources it moved (e.g. <code>tenable → findings, assets, coverage</code>; <code>jira → tickets</code>; <code>threat → threat, findings</code>) and ticks only those — so only the affected widgets rebuild. A whole-board <em>warm</em> job re-renders the default layout plus everyone's saved widgets on cron.</p>
+<p>Invalidation is by <strong>epoch stamp</strong> travelling inside the cache entry (<code>{html, epoch, fresh_until}</code>), not in the key — so a bust marks markup stale rather than hiding it. Each widget's stamp is composed from its <code>depends</code> sources plus a global floor. When a connector finishes, <code>bust_for_connector()</code> maps it to the sources it moved and ticks only those, so only the affected widgets rebuild. The map is filterable via <code>vulnhub_widget_connector_sources</code>:</p>
 
-<div class="vh-warn"><p><strong>Consequence for development and content edits:</strong> editing a widget's PHP does not change what visitors see until its cache entry rolls or is busted. During development, flush the object cache (<code>wp cache flush</code>) after a change. In production, a connector sync busts the right widgets automatically.</p></div>
+<table>
+  <thead><tr><th>Connector</th><th>Sources busted</th></tr></thead>
+  <tbody>
+    <tr><td><code>tenable</code></td><td>findings, assets, coverage</td></tr>
+    <tr><td><code>intune</code></td><td>assets, coverage</td></tr>
+    <tr><td><code>defender</code></td><td>defender, assets, coverage</td></tr>
+    <tr><td><code>cmdb</code></td><td>assets</td></tr>
+    <tr><td><code>jira</code></td><td>tickets</td></tr>
+    <tr><td><code>threat</code></td><td>threat, findings</td></tr>
+    <tr><td><code>alerts</code></td><td>threat</td></tr>
+  </tbody>
+</table>
+<p>An unknown connector busts everything. (No core widget currently declares <code>threat</code>; the attack-path widget declares no <code>depends</code>, so it rebuilds on every bust.)</p>
+
+<p>Rebuilding happens off the request path. A stale read queues <code>vulnhub_widget_refresh</code> for that one widget (5-minute lock). After <code>vulnhub_sync_complete</code> or <code>vulnhub_coverage_recalculated</code>, <code>queue_warm()</code> (2-minute lock) re-renders the default layout plus the ids on up to 200 users' boards, for every remembered host (up to 4). An hourly <code>vulnhub_widget_warm_cron</code> does the same as a safety net. <code>warm_state()</code> reports the last warm's time, count and epoch, and <code>vulnhub_widget_cache_ttl</code> / <code>vulnhub_widget_stale_ttl</code> tune the two horizons.</p>
+
+<div class="vh-warn"><p><strong>Consequence for development and content edits:</strong> editing a widget's PHP does not change what visitors see until its cache entry rolls or is busted. To mark every widget stale without deleting anything, run <code>wp eval 'VulnHub_Dash_Widgets::bust();'</code> — the next viewer still gets the old markup while a refresh is queued. <code>wp cache flush</code> deletes the entries (Redis holds the transients), so the next viewer renders them fresh. Saving platform Settings also calls <code>bust()</code>. In production, a connector sync busts the right widgets automatically.</p></div>
+
+<p>A finished CSV import busts the board twice over: <code>vulnhub_import_complete</code> now fires when the job completes, and the import runner's own <code>Coverage::recalculate()</code> fires <code>vulnhub_coverage_recalculated</code>. That is harmless — a bust only ticks an epoch, and the warm job holds a two-minute lock.</p>
 
 <h2>A note on live vs cached data</h2>
-<p>Most widgets run their SQL live on each (uncached) render, so freshness tracks the last sync. Two add their own caching — <em>Exposure by product</em> (a materialised summary table plus a 6-hour transient) and <em>Patch availability</em> (a per-request memo). The <em>trend</em> widget is special: it reads a pre-aggregated nightly snapshot table, not live findings, because it is plotting history.</p>
+<p>Most widgets run their SQL live on each (uncached) render, so freshness tracks the last sync. Two add their own caching — <em>Exposure by product</em> (a live aggregate cached in a <code>vh_prod_…</code> transient for 6 hours, invalidated by any bust because the global epoch is part of its key) and <em>Patch availability</em> (a per-request memo). A materialised product summary table exists in the schema, but its rebuild routine is not currently called, so that path never serves. The <em>trend</em> widget is special: it reads a pre-aggregated nightly snapshot table, not live findings, because it is plotting history.</p>
+
+<h2>Widgets added by other plugins</h2>
+<div class="vh-defs">
+  <div><span class="k">attack_paths</span><span class="v">vulnhub-threat — "How an attacker gets in", placed right after the headline on a new board.</span></div>
+  <div><span class="k">department_exposure</span><span class="v">vulnhub-departments — "Vulnerabilities by department", placed after <code>team_exposure</code>.</span></div>
+  <div><span class="k">server_hosting</span><span class="v">vulnhub-hosting — "Servers by hosting environment", appended to the end of the default board.</span></div>
+</div>
