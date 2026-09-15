@@ -12,7 +12,7 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 
 const BASE = 'http://localhost:8093';
-const PASS = fs.readFileSync('/srv/vulnhub/.portal_test_pass', 'utf8').trim();
+const PASS = fs.readFileSync('/home/romy/vulnhub/.portal_test_pass', 'utf8').trim();
 const GAP = 16;
 
 let passed = 0;

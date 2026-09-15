@@ -8,7 +8,7 @@ const width = parseInt(process.argv[3] || '390', 10);
   const b = await chromium.launch();
   const c = await b.newContext({ viewport: { width, height: 900 } });
   const p = await c.newPage();
-  const pass = fs.readFileSync('/srv/vulnhub/.admin_pass', 'utf8').trim();
+  const pass = fs.readFileSync('/home/romy/vulnhub/.admin_pass', 'utf8').trim();
   await p.goto('http://localhost:8093/wp-login.php', { waitUntil: 'domcontentloaded' });
   await p.fill('#user_login', (process.env.VH_ADMIN_USER || 'admin'));
   await p.fill('#user_pass', pass);

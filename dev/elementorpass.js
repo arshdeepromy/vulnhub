@@ -12,7 +12,7 @@ const { chromium } = require('playwright');
 const fs = require('fs');
 
 const BASE = 'http://localhost:8093';
-const PASS = fs.readFileSync('/srv/vulnhub/.admin_pass', 'utf8').trim();
+const PASS = fs.readFileSync('/home/romy/vulnhub/.admin_pass', 'utf8').trim();
 
 let passed = 0;
 let failed = 0;
@@ -61,7 +61,7 @@ function bad(label, detail) {
     try {
       docs = JSON.parse(
         require('child_process')
-          .execSync(`/srv/vulnhub/wp.sh option get vulnhub_elementor_documents --format=json 2>/dev/null`)
+          .execSync(`/home/romy/vulnhub/wp.sh option get vulnhub_elementor_documents --format=json 2>/dev/null`)
           .toString()
           .trim()
       );

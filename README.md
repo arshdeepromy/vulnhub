@@ -4,15 +4,14 @@ Vulnerability, asset and ownership intelligence — built as WordPress plugins s
 there is no bespoke framework to maintain and security patching rides on
 WordPress's own update channel.
 
-Clone this repo, add the plugins/themes it doesn't include (see below), and
-bring it up with `docker compose up -d` from the repo root.
+Everything lives on the Kiro box under `/home/romy/vulnhub`.
 
 ---
 
 ## Running it
 
 ```bash
-cd /srv/vulnhub
+cd /home/romy/vulnhub
 docker compose ps            # stack status
 docker compose logs -f wordpress
 ./lint.sh                    # php -l across every plugin file
@@ -121,22 +120,25 @@ What each connector needs:
 
 ---
 
-## Publishing behind a reverse proxy or tunnel
+## Publishing at vulnhub.example.com
 
-The app is designed to run correctly behind a reverse proxy or tunnel
-(Cloudflare Tunnel, nginx, an ALB, etc.) with no config change: `wp-config`
-derives `WP_HOME`/`WP_SITEURL` from the request's `Host` header at runtime,
-and trusts `X-Forwarded-Proto` / `CF-Connecting-IP` (falling back to
-`X-Forwarded-For`) to detect HTTPS and the real client IP. Verified by
-replaying a request with a spoofed `Host` + `X-Forwarded-Proto: https`
-header: every emitted absolute URL matched the spoofed host, with zero
-`localhost` leakage and no mixed content — the same install serves both
-`localhost:8093` and a public hostname unmodified.
+The app is already correct behind the tunnel — verified by replaying a tunnel
+request (`Host: vulnhub.example.com`, `X-Forwarded-Proto: https`): HTTP 200, all 18
+absolute URLs emitted as `https://vulnhub.example.com`, zero `localhost` leakage, no
+mixed content. `wp-config` derives `WP_HOME`/`WP_SITEURL` from the request host
+and trusts `X-Forwarded-Proto` / `CF-Connecting-IP`, so the same install serves
+both `localhost:8093` and the public hostname without a config change.
 
-To publish it, point your reverse proxy / tunnel's ingress at
-`HTTP://localhost:8093` under whatever public hostname you want. For
-Cloudflare Tunnel that's Zero Trust → Networks → Tunnels → your tunnel →
-**Public Hostnames** → Add, with **Service** set to `HTTP://localhost:8093`.
+The one remaining step needs the Cloudflare dashboard, because this tunnel is
+token-managed (its ingress lives in Cloudflare, not in a local config file, and
+there are no Cloudflare API credentials on this box):
+
+> Zero Trust → Networks → Tunnels → tunnel `59d0ba76-cb9c-48a5-ade0-3f967d0c10be`
+> → **Public Hostnames** → Add:
+> **Subdomain** `vul` · **Domain** `example.com` · **Service** `HTTP://localhost:8093`
+
+The tunnel already serves `wpmcp.example.com`, so the zone is attached and DNS
+will be created automatically.
 
 Two things to do straight after it resolves:
 

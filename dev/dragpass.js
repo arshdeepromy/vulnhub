@@ -68,7 +68,7 @@ const ghostSlot = page => page.evaluate(() => {
   page.on('pageerror', e => errs.push(String(e).slice(0,160)));
   page.on('console', m => { if (m.type()==='error') errs.push(m.text().slice(0,160)); });
 
-  const pw = fs.readFileSync('/srv/vulnhub/.admin_pass','utf8').trim();
+  const pw = fs.readFileSync('/home/romy/vulnhub/.admin_pass','utf8').trim();
   await page.goto(`${BASE}/sign-in/`, { waitUntil: 'domcontentloaded' });
   await page.fill('input[name="log"], #user_login, input[name="username"]', (process.env.VH_ADMIN_USER || 'admin'));
   await page.fill('input[type="password"]', pw);

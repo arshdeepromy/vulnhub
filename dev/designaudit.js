@@ -11,7 +11,7 @@ const path = require('path');
 const { chromium } = require('playwright');
 
 const BASE = 'http://localhost:8093';
-const ROOT = '/srv/vulnhub';
+const ROOT = '/home/romy/vulnhub';
 
 const WIDTHS = [
   { name: 'desktop', width: 1440, height: 900 },

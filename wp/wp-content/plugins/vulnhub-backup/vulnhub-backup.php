@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       VulnHub Backup
- * Plugin URI:        https://github.com/arshdeepromy/vulnhub
+ * Plugin URI:        https://vulnhub.example.com
  * Description:       Full-fidelity backup and restore for VulnHub — batched, resumable DB export and wp-content archiving, optional scheduled push to S3 with count-based retention, and a chunked-upload restore path for standing the site up again on a fresh stack.
  * Version:           1.0.0
  * Requires at least: 6.5

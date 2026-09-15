@@ -23,7 +23,7 @@ x-wordpress-config-extra: &wp_config_extra |
       $$_SERVER['REMOTE_ADDR'] = trim( explode( ',', $$_SERVER['HTTP_X_FORWARDED_FOR'] )[0] );
   }
 
-  /* Dynamic host: works both on localhost:8093 and behind a reverse proxy/tunnel at any public hostname */
+  /* Dynamic host: works both on localhost:8093 and behind the tunnel at vulnhub.example.com */
   if ( ! empty( $$_SERVER['HTTP_HOST'] ) ) {
       $$vh_scheme = ( isset( $$_SERVER['HTTPS'] ) && 'on' === $$_SERVER['HTTPS'] ) ? 'https' : 'http';
       $$vh_host   = preg_replace( '/[^a-zA-Z0-9\\.\\-:]/', '', $$_SERVER['HTTP_HOST'] );

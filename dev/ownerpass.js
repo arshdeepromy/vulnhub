@@ -32,7 +32,7 @@ const bad = (n, d) => { fail++; console.log(`FAIL  ${n}${d ? '  — ' + d : ''}`
   page.on('pageerror', e => errs.push(String(e).slice(0, 140)));
   page.on('console', m => { if (m.type() === 'error') errs.push(m.text().slice(0, 140)); });
 
-  const pw = fs.readFileSync('/srv/vulnhub/.admin_pass', 'utf8').trim();
+  const pw = fs.readFileSync('/home/romy/vulnhub/.admin_pass', 'utf8').trim();
   await page.goto(`${BASE}/sign-in/`, { waitUntil: 'domcontentloaded' });
   await page.fill('input[name="log"], #user_login, input[name="username"]', (process.env.VH_ADMIN_USER || 'admin'));
   await page.fill('input[type="password"]', pw);
@@ -48,7 +48,7 @@ const bad = (n, d) => { fail++; console.log(`FAIL  ${n}${d ? '  — ' + d : ''}`
    * the test fails when the two disagree.
    */
   const sql = (q) => {
-    const out = execSync(`echo ${JSON.stringify(q)} | /srv/vulnhub/q.sh`, { encoding: 'utf8' })
+    const out = execSync(`echo ${JSON.stringify(q)} | /home/romy/vulnhub/q.sh`, { encoding: 'utf8' })
       .trim().split('\n');
     return parseInt(out[out.length - 1].trim(), 10);
   };
@@ -97,7 +97,7 @@ const bad = (n, d) => { fail++; console.log(`FAIL  ${n}${d ? '  — ' + d : ''}`
 
   console.log('\nwhat already worked still works');
   // A hostname read out of the estate, so this survives a re-import too.
-  const host = execSync("echo \"SELECT hostname FROM vh_vulnhub_assets WHERE hostname <> '' LIMIT 1\" | /srv/vulnhub/q.sh", { encoding: 'utf8' })
+  const host = execSync("echo \"SELECT hostname FROM vh_vulnhub_assets WHERE hostname <> '' LIMIT 1\" | /home/romy/vulnhub/q.sh", { encoding: 'utf8' })
     .trim().split('\n').pop().trim();
   const h = await count(`${BASE}/assets/?search=${encodeURIComponent(host)}&life=all`, ASSET);
   (h >= 1) ? ok('hostname still matches', `${h}`) : bad('hostname still matches', `${h}`);
@@ -119,7 +119,7 @@ const bad = (n, d) => { fail++; console.log(`FAIL  ${n}${d ? '  — ' + d : ''}`
    * and never printed -- only the count it produces is.
    */
   const email = execSync(
-    `echo "SELECT email FROM vh_vulnhub_people WHERE display_name LIKE '%Owner Name%' AND email <> '' LIMIT 1" | /srv/vulnhub/q.sh`,
+    `echo "SELECT email FROM vh_vulnhub_people WHERE display_name LIKE '%Owner Name%' AND email <> '' LIMIT 1" | /home/romy/vulnhub/q.sh`,
     { encoding: 'utf8' }
   ).trim().split('\n').pop().trim();
 

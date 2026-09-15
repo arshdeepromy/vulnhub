@@ -23,7 +23,7 @@ function check(name, ok, detail) {
   page.on('pageerror', (e) => errors.push(String(e).slice(0, 200)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 200)); });
 
-  const pw = fs.readFileSync('/srv/vulnhub/.admin_pass', 'utf8').trim();
+  const pw = fs.readFileSync('/home/romy/vulnhub/.admin_pass', 'utf8').trim();
   await page.goto(`${BASE}/wp-login.php`, { waitUntil: 'domcontentloaded' });
   await page.fill('#user_login', (process.env.VH_ADMIN_USER || 'admin'));
   await page.fill('#user_pass', pw);

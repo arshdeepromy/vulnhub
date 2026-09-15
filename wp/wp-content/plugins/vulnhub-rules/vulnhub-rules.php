@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       VulnHub Classification Rules
- * Plugin URI:        https://github.com/arshdeepromy/vulnhub
+ * Plugin URI:        https://vulnhub.example.com
  * Description:       Saveable, ordered, testable rules that classify assets — environment, business criticality, asset type, business service and a numeric priority weight — from hostname, FQDN, IP/CIDR, OS, Tenable tags, CMDB service, lifecycle and source. Runs before core's ownership mapping.
  * Version:           1.0.0
  * Requires at least: 6.5

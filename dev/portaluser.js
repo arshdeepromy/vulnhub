@@ -33,7 +33,7 @@ const SECTIONS = [
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 160)); });
 
   // Sign in through the portal's own form, not wp-login.
-  const pw = fs.readFileSync('/srv/vulnhub/.portal_test_pass', 'utf8').trim();
+  const pw = fs.readFileSync('/home/romy/vulnhub/.portal_test_pass', 'utf8').trim();
   await page.goto(`${BASE}/sign-in/`, { waitUntil: 'domcontentloaded' });
   await page.fill('input[name="log"], #user_login, input[name="username"]', (process.env.VH_PORTAL_USER || 'portal.tester'));
   await page.fill('input[type="password"]', pw);
