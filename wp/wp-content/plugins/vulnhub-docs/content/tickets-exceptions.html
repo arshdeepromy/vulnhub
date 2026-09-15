@@ -9,18 +9,22 @@
   <div><span class="k">Raise</span><span class="v">From a finding, VulnHub creates a Jira issue (routed to the owning team's project) and links the findings to it. The finding then shows its ticket.</span></div>
   <div><span class="k">Sync</span><span class="v">Ticket status is pulled back from Jira. The <em>Ticket flow</em> widget shows the split by status category — To do / In progress / Done.</span></div>
   <div><span class="k">Reopen</span><span class="v">If a still-detected issue was closed, the reopener flags it — a closed ticket is a <em>claim</em>, not proof.</span></div>
-  <div><span class="k">Verify</span><span class="v">When a ticket closes, VulnHub waits a settling period then re-runs a narrowed scan to <em>prove</em> the finding is gone.</span></div>
+  <div><span class="k">Verify</span><span class="v">When a ticket closes, VulnHub waits a settling period (<em>Settings → Closure verification delay</em>, so the scanner has time to run again), then re-checks each covered finding against current Tenable data through a vulnerability export narrowed to those plugins. It does not trigger a scan itself.</span></div>
 </div>
 
 <h3>Verification — "closed" vs "actually fixed"</h3>
-<p>This is the point of the <em>Closure verification</em> widget. After a ticket is marked done, the finding's verification state moves through:</p>
+<p>This is the point of the <em>Closure verification</em> widget. Each ticket carries a verification state:</p>
 <div class="vh-defs">
-  <div><span class="k">Pending</span><span class="v">Closed in Jira; not yet re-checked.</span></div>
-  <div><span class="k">Confirmed fixed</span><span class="v">A rescan confirms the finding is gone. The good outcome.</span></div>
-  <div><span class="k">Still detected</span><span class="v">Tenable still sees it — a false closure. The finding is flipped back to <em>reopened</em>.</span></div>
-  <div><span class="k">Cannot verify</span><span class="v">The rescan was inconclusive.</span></div>
+  <div><span class="k">Awaiting verification</span><span class="v">Closed in Jira; not yet re-checked. (The widget labels this <em>Not yet checked</em>.)</span></div>
+  <div><span class="k">Verified fixed</span><span class="v">Tenable now reports every covered finding fixed, or no longer reports it on an asset that has since been rescanned. The good outcome.</span></div>
+  <div><span class="k">Still detected</span><span class="v">Tenable still sees it — a false closure. The finding goes back to <em>reopened</em>, and the Jira issue is commented on and reopened.</span></div>
+  <div><span class="k">Cannot verify</span><span class="v">The asset has not been rescanned since the ticket closed, so remediation is unproven either way.</span></div>
+  <div><span class="k">Not required</span><span class="v">No verification applies to this ticket (for example, it is still open).</span></div>
 </div>
 <p>The dashboard's "Closed but still detected" headline tile counts the <em>still detected</em> tickets — the closures you cannot trust.</p>
+
+<h3>The Tickets screen</h3>
+<p>Four tiles (<em>Open</em>, <em>Closed</em>, <em>Awaiting verification</em>, <em>Closed but still detected</em>), filters for Search (key or summary), Status (To do / In progress / Done) and Verification, and a table of Key (opens Jira), Summary, Status, Assignee, Findings and Verification. Tickets are raised from the Vulnerabilities list, either per row or for the selected rows.</p>
 
 <h3>SLAs</h3>
 <p>Each team has per-severity SLA targets (by default: Critical 7 days, High 30, Medium 90, Low 180). A finding's <strong>due date</strong> is set from its team's SLA, and the "Past SLA" / "Findings within SLA" figures are computed against it.</p>
@@ -38,8 +42,13 @@
   <div><span class="k">Scope</span><span class="v"><strong>This finding</strong> (one finding on one asset), <strong>this asset</strong> (all its findings), <strong>this vulnerability</strong> (across all assets), or <strong>a team</strong> (one vulnerability across a team).</span></div>
   <div><span class="k">Reason</span><span class="v">False positive, compensating control, no fix available, business impact, end of life, not exploitable, accepted risk, or other.</span></div>
   <div><span class="k">Justification</span><span class="v">Required, and at least 20 characters — the record an auditor will read.</span></div>
-  <div><span class="k">Expiry</span><span class="v">Mandatory, and in the future. Exceptions are temporary, reviewed decisions.</span></div>
+  <div><span class="k">Expiry</span><span class="v">Required by the form, which defaults it to 90 days out; the server rejects a date in the past. Exceptions are temporary, reviewed decisions.</span></div>
 </div>
+
+<p>The <em>Except</em> button on a findings row opens the request form inside the portal's Exception register, and the register's <em>Ref</em> column opens an exception for review there too.</p>
+
+<h3>The Exception register</h3>
+<p>Tiles for <em>Awaiting approval</em>, <em>Active</em>, <em>Findings suppressed</em> (still tracked, not counted as open) and <em>Expiring in 30 days</em>; a Status filter (Draft, Pending approval, Approved, Rejected, Expired, Revoked); and a table of Ref, Title, Reason, Findings, Status, Requested by and Expires. <em>Find a finding to except</em> takes a requester to the Vulnerabilities list.</p>
 
 <h3>The lifecycle of an exception</h3>
 <p>An exception moves <em>draft → pending → approved</em> (or <em>rejected</em>). Approval requires the approver capability. On approval it stamps the matching open findings, which immediately drop out of the live counts (a separate "excepted" figure keeps them visible). Each night, approved exceptions past their expiry flip to <em>expired</em> and their findings return to the counts — which is what the <em>Exceptions expiring</em> widget is warning you about. <strong>Revoking</strong> one clears its findings straight away. Every exception carries a reference (<code>EXC-0001</code>, …) so decisions are citable.</p>

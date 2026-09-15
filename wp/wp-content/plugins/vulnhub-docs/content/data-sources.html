@@ -1,6 +1,6 @@
 <p>VulnHub does not scan anything itself. It is a <em>correlation</em> layer: it pulls from the systems you already run — your scanner, your device manager, your CMDB, your cloud — reconciles them into one asset register, and enriches everything with public threat intelligence. This page explains each source, what it contributes, and how often it runs.</p>
 
-<div class="vh-note"><p><strong>Sample data.</strong> Until credentials are added, the portal runs on generated sample data and shows a "Sample data" chip in the top bar. Everything below describes a live deployment; the shape of the data is identical either way.</p></div>
+<div class="vh-note"><p><strong>Sample data.</strong> Until credentials are added, the portal runs on generated sample data: the administration area shows a <em>MOCK DATA</em> badge in its context bar, and the Elementor <em>data-source badge</em> widget reads "Sample data". (The older "Sample data" chip is hidden in the icon rail.) Everything below describes a live deployment; the shape of the data is identical either way.</p></div>
 
 <h2>The connectors</h2>
 
@@ -18,6 +18,21 @@
 
 <h3>Tenable — the spine</h3>
 <p>Tenable is the primary source. It brings in the asset inventory and every vulnerability finding through Tenable's asynchronous export API (request → poll → download in chunks, so a huge export never has to fit in memory). By default it imports Critical→Low findings (informational findings are left out — they would more than double the row count). It keys assets on their Tenable UUID and findings on the scanner plugin id. Tenable's own <code>FIXED</code> state is what closes a finding — VulnHub never guesses "fixed" from absence.</p>
+<h4>Incremental syncs and full resyncs</h4>
+<p>A Tenable sync downloads the export to disk first and then imports it, so an interrupted run resumes rather than starting over. Most runs are <strong>incremental</strong>: they ask Tenable for what it has <em>seen</em> since the last successful sync, with a 24-hour overlap.</p>
+<div class="vh-defs">
+  <div><span class="k">Findings</span><span class="v">Every open or reopened finding a scan saw again in the window, whether or not anything about it changed, plus every finding fixed in the window. Unchanged ones only get their "last seen" date moved, and the run summary counts them as <em>unchanged</em>.</span></div>
+  <div><span class="k">Assets</span><span class="v">Only assets Tenable scanned in the window.</span></div>
+</div>
+<p>So the size of an incremental sync follows how much of the estate was scanned, not how much changed. What it cannot see:</p>
+<ul>
+  <li>an asset renamed, re-tagged or otherwise changed in Tenable without being rescanned;</li>
+  <li>assets deleted or terminated in Tenable;</li>
+  <li>findings on assets that were not rescanned (they stay as they were);</li>
+  <li>updated vulnerability details (exploit flag, VPR, solution) until some finding for that vulnerability is seen again.</li>
+</ul>
+<p>A <strong>full resync</strong> covers those. It re-reads the whole inventory (bounded by <em>Only import assets seen in the last N days</em>) with the full finding history, and it is the only kind of run that retires assets Tenable has dropped — Tenable-only assets, reversibly, and never more than 15% in one run. A run is full when it is the very first sync, when someone presses <strong>Full resync</strong> on the Tenable connector card (<strong>Admin → Integrations → Tenable</strong>), or when <em>Full resync every N days</em> (default 7; 0 turns the schedule off) has passed since the last one. The card shows when the last full resync ran and when the next is due. A full resync takes much longer than a normal sync and always runs in the background.</p>
+<div class="vh-warn"><p><strong>Full or incremental is decided by the sync history, not by what is in the database.</strong> If findings or assets are ever cleared while the connector settings remain, the next sync is still incremental and will not bring the history back — press <strong>Full resync</strong>. Also check <em>Only import assets seen in the last N days</em> before a full resync: a short window leaves out, and retires, Tenable-only assets that have not been scanned within it.</p></div>
 <p>A companion <strong>verifier</strong> runs hourly: when a remediation ticket closes, it waits a settling period (default 24h) then re-runs a narrowed scan export to <em>prove</em> the finding is gone. Still-detected findings are flipped back to <em>reopened</em>.</p>
 
 <h3>Intune &amp; Entra ID — devices and people</h3>

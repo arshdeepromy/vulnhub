@@ -31,7 +31,7 @@
 
 <h3>The EPSS threshold</h3>
 
-<p>EPSS is a continuous probability, so it needs a line. A CVE counts as "likely enough to matter" when its EPSS is at or above the threshold, which defaults to <strong>0.10 (a 10% chance in the next 30 days)</strong>. Administrators can change it under <strong>Settings</strong> (option <code>vulnhub_threat_epss_min</code>); changing it re-derives the flags in a single SQL statement, with no need to re-ingest the feeds.</p>
+<p>EPSS is a continuous probability, so it needs a line. A CVE counts as "likely enough to matter" when its EPSS is at or above the threshold, which defaults to <strong>0.10 (a 10% chance in the next 30 days)</strong>. Administrators can change it under <strong>Admin → Threat context</strong> (option <code>vulnhub_threat_epss_min</code>, entered there as a percentage); changing it re-derives the flags in a single SQL statement, with no need to re-ingest the feeds.</p>
 
 <h3>How the three combine into <code>has_poc</code></h3>
 

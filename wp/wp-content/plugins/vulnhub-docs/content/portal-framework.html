@@ -33,7 +33,9 @@ add_action( 'vulnhub_dash_render_view_runbook', function (): void {
 
 <h2>Navigation</h2>
 
-<p><code>render_nav()</code> draws the top bar. The primary nav iterates <code>vulnhub_dash_views()</code>, skipping <code>hidden</code> views and any view without a page. For a link that is <em>not</em> a full view — an Elementor page, an external tool — use the <code>vulnhub_portal_nav_extra</code> filter:</p>
+<p><code>render_nav()</code> draws the portal chrome. It still outputs <code>&lt;header class="vh-topbar"&gt;</code>, but <code>app-redesign.css</code> turns it into a fixed 64px icon rail down the left edge: labels are visually hidden and appear when the rail is hovered or focused (it widens to 224px as an overlay, so the page never reflows), and below 768px it becomes a sticky bar across the top. The rail lists every view that is not <code>hidden</code> and has a mapped page, then any <code>vulnhub_portal_nav_extra</code> links. Its foot holds the light/dark toggle, the <strong>Administration</strong> link (only with <code>Caps::MANAGE</code>) and the account menu (<em>Security &amp; MFA</em>, <em>Sign out</em>). <code>body_class()</code> adds <code>vh-app-body</code> on every portal page, <code>vh-chrome-rail</code> when the portal draws its own rail, and <code>vh-login-body</code> on sign-in.</p>
+
+<p>For a link that is <em>not</em> a full view — an Elementor page, an external tool — use the <code>vulnhub_portal_nav_extra</code> filter:</p>
 
 <pre>add_filter( 'vulnhub_portal_nav_extra', function ( array $links ): array {
     $links[] = array(
@@ -44,7 +46,16 @@ add_action( 'vulnhub_dash_render_view_runbook', function (): void {
     );
     return $links;
 } );</pre>
-<p>An entry with no <code>url</code> or no <code>label</code> is dropped. The <strong>Administration</strong> link is rendered separately and only for users with the manage capability; the <code>admin</code> view is <code>hidden</code> so it never appears in the main loop.</p>
+<p>An entry with no <code>url</code> or no <code>label</code> is dropped, <code>icon</code> defaults to a square, and extra links appear in the rail after the built-in views. The <strong>Administration</strong> link is rendered separately and only for users with the manage capability; the <code>admin</code> view is <code>hidden</code> so it never appears in the main loop.</p>
+
+<h3>Page layout</h3>
+<p>The body reserves the 64px rail with <code>padding-left</code>, and <code>.vh-main</code> and the footer centre themselves in the remaining width up to <code>--vh-content-max</code> (1440px). On a wide or zoomed-out window the spare space is split evenly on both sides of the column rather than piling up on the right. Below 768px the rail becomes the top bar and the column uses the full width. The sign-in view is full-bleed and reserves nothing.</p>
+
+<h3>Replacing the chrome</h3>
+<p>If <code>vulnhub_portal_has_custom_header</code> returns true (vulnhub-elementor does this when a Theme Builder header is assigned), <code>templates/app.php</code> fires <code>vulnhub_portal_header</code> instead of <code>render_nav()</code>, and <code>vh-chrome-rail</code> is not added, so no rail space is reserved. <code>vulnhub_portal_has_custom_footer</code> / <code>vulnhub_portal_footer</code> do the same for the footer. <code>vulnhub_portal_notice</code> fires between the chrome and <code>&lt;main&gt;</code>. The sign-in view draws neither header nor footer.</p>
+
+<h3>Assets &amp; theme</h3>
+<p><code>VulnHub_Dash_App::assets()</code> registers its handles everywhere but enqueues them only on portal pages: <code>app.css</code>, <code>app-redesign.css</code>, <code>app.js</code> (depends on <code>wp-api-fetch</code>; localised as <code>VulnHubApp</code> with <code>nonce</code>, <code>restRoot</code> and <code>i18n</code>) and <code>vh-motion.js</code>. Each version string is the plugin version plus the file's mtime, so a CDN treats an edited file as a new object. Sign-in additionally loads <code>login.css</code>, <code>login.js</code>, <code>attack-surface-bg.js</code> and web fonts, and dequeues Elementor's front-end bundles. The UI is dark by default; <code>html[data-theme="light"]</code> swaps the token set, and a pre-paint script restores the choice from <code>localStorage['vh-theme']</code>. A contributed view enqueues its own assets (the docs plugin does so on its page) and should style with <code>--vh-*</code> tokens so both themes work.</p>
 
 <h2>Guarding &amp; access</h2>
 
@@ -53,11 +64,13 @@ add_action( 'vulnhub_dash_render_view_runbook', function (): void {
   <li><code>guard_portal()</code> (on <code>template_redirect</code>) sends a <em>logged-out</em> visitor on a portal page to the sign-in screen.</li>
   <li><code>gate()</code> (inside <code>render_view()</code>) requires <code>Caps::VIEW</code> for every non-login view. A logged-in user without a VulnHub role gets an inline "not granted a role" notice rather than a redirect loop.</li>
 </ul>
-<p>The <code>admin</code> view additionally checks each section's own capability. A <strong>portal-only user</strong> is a runtime concept, not a role: logged in, holds <code>Caps::VIEW</code>, but lacks <code>manage_options</code> — such users are kept out of wp-admin entirely and the admin bar is hidden on portal pages. Roles and capabilities are covered in <a href="?doc=extending">Filters &amp; extension points</a> and defined in <code>vulnhub-core</code>'s <code>Caps</code> class.</p>
+<p>The sign-in view is handled before <code>gate()</code>, so it is always reachable. The <code>admin</code> view additionally checks each section's own capability and hides sections you cannot open. The WordPress admin bar is hidden on every portal page, for everyone. A <strong>portal-only user</strong> is a runtime concept, not a role: logged in, holds <code>Caps::VIEW</code>, but lacks <code>manage_options</code>. Any wp-admin screen redirects such a user back to the portal (<code>admin-post.php</code> and <code>admin-ajax.php</code> are exempt, so portal forms still save), and signing in sends them straight to the dashboard. Roles and capabilities are covered in <a href="?doc=extending">Filters &amp; extension points</a> and defined in <code>vulnhub-core</code>'s <code>Caps</code> class.</p>
+
+<p>Portal links stay in the portal: the account menu's <em>Security &amp; MFA</em> opens the <em>Your security</em> admin section (registered by vulnhub-auth, capability <code>vulnhub_view</code>), and the <em>Except</em> button on a findings row opens the request form inside the Exception register. Both used to point at wp-admin, which bounced portal-only accounts back to the dashboard.</p>
 
 <h2>Admin sections</h2>
 
-<p>The admin area's section list is <code>VulnHub_Dash_Portal::sections()</code>, filterable via <code>vulnhub_portal_sections</code>. A section has a <code>label</code>, a required <code>cap</code>, a <code>group</code> (<code>data</code> / <code>integrations</code> / <code>platform</code>), an <code>order</code>, and a <code>summary</code>. If it names a <code>screen</code>, core draws it; otherwise, if a local <code>admin-views/&lt;section&gt;.php</code> exists it is included; otherwise it falls through to <code>do_action('vulnhub_render_portal_section', $section)</code> — the seam for a plugin-owned section:</p>
+<p>The admin area's section list is <code>VulnHub_Dash_Portal::sections()</code>, filterable via <code>vulnhub_portal_sections</code>. A section has a <code>label</code>, a required <code>cap</code>, a <code>group</code> (<code>data</code> / <code>integrations</code> / <code>platform</code>), an <code>order</code>, and a <code>summary</code>. If it names a <code>screen</code>, core's <code>render_screen()</code> draws it; otherwise the portal tries <code>vulnhub-dashboard/admin-views/&lt;section&gt;.php</code> (that directory does not currently exist), and then fires <code>do_action('vulnhub_render_portal_section', $section)</code> — the seam for a plugin-owned section. Imports and Rules, for example, are core section entries with no <code>screen</code>, answered by vulnhub-import and vulnhub-rules:</p>
 
 <pre>add_filter( 'vulnhub_portal_sections', function ( array $s ): array {
     $s['runbook'] = array(
@@ -75,4 +88,29 @@ add_action( 'vulnhub_render_portal_section', function ( string $section ): void 
     echo '…section body…';
 } );</pre>
 
-<p>Integration plugins that register wp-admin screens via <code>vulnhub_admin_pages</code> are <em>mirrored</em> into portal sections automatically — they register once and appear in both places with no extra code. That is how Tenable, Intune, Jira, CMDB and Backup become configurable inside the portal.</p>
+<div class="vh-warn"><p><strong>Gotchas.</strong> <code>group</code> must be exactly <code>data</code>, <code>integrations</code> or <code>platform</code> — any other value registers a section that never appears in the side nav. The render action fires for <em>every</em> section without a <code>screen</code>, so always check <code>$section</code> first. An unknown <code>?section=</code> falls back to <code>overview</code>.</p></div>
+
+<p>Integration plugins that register wp-admin screens via <code>vulnhub_admin_pages</code> are <em>mirrored</em> into portal sections automatically as <code>screen-&lt;slug&gt;</code> — they register once and appear in both places with no extra code, marked with a <em>WP</em> badge in the side nav. Tenable, Intune, CMDB, Jira, Automation and Backup land in the <em>Integrations</em> group; Authentication and End of life (slugs containing <code>auth</code> or <code>lifecycle</code>) land in <em>Platform</em>. Core screens the portal already covers natively (findings, assets, tickets, exceptions, integrations, sync, audit, settings, ownership) are not mirrored.</p>
+
+<h3>The admin shell</h3>
+<p>The section list defaults to <code>overview</code> (which needs <code>Caps::MANAGE</code>). Above the body sits a context bar with the breadcrumb, a <em>MOCK DATA</em> badge when sample data is on, and connector health ("N connectors failing / idle"). The side nav has a <em>Filter sections…</em> box and a red dot on <em>Integrations</em> while a connector's last run failed. A save handler that redirects with <code>vh_type=success&amp;vh_msg=…</code> shows a "Saved" chip. The footer shows when Tenable, CMDB, Intune and Jira last ran, plus the core and schema versions. A form posted from the portal carries <code>vh_from_portal</code> (or a portal referer), and <code>vh_admin_url()</code> redirects are then rewritten to the matching portal section instead of wp-admin.</p>
+
+<h2>REST routes &amp; form actions</h2>
+<table>
+  <thead><tr><th>Endpoint</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>POST vulnhub-dashboard/v1/layout</code>, <code>/layout/reset</code></td><td>Save or reset the current user's board (the drag editor).</td></tr>
+    <tr><td><code>GET /findings-more</code>, <code>/assets-more</code></td><td>Infinite-scroll row fragments, rebuilt from the same <code>$_GET</code> filters as the first page.</td></tr>
+    <tr><td><code>GET /vuln-assets?vuln=</code>, <code>/product-assets?product=</code></td><td>Lazy bodies for the <em>Vulnerability on assets</em> and <em>By product</em> tabs.</td></tr>
+    <tr><td><code>GET /vendor-drill</code></td><td>The vendor-card drill-down modal (paged, with an export URL).</td></tr>
+    <tr><td><code>GET /sync-status?connector=</code></td><td>Live connector progress for the connector cards.</td></tr>
+    <tr><td><code>admin-post: vulnhub_save_layout</code>, <code>vulnhub_widget_csv</code>, <code>vulnhub_set_lifecycle</code>, <code>vulnhub_export_csv</code></td><td>Layout save, widget CSV, decommission / return to service (needs <code>Caps::TRIAGE</code>), and list CSV export with a column picker.</td></tr>
+  </tbody>
+</table>
+<p>Every <code>vulnhub-dashboard/v1</code> route requires a logged-in user with <code>Caps::VIEW</code>.</p>
+
+<h2>Gotchas</h2>
+<ul>
+  <li><code>view_for_post()</code> matches the page content literally on <code>view="&lt;name&gt;"</code> with double quotes — a page written with single quotes is served as the dashboard.</li>
+  <li>The sign-in screen has its own filters and actions: <code>vulnhub_portal_login_wordmark</code>, <code>vulnhub_portal_login_host</code>, <code>vulnhub_portal_request_access_url</code>, <code>vulnhub_portal_privacy_url</code>, <code>vulnhub_portal_terms_url</code>, <code>vulnhub_portal_status_url</code>, and the actions <code>vulnhub_portal_login_top</code> / <code>vulnhub_portal_login_bottom</code>.</li>
+</ul>

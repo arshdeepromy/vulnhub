@@ -1,8 +1,10 @@
 # VulnHub Core — plugin developer contract
 
 Read this before writing any VulnHub integration plugin. Core owns the data model,
-the credential vault, scheduling, logging, ownership mapping and the admin portal.
-Your plugin supplies **one connector class** and (optionally) its own admin screen.
+the credential vault, scheduling, logging, ownership mapping and the wp-admin screens.
+The front-end portal those screens are mirrored into lives in `vulnhub-dashboard`
+(see `docs/PORTAL.md`). Your plugin supplies **one connector class** and
+(optionally) its own admin screen.
 
 Plugins live under `wp/wp-content/plugins/` in the repository.
 
@@ -143,6 +145,31 @@ the `vulnhub_sync_complete` action. Throwing is safe — it is caught and logged
 
 **Mock mode is mandatory.** Every connector must produce useful data with
 `$this->is_mock() === true` and no credentials, using the shared fixtures in §5.
+
+### Long-running and incremental syncs
+
+Three more optional overrides on `\VulnHub\Core\Connector`, for a connector
+whose sync is big enough not to belong in a web request:
+
+```php
+public function async_sync(): bool;          // true: "Sync now" is queued to cron, not run inline
+public function resumable_sync(): bool;      // true while a checkpointed run is left on disk
+public function supports_full_sync(): bool;  // true: syncs incrementally, so "everything" is a different run
+public function request_full_sync(): void;   // remember that the next fresh run should be full
+public function full_sync_note(): string;    // one line for the connector card ('' for nothing)
+```
+
+`POST vulnhub/v1/connectors/<id>/sync` with `full=true` calls
+`request_full_sync()` on a connector that supports it and **queues** the run
+for any async connector — it no longer runs a full sync inline in the request.
+The MCP tool `vulnhub_sync_connector` routes the same way. A request is a
+flag, not a run: it must outlive the web request, survive an interrupted run
+being resumed first, and be cleared only when a full run completes. Store it
+somewhere a long-running sync will not overwrite — the Tenable connector keeps
+it in its own option, because connector settings are saved whole from an
+in-process copy. When `supports_full_sync()` is true the Integrations screen
+shows a *Full resync* button and the note. See `docs/SYNC.md` for how the
+Tenable connector decides full versus incremental.
 
 ---
 
@@ -413,6 +440,12 @@ Your job is only to populate the raw signals: asset type, tags, and — for Intu
 do_action( 'vulnhub_register_connectors', $connectors );   // register here
 do_action( 'vulnhub_loaded', $core );
 do_action( 'vulnhub_sync_complete', $connector_id, $status, $stats );
+
+// A CSV import job that finished successfully, after merge, roll-ups,
+// ownership mapping and Coverage::recalculate(). $type is 'tenable' or
+// 'cmdb'. Register with accepted_args 0 if you only want the signal --
+// the first argument is the import type, not a connector id.
+do_action( 'vulnhub_import_complete', $type, $job_id, $counters );
 do_action( 'vulnhub_verify_closures' );    // hourly: re-check closed tickets
 do_action( 'vulnhub_run_automations' );    // every 15 min
 apply_filters( 'vulnhub_create_ticket', null, $finding_ids, $request );   // ITSM plugin answers
@@ -487,23 +520,51 @@ add_action( 'vulnhub_render_admin_page', static function ( string $slug ): void 
 ```
 
 An admin screen registered this way is **automatically mirrored into the
-front-end portal** — `VulnHub_Dash_Portal::mirrored_sections()` reads
-`vulnhub_admin_pages` and draws each one under Administration. You do not
-register twice. Two consequences:
+front-end portal**. The dashboard plugin's (private)
+`VulnHub_Dash_Portal::mirrored_sections()` reads `vulnhub()->admin->pages()` —
+which is where `vulnhub_admin_pages` is applied — and turns every screen not in
+its `ADMIN_PAGES_HANDLED_ELSEWHERE` list into a section with the slug
+`screen-<your-slug>`, marked *WP* in the side nav. It lands in the
+**Integrations** group (order 100 upward in steps of 5), except slugs containing
+`auth` or `lifecycle`, which go to **Platform** at order 15. You do not register
+twice. For the portal shell as a whole see `docs/PORTAL.md`. Consequences:
 
 * Your view is included on the front end, where `wp-admin/includes/*` is not
   loaded. `Admin::render_screen()` loads `screen.php`, `template.php`,
   `plugin.php` and `misc.php` before including a view, so `submit_button()`,
   `add_settings_error()` and friends work — but anything beyond those four
   files you must require yourself.
-* Anything wider than about 700px needs to survive a phone. `.wp-list-table`
-  and `.form-table` are handled for you in `app.css`; a bespoke wide layout is
-  not.
+* Core's `admin.css` is **not** loaded on the portal (only `admin.js` is), so
+  wp-admin styling does not come with your view.
+* Anything wider than about 700px needs to survive a phone, and **nothing does
+  that for you**. `app.css` only recolours `table.widefat`; there is no portal
+  rule for `.wp-list-table` or `.form-table`, and the last browser pass found
+  every administration section overflowing at 390px. Wrap wide content in
+  `.vh-tablewrap` (or make it stack) yourself.
+* A form posted from the portal still goes to `admin-post.php`; redirect with
+  `vh_admin_url()` and the dashboard plugin's `vulnhub_admin_screen_url` filter
+  keeps the operator in the portal (it recognises a `vh_from_portal` field or a
+  portal referer).
 
 To add a portal administration section that has no wp-admin equivalent, use
 `vulnhub_portal_sections` (filter) and `vulnhub_render_portal_section`
-(action). To add a destination to the portal's primary navigation, use
-`vulnhub_portal_nav_extra`:
+(action). A section is `label`, `cap`, `group`, `order`, `summary` and an
+optional `screen`. Know before you start:
+
+* **`group` must be `data`, `integrations` or `platform`.** Anything else is
+  accepted by the filter and then never drawn in the side nav.
+* Rendering order: a section with `screen` is drawn by core's `render_screen()`;
+  otherwise `vulnhub-dashboard/admin-views/<section>.php` is tried (that
+  directory does not currently exist); otherwise the action fires. **The action
+  fires for every screen-less section**, so your callback must check the
+  `$section` it is given before printing anything.
+* An unknown `?section=` falls back to `overview`, and a section the user lacks
+  the `cap` for shows an access message rather than a 403.
+
+To add a destination to the portal's primary navigation, use
+`vulnhub_portal_nav_extra`. Entries without a `url` or `label` are dropped, and
+they appear in the rail after the core views, icon-only until the rail is
+hovered:
 
 ```php
 add_filter( 'vulnhub_portal_nav_extra', static function ( array $links ): array {
@@ -521,6 +582,13 @@ add_filter( 'vulnhub_portal_nav_extra', static function ( array $links ): array 
 
 Widgets are laid out on a 12-column grid the operator arranges. Two things are
 worth knowing before touching it.
+
+**The masonry below is currently overridden in CSS.** `app-redesign.css`
+("Strict aligned rows", an operator preference) forces `grid-auto-flow: row`,
+`grid-auto-rows: auto` and `grid-row: auto` with `!important`, so widgets lay out
+in reading order with each row's tops and bottoms aligned. `app.js` still
+measures and writes spans; the stylesheet wins. Remove that block to get the
+packing described here back.
 
 **Packing is done in JavaScript, on purpose.** `grid-auto-flow: dense` closes
 horizontal holes on its own, but grid makes every item in a row as tall as the
@@ -548,16 +616,58 @@ Arrow keys on a focused grip do the same job for anyone not using a pointer.
 The order saves itself to `POST vulnhub-dashboard/v1/layout` (capability
 `vulnhub_view` — a layout is stored per person, so there is no one else's to
 reach), debounced, and flushed on `pagehide` with `keepalive` so a nudge
-followed immediately by a click away is not lost. The Customise form still
-posts to `admin-post.php` and still works with JavaScript off.
+followed immediately by a click away is not lost. The Customise panel's Save
+and *Reset to default* both post to `admin-post.php?action=vulnhub_save_layout`
+(Reset adds `reset=1`). `POST vulnhub-dashboard/v1/layout/reset` exists as well,
+though the portal's own script does not call it. **Customise needs JavaScript:** its
+button and form ship `hidden` and `app.js` reveals them. With scripting off the
+board still renders from the saved layout; it just cannot be rearranged.
 
 The portal's own header and footer can be replaced wholesale — see
 `docs/ELEMENTOR.md` for `vulnhub_portal_has_custom_header`,
 `vulnhub_portal_header` and their footer equivalents.
 
-Reuse core's CSS classes so screens look native: `vh-card`, `vh-grid vh-grid--2|3|4`,
-`vh-table-wrap`, `vh-filters`, `vh-pill vh-sev-critical`, `vh-state vh-state--open`,
-`vh-form`, `vh-tabs`, `vh-empty`, `vh-log`, `vh-detail`, `vh-mono`, `vh-muted`.
+Reuse the portal's CSS classes so screens look native: `vh-card`,
+`vh-grid vh-grid--2|3|4`, `vh-tablewrap` (alias `vh-table-wrap`), and
+`vh-tablewrap--cards` to restack a list as cards below 640px, `vh-tableview`,
+`vh-filters`, `vh-pill vh-sev-critical`, `vh-state` (with `vh-state--good` /
+`--bad`), `vh-form`, `vh-tabs`, `vh-empty`, `vh-mono`, `vh-muted`. Use `--vh-*`
+tokens for colour so the dark default and the light theme both work.
+
+Classes that exist only in core's wp-admin `admin.css` have **no rules on the
+portal**: `vh-state--open` and the other per-state modifiers, `vh-log` and
+`vh-detail`. They render unstyled there.
+
+### Portal extension points
+
+All defined by `vulnhub-dashboard`; none needs a change to it.
+
+| Hook / endpoint | Kind | Purpose |
+|---|---|---|
+| `vulnhub_dash_views` | filter | Add a whole portal view: `title`, `slug`, `menu`, `icon`, `hidden`. You must also create its page (content `[vulnhub_app view="<name>"]`, double quotes — matched literally) and add it to the `vulnhub_dash_pages` option yourself, because the dashboard's activation has already run. vulnhub-alerts, vulnhub-departments and vulnhub-docs do this. |
+| `vulnhub_dash_render_view_<view>` | action | Draw that view. Checked before the built-in views, after the access gate. |
+| `vulnhub_portal_has_custom_header` / `_footer`, `vulnhub_portal_header` / `_footer` | filter / action | Replace the chrome (see `docs/ELEMENTOR.md`). An assigned header removes the icon rail. |
+| `vulnhub_portal_notice` | action | Anything between the chrome and `<main>`, on every portal view including sign-in. |
+| `vulnhub_portal_nav_extra` | filter | Extra navigation links (above). |
+| `vulnhub_portal_sections`, `vulnhub_render_portal_section` | filter / action | Administration sections (above). |
+| `vulnhub_portal_login_wordmark`, `vulnhub_portal_login_host`, `vulnhub_portal_request_access_url`, `vulnhub_portal_privacy_url`, `vulnhub_portal_terms_url`, `vulnhub_portal_status_url` | filters | The sign-in screen's wordmark, host line and footer links. |
+| `vulnhub_portal_login_top`, `vulnhub_portal_login_bottom` | actions | Extra markup on the sign-in card. |
+| `vulnhub_admin_screen_url` | filter (core) | Answered by the dashboard to keep admin-post redirects in the portal. |
+| `vulnhub_dashboard_widgets`, `vulnhub_dashboard_default_layout` | filters | Register a dashboard widget and place it on the default board. |
+| `vulnhub_widget_connector_sources` | filter | Which widget data sources a connector's sync invalidates. |
+| `vulnhub_widget_cache_ttl`, `vulnhub_widget_stale_ttl` | filters | Widget cache fresh window (15 min) and serve-stale window (6 h). |
+| `vulnhub_product_icons`, `vulnhub_product_colours` | filters | Product artwork on the exposure widgets. |
+| `POST vulnhub-dashboard/v1/layout`, `/layout/reset` | REST | Save or reset the current user's board. |
+| `GET vulnhub-dashboard/v1/findings-more`, `/assets-more` | REST | Infinite-scroll row fragments, built from the same `$_GET` filters as the page. |
+| `GET vulnhub-dashboard/v1/vuln-assets`, `/product-assets` | REST | Expandable rows on the *Vulnerability on assets* and *By product* tabs. |
+| `GET vulnhub-dashboard/v1/vendor-drill` | REST | Vendor card drill-down (paged, with its export URL). |
+| `GET vulnhub-dashboard/v1/sync-status` | REST | Live connector progress for the connector cards. |
+| `admin-post: vulnhub_save_layout` | form | Save or reset a layout (`vulnhub_view`, nonce). |
+| `admin-post: vulnhub_widget_csv` | form | One widget's rows as CSV (`vulnhub_view`, nonce `vulnhub_widget_csv_<id>`). |
+| `admin-post: vulnhub_set_lifecycle` | form | Decommission / return to service (`vulnhub_triage`; `lifecycle` or `lifecycle_other`, `assets[]`, `back`). |
+| `admin-post: vulnhub_export_csv` | form | List CSV export with column picker (`VulnHub_Dash_Export`). |
+
+Every `vulnhub-dashboard/v1` route requires a signed-in user with `vulnhub_view`.
 
 ---
 
