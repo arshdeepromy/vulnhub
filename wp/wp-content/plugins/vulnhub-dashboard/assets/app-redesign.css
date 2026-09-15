@@ -374,6 +374,26 @@ a.vh-segbars__seg:hover, a.vh-segbars__seg:focus-visible { outline: 2px solid va
 }
 .vh-w__head h2 { margin: 0; font-size: 15px; font-weight: 640; color: var(--vh-ink); }
 .vh-w__body { flex: 1; min-width: 0; }
+/*
+ * The export menu drops out of the header, so the header has to outrank the
+ * body -- and by default it does not.
+ *
+ * app.css lifts every direct child of a widget above the decorative flow
+ * canvas with `.vh-w > * { position: relative; z-index: 1 }`. That makes the
+ * header and the body two stacking contexts at the SAME level, and the body
+ * comes second in the DOM, so it paints over the header no matter what
+ * z-index the menu gives itself: the menu's z-index: 25 is confined to the
+ * header's own context and can only ever rank as that header's 1.
+ *
+ * Nothing showed it until a widget put something in the same corner the menu
+ * drops into. `.vh-matrix__tools` (Copy table / Copy as TSV, absolutely
+ * positioned top-right of the body) overlapped the open menu by 168x28px and
+ * took the clicks, so the panel looked like it had rendered wrong.
+ *
+ * 3, not 2, to sit above `.vh-panel__head` conventions elsewhere in this file.
+ */
+.vh-w__head { z-index: 3; }
+
 .vh-w__menu { position: relative; flex: 0 0 auto; }
 .vh-w__menu > summary {
   display: inline-flex; align-items: center; justify-content: center;
