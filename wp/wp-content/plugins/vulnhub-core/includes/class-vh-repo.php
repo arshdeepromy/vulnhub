@@ -1601,7 +1601,7 @@ final class Repo {
 		}
 
 		// Either spelling of the CI number counts: the sys_id the export
-		// carries in `Vendor CMDB ID`, or the `Key` people quote (CI-23826).
+		// carries in a vendor-prefixed CMDB ID column, or the `Key` people quote (CI-23826).
 		if ( '' !== trim( (string) ( $data['cmdb_id'] ?? '' ) ) || '' !== trim( (string) ( $data['cmdb_key'] ?? '' ) ) ) {
 			++$evidence;
 		}

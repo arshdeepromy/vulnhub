@@ -198,7 +198,7 @@ programme's own refresh proposal.
 Rows are matched to assets on **normalised hostname** — lower-cased, trimmed,
 and cut at the first dot — with a fallback to the first label of an asset's
 FQDN. That fallback is not decoration: one host matched only because the asset
-is named `jira` while its FQDN is `wlgsrvjirarh1.…`.
+is named `jira` while its FQDN is `appsrv14.…`.
 
 **The import never creates assets.** A programme row with no matching asset is
 kept and shown as *not in inventory*: the programme knowing about a server the

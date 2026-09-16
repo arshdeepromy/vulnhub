@@ -707,7 +707,7 @@ final class VH_EOS_View {
 			);
 			?>
 			<p class="vh-meta vh-eos__fynote">
-				<?php esc_html_e( 'Quarters follow a financial year starting 1 April, and "overdue" is measured against the last day of the quarter named. The programme has this listed as an open item — if Acme\'s fiscal calendar differs, the overdue split moves with it.', 'vulnhub' ); ?>
+				<?php esc_html_e( 'Quarters follow a financial year starting 1 April, and "overdue" is measured against the last day of the quarter named. The programme has this listed as an open item — if your organisation\'s fiscal calendar differs, the overdue split moves with it.', 'vulnhub' ); ?>
 			</p>
 		</div>
 		<?php

@@ -75,7 +75,25 @@ final class VulnHub_Cmdb_Schema {
 	 */
 	public static function aliases(): array {
 		return array(
-			'cmdb_id'          => array( 'cmdbid', 'cmdbid', 'key', 'ciid', 'ci', 'cinumber', 'configurationitem', 'configurationitemid', 'sysid', 'assetid', 'assettag', 'citag', 'number' ),
+			/*
+			 * No 'key' here, and no vendor-prefixed spelling of the CI number.
+			 *
+			 * Real exports prefix the column with whoever runs the CMDB --
+			 * "<Vendor> CMDB ID" -- which no alias list can enumerate and which
+			 * has no business being hard-coded into a public repository. Pass 2
+			 * already catches it: `cmdbid` matches as a substring of any such
+			 * spelling. That only works if pass 1 has not already bound this
+			 * field to something else first, which is why 'key' is left to
+			 * `cmdb_key`, where the reference people actually quote belongs.
+			 *
+			 * 'assettag' / 'assetid' / 'citag' are gone for the same reason and
+			 * a second one: an asset tag is a finance label, not a
+			 * configuration-item id. In the live workspace "Asset Tag" is
+			 * populated on 2 of 1,186 objects, and matching it exactly in pass 1
+			 * beat the substring match in pass 2 -- so 1,184 CIs lost the
+			 * identifier they had and picked up an empty column instead.
+			 */
+			'cmdb_id'          => array( 'cmdbid', 'ciid', 'ci', 'cinumber', 'configurationitem', 'configurationitemid', 'sysid', 'number' ),
 			'hostname'         => array( 'hostname', 'host', 'ciname', 'devicename', 'computername', 'servername', 'machinename', 'name', 'device', 'server', 'system' ),
 			'fqdn'             => array( 'fqdn', 'dnsname', 'fullyqualifieddomainname' ),
 			'serial_number'    => array( 'serialnumber', 'serial', 'serialno', 'sn', 'servicetag' ),

@@ -83,7 +83,7 @@ Donut centre shows 848.
 `vulnhub-elementor/includes/widgets.php` — the Device information explorer renders
 "Showing 25 of 848 devices" with no lifecycle filter and no "N out of service hidden" notice.
 
-Worse, it is internally inconsistent: the Acme Platform team card shows **ASSETS 655** (in-service
+Worse, it is internally inconsistent: the end-user computing team card shows **ASSETS 655** (in-service
 count is **611** — all 44 out-of-service assets belong to that team) while **UNOWNED 78** on the same card
 *is* in-service scoped. One card, two definitions.
 

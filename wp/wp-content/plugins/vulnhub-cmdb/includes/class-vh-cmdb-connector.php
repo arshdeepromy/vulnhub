@@ -968,8 +968,8 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 	 * The whole point of the flattening step is that once an Assets object is
 	 * a name => value row, it is a spreadsheet row, and the CSV path's
 	 * detection, mapping and normalisation apply to it unchanged. Attribute
-	 * names are workspace-specific and nobody outside Acme knows what
-	 * they are called, so nothing here hard-codes them: the mapping is
+	 * names are workspace-specific -- only whoever built the workspace knows
+	 * what they are called -- so nothing here hard-codes them: the mapping is
 	 * detected, overridable, and logged.
 	 *
 	 * @return array{ok:bool,message:string,records:array<int,array<string,string>>}

@@ -43,7 +43,7 @@ $row = array(
 	'Intune Device ID'          => 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
 	'Azure AD Device ID'        => '11111111-2222-3333-4444-555555555555',
 	'Join type'                 => 'Azure AD joined',
-	'Office location'           => 'Acme Dunedin',
+	'Office location'           => 'Southern Office',
 );
 
 $record   = VulnHub_Import_Schema::apply( $row, $map );

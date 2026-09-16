@@ -4,9 +4,9 @@
  *
  * A server's environment is worked out from the data we already hold, most
  * reliable signal first: a cloud instance id or a cloud location => cloud
- * (AWS / Azure / GCP); an `ec2amaz-*` hostname => AWS; a "Vendor" location =>
- * on-prem data centre; any other named location => on-prem office/site; nothing
- * => unclassified. The widget then reports each environment's server count, its
+ * (AWS / Azure / GCP); an `ec2amaz-*` hostname => AWS; any other named location
+ * => on-prem; server or appliance hardware, or a private address => on-prem;
+ * nothing => unclassified. The widget then reports each environment's server count, its
  * Linux-vs-Windows split, and its open findings by severity.
  *
  * @package VulnHub\Hosting

@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       VulnHub Hosting
  * Plugin URI:        https://github.com/arshdeepromy/vulnhub
- * Description:       Classifies servers by their hosting environment — cloud (AWS / Azure / GCP) versus on-prem (Vendor data centres and offices) — from cloud instance ids, the location register and hostname naming, and adds a dashboard widget showing the server count, the Linux-vs-Windows split and the open-finding exposure of each environment.
+ * Description:       Classifies servers by their hosting environment — cloud (AWS / Azure / GCP) versus on-prem (data centres and offices) — from cloud instance ids, the location register and hostname naming, and adds a dashboard widget showing the server count, the Linux-vs-Windows split and the open-finding exposure of each environment.
  * Version:           1.0.0
  * Requires at least: 6.5
  * Requires PHP:      8.1

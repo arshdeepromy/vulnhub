@@ -955,5 +955,5 @@ while `OS Version (Cherwell)` correctly said `26100 (24H2)`; 560 of 783 rows
 disagreed. Put the more accurate column first in the alias order.
 
 **Header names alone do not identify a column.** That export had both `Asset Tag`
-(0% populated) and `Key` / `Vendor CMDB ID` (100% / 99.7%). `detect_mapping()`
+(0% populated) and `Key` / a vendor-prefixed CMDB ID column (100% / 99.7%). `detect_mapping()`
 now takes sample rows and prefers a column that actually contains data.

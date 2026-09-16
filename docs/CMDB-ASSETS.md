@@ -153,6 +153,24 @@ The second line is the bug above, now visible. The first is the same class of
 problem in a field nobody had noticed: `OS Version (Cherwell)` exists only on
 Computing Devices, so every Server had been importing with no OS version.
 
+### Vendor-prefixed columns
+
+Real CMDBs prefix the CI number with whoever runs them — `<Vendor> CMDB ID`.
+No alias list can enumerate those, and a customer's supplier has no business
+being hard-coded into a public repository, so none is. `detect_mapping()`'s
+second pass matches `cmdbid` as a *substring*, which catches any such spelling.
+
+That only works if the first pass has not already bound `cmdb_id` to something
+else, because an exact match in pass 1 beats a substring match in pass 2 however
+much weaker the column is. Two aliases were doing exactly that and have been
+removed:
+
+- `key`, which belongs to `cmdb_key` — the reference people quote in a ticket.
+- `assettag` / `assetid` / `citag`. An asset tag is a finance label, not a
+  configuration-item id. In the live workspace `Asset Tag` is populated on 2 of
+  1,186 objects, and it was winning: 1,184 CIs lost the identifier they had and
+  picked up an empty column instead.
+
 The mapping is kept in `assets_map`, **not** in `column_map`. Both are
 `field => column`, but the columns come from different vocabularies — a
 spreadsheet's headings and a workspace's attribute names — and sharing one key
