@@ -286,6 +286,31 @@ A **Lifecycle support** (EOL / in-support) filter runs across the tabs. It means
 software *itself* is discontinued by the vendor (finding-level), not that an
 asset happens to carry one unsupported component — see `docs/LIFECYCLE.md`.
 
+### What can actually be acted on
+
+256,642 open findings is not a worklist. Severity does not thin it, and neither
+does patch availability on its own: both answer *how bad* or *did a vendor ship
+something*, not *what is the work*. So every finding is also classified by the
+fix that exists — a patch, an uninstall, a setting or group policy, a platform
+replacement, an accepted risk, or nothing published yet — and the **Action**
+filter on the Vulnerabilities page cuts the list to one of them. An
+**Exceptions** control sits beside it, because accepted risk should be
+excludable from a queue without being deleted from the register.
+
+On this estate that splits 256,642 open findings into **29,872 patchable**, 692
+that need a setting changed, 6,337 blocked behind a platform past end of
+support, and 219,741 waiting on a vendor — almost all of the last being
+Tenable's *Linux Distros Unpatched Vulnerability* plugins, where the
+distribution has not shipped a fix. Roughly 12% is work somebody can start; the
+rest is weather, and saying so is the difference between a programme that looks
+unwinnable and one with a queue.
+
+Two dashboard widgets — *What we can act on*, by environment and by platform —
+draw the same split, and every segment opens the list filtered to exactly the
+rows it counted, so the CSV you export matches the number you clicked. The
+rules, including why a patch outranks an expired platform (an application patch
+still applies on an old OS), are in `docs/CORE-API.md`.
+
 ---
 
 ## Comparing the registers

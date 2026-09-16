@@ -16,6 +16,8 @@
 <h2>The controls</h2>
 <div class="vh-defs">
   <div><span class="k">Search</span><span class="v">Free text — CVE, host, owner, plugin and so on — across the finding, its vulnerability and its asset.</span></div>
+  <div><span class="k">Action</span><span class="v">What the fix actually is — the fastest way to a queue you can work from. See <em>What the Action filter means</em> below.</span></div>
+  <div><span class="k">Exceptions</span><span class="v"><em>Include</em> (default), <em>Exclude</em> or <em>Only</em> accepted risk. Excepted findings are listed and dimmed by default; <em>Exclude</em> takes them out of a working queue without removing them from the register, and <em>Only</em> is the review list for what has been accepted.</span></div>
   <div><span class="k">Patch</span><span class="v"><em>Patch available</em> or <em>No patch available</em>. "No patch available" is the set that needs a decision (a compensating control, an exception or a decommission) rather than a patch window.</span></div>
   <div><span class="k">Lifecycle support</span><span class="v"><em>End of life only</em> or <em>In support only</em> (<code>support=eol|insupport</code>). End of life means the operating system or the software <em>itself</em> is discontinued, not that the asset carries one unsupported component.</span></div>
   <div><span class="k">Severity</span><span class="v">A single severity: Critical / High / Medium / Low / Info.</span></div>
@@ -27,6 +29,21 @@
   <div><span class="k">Past SLA only</span><span class="v">Only findings past their SLA due date (<code>overdue=1</code>; the dashboard's "Past SLA" tile links here).</span></div>
 </div>
 <p><em>Apply</em> keeps any URL-only filters you arrived with; <em>Reset</em> clears everything.</p>
+
+<h2>What the Action filter means</h2>
+<p>Severity tells you what to worry about. This tells you what the work is, which is what turns a list into a queue. Every open finding falls into exactly one of six classes — the first that applies, reading down:</p>
+<div class="vh-defs">
+  <div><span class="k">Accepted risk</span><span class="v">Somebody approved an exception for it. A deliberate decision outranks every technical fact about the finding, which is the point of having a register.</span></div>
+  <div><span class="k">Patch available</span><span class="v">The vendor shipped a fix: a patch date, or a solution that says upgrade. Schedulable work.</span></div>
+  <div><span class="k">Remove the software</span><span class="v">No vendor fix, but the solution says to uninstall it. Cheap and immediate.</span></div>
+  <div><span class="k">Change a setting</span><span class="v">No vendor fix, but a registry value, group policy or configuration change closes it. Also cheap, and different work from patching — it ships as a GPO, not as a package.</span></div>
+  <div><span class="k">Blocked: OS past end of life</span><span class="v">No fix of any kind, and the machine's operating system is out of support. It cannot be fixed in place; the machine needs replacing, and the <a href="?doc=lifecycle">EOL remediation plan</a> tracks whether a project exists for it.</span></div>
+  <div><span class="k">No vendor fix yet</span><span class="v">No fix of any kind, on a supported platform. Nobody can act on it today — worth watching, not worth queueing.</span></div>
+</div>
+<p>The first three are work somebody can start this week. On this estate that is roughly 12% of what is open: 29,872 patchable and 692 needing a setting, against 219,741 waiting on a vendor — almost all of the last being Tenable's <em>Linux Distros Unpatched Vulnerability</em> plugins, where the distribution has not published a fix.</p>
+<div class="vh-tip"><p>A vulnerability that <em>can</em> be patched on an end-of-life machine stays under <em>Patch available</em>, not <em>Blocked</em>. An application update still installs on an old operating system — Java on RHEL 6, for instance — and filing it as "EOL noise" would hide work you can do this week behind a replacement project that will take quarters.</p></div>
+<div class="vh-note"><p><em>Remove the software</em> and <em>Accepted risk</em> show zero on this estate today: no scanner solution here is phrased as an uninstall, and no exception has been raised yet. That is the data, not a broken filter.</p></div>
+<p>The two <em>What we can act on</em> widgets on the dashboard draw the same split by environment and by platform, and every segment links straight into this list with the matching Action filter applied — so the CSV you export is the number you clicked.</p>
 
 <h2>URL-only filters</h2>
 <p>Some filters have no control of their own. They arrive on a link from the dashboard, show a banner saying what they restrict (with a <em>Clear this filter</em> link), and survive <em>Apply</em>:</p>

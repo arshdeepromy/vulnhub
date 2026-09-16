@@ -395,6 +395,96 @@ nothing in `has` (nothing is known by a system that does not exist) and excludes
 nothing in `missing` — truthful either way, and no whitelist to drift out of
 date. `Repo::source_slugs()` does the parsing if you need the same vocabulary.
 
+### What can be done about a finding — `VH_Action`
+
+Severity says what to worry about. `VH_Action` says what the *work* is, which
+is the difference between a queue and a list.
+
+```php
+VH_Action::classes();                       // slug => label, in precedence order
+VH_Action::actionable();                    // [ patch, remove, config ]
+VH_Action::description( 'blocked_eol' );    // one line, for a legend or help text
+VH_Action::sql_case( 'f', 'v' );            // a CASE evaluating to a class slug
+VH_Action::sql_for( 'patch', 'f', 'v' );    // a WHERE fragment matching one class
+VH_Action::for_row( $finding );             // the same rule against a hydrated row
+```
+
+Six classes, and **the first one that matches wins**:
+
+| Class | Means | Rule |
+|---|---|---|
+| `excepted` | Accepted risk | the finding carries an `exception_id` |
+| `patch` | Schedule it | a patch publication date, or solution text instructing an upgrade |
+| `remove` | Uninstall it | no vendor fix; the solution says remove or uninstall |
+| `config` | A setting or GPO | no vendor fix; the solution says disable, registry, group policy, configure or setting |
+| `blocked_eol` | Replace the machine | no fix of any kind, and the asset's OS is past end of life |
+| `await_fix` | Nobody can fix it yet | no fix of any kind, on a supported platform |
+
+`sql_for()` is deliberately `sql_case()` compared to a literal rather than a
+hand-written clause per class. A chart counts with the CASE and a list filters
+with the fragment; expressing the rule twice is how a segment comes to disagree
+with the rows it opens. An unknown class is `1=0` — it matches nothing rather
+than everything.
+
+**Two rules that look arbitrary without the measurements behind them.**
+
+`patch` is *not* `Repo::patch_sql()`. That test asks the narrower question "did
+the vendor say anything at all?" and counts any non-empty solution text as a
+fix — correct for the patch-availability chart, wrong here, because it would
+swallow `remove` and `config` whole and leave two of six classes permanently
+empty. Measured on this estate: the 1,083 findings whose solution mentions
+"remove" **also carry a patch date** and read *"Upgrade to Oracle JDK / JRE …,
+if necessary remove any affected versions"* — removal is a footnote to an
+upgrade, so they are patch work. The 692 genuine configuration findings have no
+patch date at all (*"Disable the macro execution trust settings"*). Calling
+those "patch available" sends a patching team hunting for a package that does
+not exist.
+
+`patch` outranks `blocked_eol`, so an application patch on an expired platform
+stays actionable: 844 findings here are Java and .NET updates on RHEL 6 boxes.
+Burying them as "EOL noise" would hide schedulable work behind a replacement
+project measured in quarters.
+
+**The invariant.** The six classes **partition** the open findings exactly —
+every finding lands in one, none in two. Re-check that after touching any rule:
+
+```
+29,872 patch + 0 remove + 692 config + 6,337 blocked_eol
+      + 219,741 await_fix + 0 excepted  =  256,642 open findings
+```
+
+12% is work; the rest is weather, almost all of it Tenable's *Linux Distros
+Unpatched Vulnerability* plugins. `remove` and `excepted` are legitimately zero
+today — no solution on this estate is phrased as an uninstall, and no exception
+has ever been raised — not a bug in the classifier.
+
+The end-of-life asset ids are inlined into the SQL rather than joined, because
+that set is a PHP judgement (`Eol::match_os()`, including the build-number
+correction), not a column. It is memoised per request, and with nothing expired
+the fragment is `1=0`. If an estate ever ran thousands of expired machines, the
+answer is a materialised column refreshed where coverage is — and
+`VH_Action::eol_expr()` is the single place to change.
+
+**Filtering with it.** `Repo::findings()` takes `action` (one class) and
+`excepted` (`exclude` / `only`), and they compose with every other filter:
+
+```php
+Repo::findings( array( 'action' => 'patch', 'hosting' => 'aws', 'excepted' => 'exclude' ) );
+```
+
+`excepted` already existed with different semantics — truthy meant *only*,
+`'0'` meant *exclude* — and is used by the Elementor widget and the MCP tools.
+The words are **additive**: every prior input still produces byte-identical
+SQL, and only the string `exclude` changed meaning, from a nonsensical "only"
+to the obvious one.
+
+> **On the wire the parameter is `fix`, not `action`.** `action` is
+> WordPress's own parameter on `admin-post.php`, and the findings screen's
+> export form posts there — a second field of that name replaced
+> `vulnhub_export_csv` and the download went nowhere. Screens and widget links
+> use `fix`; only the argument handed to `Repo::findings()` keeps the name
+> `action`.
+
 ---
 
 ## 5. Shared mock fixtures — use these, do not invent your own
@@ -778,6 +868,20 @@ vh_can_manage();
   date — a DATE column with no time in it — uses `vh_date_only()`, which
   formats in UTC so 31 Dec cannot render as 30 Dec somewhere west of UTC.
   Using `vh_date()` on one also prints a meaningless "00:00".
+- **A SQL fragment must not contain a literal `%`.** `Repo::findings()` hands
+  its query to `wpdb::prepare()` only when some filter bound a parameter, so a
+  fragment carrying `LIKE '%needle%'` works on one call and is read as four
+  placeholders on the next. Use `LOCATE( 'needle', col ) > 0`, which is the
+  same test — substring, case-insensitive under the column's collation — and
+  carries nothing `prepare()` can misread. This one hid for a while because it
+  surfaces as a *notice*, not an error: "the query does not contain the correct
+  number of placeholders (5) for the number of arguments passed (2)". The
+  screen stayed right and the CSV export quietly returned different rows.
+- **Call a global class from a namespaced file with a leading backslash.**
+  `VulnHub\Core\Repo` calling `VH_Action::sql_for()` resolves to
+  `VulnHub\Core\VH_Action` and fatals; `\VH_Action::sql_for()` is correct.
+  `class_exists( 'VH_Action' )` takes a *string*, so a guard written that way
+  passes happily and the call underneath it still dies.
 - Lint before you finish: `./lint.sh`
 - Smoke-test pages: `./check-pages.sh "/wp-admin/admin.php?page=…"`
 

@@ -142,6 +142,25 @@ the widget counts only servers: every row now carries an environment icon, and
 filtering by an icon only to watch rows vanish would be the wrong surprise. The
 widget's exact set is one Type filter away.
 
+The vulnerabilities list has its own vocabulary, beyond `search` / `severity` /
+`team` / `department` / `age` / `life`:
+
+| Parameter | Means |
+|---|---|
+| `fix=<class>` | `patch`, `remove`, `config`, `blocked_eol`, `await_fix`, `excepted` — what the work actually is (see `VH_Action` in `docs/CORE-API.md`) |
+| `excepted=exclude\|only` | drop accepted risk from the list, or show only it |
+| `patch_available=1\|0`, `support=eol\|insupport` | the narrower questions: did a vendor ship anything, is the platform still supported |
+| `hosting=<env>`, `platform=<os>` | the same environment vocabulary as the assets list; platform is windows / linux / macos |
+| `product`, `zone`, `route`, `delivery`, `poc`, `sev_not`, `asset` | URL-only drill-downs from the dashboard, each with a banner |
+
+`fix` is the parameter name because **`action` belongs to WordPress**:
+`admin-post.php` dispatches on it, the export form posts there, and a filter of
+that name overwrote `vulnhub_export_csv` so the download led nowhere. Only the
+argument passed to `Repo::findings()` still calls it `action`. Anything added to
+that screen has to reach `VulnHub_Dash_Export` too — the export carries its own
+list of arguments, and a filter missing from it makes the CSV stop matching the
+screen without saying so.
+
 ### Marks on a row
 
 `vulnhub_asset_hostname_mark` puts a small mark before a hostname —
@@ -371,7 +390,7 @@ It does nothing but the instant fade under `prefers-reduced-motion`.
 
 Detail is in the handbook's *Widget framework* page. The short version:
 
-- **Registry.** `VulnHub_Dash_Widgets::all()` holds 36 widgets in core. Plugins
+- **Registry.** `VulnHub_Dash_Widgets::all()` holds 38 widgets in core. Plugins
   add more on `vulnhub_dashboard_widgets`: attack paths (threat), servers by
   hosting environment (hosting) and department exposure (departments). Each
   entry names a render callback, an optional `data` callback for CSV export,
@@ -386,6 +405,25 @@ Detail is in the handbook's *Widget framework* page. The short version:
   finished sync busts only the widgets fed by what that connector moved
   (`bust_for_connector()`). A warm job and an hourly cron re-render the board
   so nobody waits on a cold widget.
+
+**What we can act on** (`action_by_environment`, `action_by_os`) are worth a
+note, because they are the two that answer "what do we do on Monday". One row
+per hosting environment or per platform, each bar split by `VH_Action`'s
+classes, every segment linking to the vulnerabilities list filtered to exactly
+the rows it counted — so the number on screen is the number in the CSV you
+export from there. Both carry a table view and the widget CSV export, and both
+sit on the default board.
+
+Two scoping decisions are deliberate and will look like bugs otherwise. The
+environment rows count **servers and cloud instances only**, because that is
+what the list's `hosting` filter matches — a bar counting laptops the list then
+refuses to show is the one failure a drill-down cannot afford. And the platform
+rows are per **platform**, not per release, because the findings list filters no
+finer than `platform=windows|linux`; per-release actionability lives on the EOL
+remediation plan, which is built around that question. The bars use a per-row
+scale for the reason the patch-availability widget does: ~219,000 of 256,000
+open findings are waiting on a distribution fix, and on a shared scale every
+actionable segment renders as a sliver against them.
 
 ---
 
