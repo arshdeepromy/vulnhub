@@ -1751,12 +1751,17 @@ final class VulnHub_Jira_Ticketer {
 		$owner = trim( (string) ( $row['owner_name'] ?? '' ) );
 		$team  = trim( (string) ( $row['team_name'] ?? '' ) );
 
+		/*
+		 * The owner's name, not their address. Everyone who can open the
+		 * ticket in Jira sees the description; a name is enough for an agent
+		 * to find the person in the directory, and keeps a list of hundreds
+		 * of staff email addresses out of the service desk.
+		 */
 		if ( '' !== $owner ) {
 			$detail[] = sprintf(
-				/* translators: 1: owner name, 2: owner UPN. */
-				__( 'owner %1$s (%2$s)', 'vulnhub' ),
-				$owner,
-				(string) ( $row['owner_upn'] ?? '' )
+				/* translators: %s: owner name. */
+				__( 'owner %s', 'vulnhub' ),
+				$owner
 			);
 		}
 		if ( '' !== $team ) {
