@@ -2273,3 +2273,16 @@ ul.vh-prodlist--full > .vh-prodrow[hidden] { display: none; }
   width: 16px; height: 16px; margin-right: 7px; vertical-align: -3px; flex: none;
 }
 .vh-host-env svg { width: 16px; height: 16px; }
+
+/* --------------------------------------------- vendor mark on an EOL bar.
+   Sits with the release name so the chart and the assets list name a platform
+   the same way. Decorative: the label beside it already says what it is. */
+.vh-eol__mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; margin-right: 7px; vertical-align: -3px; flex: none;
+}
+.vh-eol__mark img { width: 16px; height: 16px; object-fit: contain; }
+
+/* Icon and name on one line; the sub-line keeps its own beneath them. */
+.vh-segbars__title { display: flex; align-items: center; min-width: 0; }
+.vh-segbars__title a { min-width: 0; overflow-wrap: anywhere; }

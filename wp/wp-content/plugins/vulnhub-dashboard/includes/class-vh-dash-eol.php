@@ -410,14 +410,61 @@ final class VulnHub_Dash_Eol {
 	 *                                                '' to draw without consulting anyone.
 	 * @return array<int,array<string,mixed>>
 	 */
+	/**
+	 * The vendor's mark for a release, or nothing.
+	 *
+	 * The same artwork the assets list shows (`Os::icon_url()`), which is the
+	 * point: the OS column and this chart naming the same platform should look
+	 * like the same platform. A family with no logo file draws nothing rather
+	 * than a placeholder -- a row of identical grey squares is noise, and the
+	 * name is already right there.
+	 *
+	 * Decorative on purpose: `alt=""` and aria-hidden, because the label it
+	 * sits beside already says what it is, and a screen reader announcing
+	 * "Red Hat logo Red Hat Enterprise Linux 6" is worse than silence.
+	 */
+	private static function os_mark( string $family, string $name ): string {
+		if ( '' === $family || ! class_exists( '\\VulnHub\\Core\\Os' ) ) {
+			return '';
+		}
+
+		$icon = \VulnHub\Core\Os::icon_url( $family );
+
+		if ( '' === $icon ) {
+			return '';
+		}
+
+		// A stored logo is a data: URI, which esc_url() strips; it is our own
+		// generated base64, so it is escaped as an attribute instead.
+		$src = 0 === strpos( $icon, 'data:' ) ? esc_attr( $icon ) : esc_url( $icon );
+
+		return '<span class="vh-eol__mark" aria-hidden="true">'
+			. '<img src="' . $src . '" alt="" width="16" height="16" loading="lazy">'
+			. '</span>';
+	}
+
 	private static function bars( array $rows, bool $link = true, string $context = '' ): array {
 		$out = array();
 
 		foreach ( $rows as $row ) {
-			$sub = (string) $row['release'];
+			/*
+			 * The release belongs in the name, not underneath it.
+			 * "Red Hat Enterprise Linux" three times over, distinguished only
+			 * by a 6, a 5 and a 7 in the grey line below, is a list you have
+			 * to read twice to tell apart -- and the release is the whole
+			 * subject of a chart about what has run out of support.
+			 */
+			$name    = trim( (string) $row['label'] );
+			$release = trim( (string) $row['release'] );
+
+			if ( '' !== $release && ! str_contains( $name, $release ) ) {
+				$name = trim( $name . ' ' . $release );
+			}
+
+			$sub = '';
 
 			if ( '' !== (string) $row['eol'] ) {
-				$sub = trim( $sub . ' · ' . self::when( $row ) );
+				$sub = trim( self::when( $row ) );
 			}
 
 			/*
@@ -496,7 +543,8 @@ final class VulnHub_Dash_Eol {
 			}
 
 			$out[] = array(
-				'label'      => (string) $row['label'],
+				'label'      => $name,
+				'icon'       => self::os_mark( (string) ( $row['family'] ?? '' ), $name ),
 				'sub'        => $sub,
 				'href'       => $link ? self::url( (string) $row['key'] ) : '',
 				'segments'   => $segments,

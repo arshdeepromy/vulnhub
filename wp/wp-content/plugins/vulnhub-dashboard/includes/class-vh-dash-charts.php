@@ -874,8 +874,27 @@ final class VulnHub_Dash_Charts {
 
 			$sub = (string) ( $row['sub'] ?? '' );
 
+			/*
+			 * An optional mark before the label: a vendor logo, a flag, a
+			 * status dot. Markup, because an <img> or an <svg> is the point --
+			 * so a caller passing it is responsible for escaping it, exactly
+			 * as with `segments`. It sits inside the label span so it wraps
+			 * with the text rather than floating beside a two-line name.
+			 */
+			$icon = (string) ( $row['icon'] ?? '' );
+
+			/*
+			 * The label is a column (name over sub-line), so a mark dropped
+			 * straight into it becomes its own row above the name. Icon and
+			 * name share a line of their own, and the sub-line stays beneath
+			 * both.
+			 */
+			$title = '' !== $icon
+				? '<span class="vh-segbars__title">' . $icon . $label . '</span>'
+				: $label;
+
 			$out .= '<div class="vh-segbars__row">';
-			$out .= '<span class="vh-segbars__label">' . $label
+			$out .= '<span class="vh-segbars__label">' . $title
 				. ( '' !== $sub ? '<span class="vh-segbars__sub">' . esc_html( $sub ) . '</span>' : '' )
 				. '</span>';
 

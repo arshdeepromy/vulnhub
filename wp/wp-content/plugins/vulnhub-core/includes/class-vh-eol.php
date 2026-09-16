@@ -573,6 +573,15 @@ final class Eol {
 				$key   = (string) $row['key'];
 				$label = (string) $row['product'];
 
+				/*
+				 * The family travels with the group so a caller can draw the
+				 * vendor's mark (Os::icon_url()) without re-parsing the OS
+				 * string of one of the assets underneath it and hoping they
+				 * all agree. The lifecycle row names it; an unmatched asset
+				 * falls back to what the parser made of its OS string.
+				 */
+				$family = (string) ( $row['family'] ?? '' );
+
 				$release = (string) $row['release'];
 
 				if ( 'os' === $row['kind'] && '' !== (string) $row['build'] ) {
@@ -586,6 +595,7 @@ final class Eol {
 				$parsed  = Os::parse( (string) $asset['operating_system'] );
 				$key     = 'unknown:' . $parsed['family'];
 				$label   = (string) $parsed['label'];
+				$family  = (string) $parsed['family'];
 				$release = __( 'Release not recorded', 'vulnhub' );
 				$eol     = '';
 				$early   = '';
@@ -597,6 +607,7 @@ final class Eol {
 					'key'        => $key,
 					'kind'       => 'os',
 					'label'      => $label,
+					'family'     => $family,
 					'release'    => $release,
 					'eol'        => $eol,
 					/*
