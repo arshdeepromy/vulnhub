@@ -1091,11 +1091,11 @@ final class VH_EOS_View {
 					<span class="vh-meta"><?php esc_html_e( 'None set', 'vulnhub' ); ?></span>
 				<?php endif; ?>
 				<?php if ( 'overdue' === $coverage ) : ?>
-					<span class="vh-chip vh-chip--bad" title="<?php echo esc_attr( '' !== $deadline ? sprintf( /* translators: %s: a date. */ __( 'Due %s and not yet remediated.', 'vulnhub' ), vh_date( $deadline, 'j M Y' ) ) : __( 'The date has passed and the server is not yet remediated.', 'vulnhub' ) ); ?>">
+					<span class="vh-chip vh-chip--bad" title="<?php echo esc_attr( '' !== $deadline ? sprintf( /* translators: %s: a date. */ __( 'Due %s and not yet remediated.', 'vulnhub' ), vh_date_only( $deadline, 'j M Y' ) ) : __( 'The date has passed and the server is not yet remediated.', 'vulnhub' ) ); ?>">
 						<?php esc_html_e( 'Overdue', 'vulnhub' ); ?>
 					</span>
 				<?php elseif ( '' !== $deadline ) : ?>
-					<span class="vh-meta"><?php echo esc_html( vh_date( $deadline, 'j M Y' ) ); ?></span>
+					<span class="vh-meta"><?php echo esc_html( vh_date_only( $deadline, 'j M Y' ) ); ?></span>
 				<?php endif; ?>
 			</td>
 

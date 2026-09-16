@@ -704,7 +704,7 @@ final class VulnHub_Dash_Export {
 		$name = sprintf(
 			'vulnhub-%s-%s.csv',
 			str_replace( '_', '-', $view ),
-			gmdate( 'Y-m-d-Hi' )
+			wp_date( 'Y-m-d-Hi' )
 		);
 
 		nocache_headers();

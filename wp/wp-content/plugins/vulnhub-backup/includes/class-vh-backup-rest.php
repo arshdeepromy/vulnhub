@@ -191,20 +191,94 @@ final class VulnHub_Backup_Rest {
 	 */
 	private static function summarise( array $job ): array {
 		$counters = (array) $job['counters_arr'];
+		$status   = (string) $job['status'];
 
+		/*
+		 * Labels, progress and "is this still going" are decided here, once,
+		 * rather than in the browser. The screen renders server-side first and
+		 * is then updated by polling; working them out in both places is how
+		 * the two drift and the bar disagrees with the table under it.
+		 */
 		return array(
 			'id'          => (int) $job['id'],
 			'mode'        => (string) $job['mode'],
 			'phase'       => (string) $job['phase'],
-			'status'      => (string) $job['status'],
-			'statusLabel' => (string) ( VulnHub_Backup_Jobs::statuses()[ (string) $job['status'] ] ?? $job['status'] ),
+			'phaseLabel'  => (string) ( VulnHub_Backup_Jobs::phases()[ (string) $job['phase'] ] ?? $job['phase'] ),
+			'status'      => $status,
+			'statusLabel' => (string) ( VulnHub_Backup_Jobs::statuses()[ $status ] ?? $status ),
+			'running'     => VulnHub_Backup_Jobs::RUNNING === $status,
+			'progress'    => VulnHub_Backup_Jobs::progress( $job ),
 			'folder'      => (string) $job['folder'],
 			'error'       => (string) $job['error'],
 			'counters'    => $counters,
+			'summary'     => self::counter_line( $counters ),
 			'createdAt'   => (string) $job['created_at'],
 			'startedAt'   => (string) $job['started_at'],
+			'startedAgo'  => '' !== (string) $job['started_at'] ? vh_ago( (string) $job['started_at'] ) : '',
 			'finishedAt'  => (string) $job['finished_at'],
+			'elapsed'     => self::elapsed( $job ),
 		);
+	}
+
+	/**
+	 * One line of what the job has actually moved so far.
+	 *
+	 * @param array<string,mixed> $counters Job counters.
+	 */
+	private static function counter_line( array $counters ): string {
+		$bits = array();
+
+		if ( (int) ( $counters['tables_total'] ?? 0 ) > 0 ) {
+			$bits[] = sprintf(
+				/* translators: 1: tables exported, 2: tables in total. */
+				__( '%1$s of %2$s tables', 'vulnhub' ),
+				number_format_i18n( (int) ( $counters['tables_done'] ?? 0 ) ),
+				number_format_i18n( (int) $counters['tables_total'] )
+			);
+		}
+
+		if ( (int) ( $counters['rows_exported'] ?? 0 ) > 0 ) {
+			$bits[] = sprintf(
+				/* translators: %s: number of database rows. */
+				__( '%s rows', 'vulnhub' ),
+				number_format_i18n( (int) $counters['rows_exported'] )
+			);
+		}
+
+		if ( (int) ( $counters['files_archived'] ?? 0 ) > 0 ) {
+			$bits[] = sprintf(
+				/* translators: %s: number of files. */
+				__( '%s files', 'vulnhub' ),
+				number_format_i18n( (int) $counters['files_archived'] )
+			);
+		}
+
+		$bytes = (int) ( $counters['db_bytes'] ?? 0 ) + (int) ( $counters['zip_bytes'] ?? 0 );
+
+		if ( $bytes > 0 ) {
+			$bits[] = size_format( $bytes, 1 );
+		}
+
+		return implode( ' · ', $bits );
+	}
+
+	/**
+	 * How long the job has been going, or took.
+	 *
+	 * @param array<string,mixed> $job Hydrated job row.
+	 */
+	private static function elapsed( array $job ): string {
+		$started = strtotime( (string) $job['started_at'] . ' UTC' );
+
+		if ( ! $started ) {
+			return '';
+		}
+
+		$ended = '' !== (string) $job['finished_at']
+			? strtotime( (string) $job['finished_at'] . ' UTC' )
+			: time();
+
+		return human_time_diff( $started, $ended ?: time() );
 	}
 
 	/* =================================================================

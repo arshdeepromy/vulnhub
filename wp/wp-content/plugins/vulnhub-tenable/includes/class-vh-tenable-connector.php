@@ -411,7 +411,7 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 		$last = $this->last_full_sync_at();
 
 		if ( $days > 0 && $last > 0 && time() - $last >= $days * DAY_IN_SECONDS ) {
-			return sprintf( 'scheduled, last full resync %s', gmdate( 'Y-m-d', $last ) );
+			return sprintf( 'scheduled, last full resync %s', wp_date( 'Y-m-d', $last ) );
 		}
 
 		return '';
@@ -650,8 +650,8 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 			VH_Tenable_Store::write_state( $conn, $state );
 			$this->log(
 				$full
-					? sprintf( 'Staged sync: fresh FULL resync (%s), since %s; assets scanned within %d days.', $reason, gmdate( 'Y-m-d H:i', $since ), $this->asset_days() )
-					: sprintf( 'Staged sync: fresh incremental run, since %s.', gmdate( 'Y-m-d H:i', $since ) )
+					? sprintf( 'Staged sync: fresh FULL resync (%s), since %s; assets scanned within %d days.', $reason, wp_date( 'Y-m-d H:i', $since ), $this->asset_days() )
+					: sprintf( 'Staged sync: fresh incremental run, since %s.', wp_date( 'Y-m-d H:i', $since ) )
 			);
 		} else {
 			$this->log( sprintf( 'Staged sync: resuming %s run at phase "%s".', empty( $state['is_full'] ) ? 'incremental' : 'full', $phase ) );

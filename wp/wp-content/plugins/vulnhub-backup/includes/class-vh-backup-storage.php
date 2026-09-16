@@ -2,13 +2,22 @@
 /**
  * Where finished backups and in-progress restore uploads live.
  *
- * Two things share this directory: completed backup sets (one folder per
- * backup, containing db.sql.gz, wp-content.zip and manifest.json) and staged
- * restore-upload files (.part files assembled the same chunked way
- * vulnhub-import stages a CSV, since the mechanics are file-format-agnostic).
- * Both are behind an index.php + deny-all guard so nothing here is ever
- * served over HTTP by accident — a stray request for db.sql.gz would hand
- * over the whole database.
+ * Two things share this directory: completed backups and staged restore-upload
+ * files (.part files assembled the same chunked way vulnhub-import stages a
+ * CSV, since the mechanics are file-format-agnostic). Both are behind an
+ * index.php + deny-all guard so nothing here is ever served over HTTP by
+ * accident — a stray request for db.sql.gz would hand over the whole database.
+ *
+ * A finished backup is ONE file: `backup-<date>-<id>.tar.gz`, holding
+ * manifest.json, db.sql.gz and wp-content.zip. It used to be a folder with
+ * those three files loose in it, which meant an operator had to download three
+ * things and keep them together to have a backup at all. The folder still
+ * exists while a job runs — it is the working directory the members are built
+ * in — and is deleted once they have been packed.
+ *
+ * Backups taken before that change are still folders on disk, so everything
+ * here reads both shapes: `list_local()` returns either, and download and
+ * delete work on either. Only the writing side is single-file.
  *
  * @package VulnHub\Backup
  */
@@ -115,17 +124,356 @@ final class VulnHub_Backup_Storage {
 	}
 
 	/**
-	 * A fresh folder name for a new backup set.
+	 * A fresh folder name for a new backup, which becomes the archive's name.
+	 *
+	 * Site-local time, deliberately, and the only place in this plugin that
+	 * is: everything stored or compared stays UTC, but this string is read by
+	 * a person choosing which backup to restore. A backup taken at 12:20pm in
+	 * Auckland that calls itself 00:20 is a trap, and the name is the one
+	 * label a downloaded file keeps once it is off this machine.
 	 *
 	 * @param int $job_id Job id, appended so it is always unique.
 	 * @return string
 	 */
 	public static function new_folder( int $job_id ): string {
-		return 'backup-' . gmdate( 'Ymd-His' ) . '-' . $job_id;
+		return 'backup-' . wp_date( 'Ymd-His' ) . '-' . $job_id;
 	}
 
 	/**
-	 * List completed local backup sets with their file sizes.
+	 * The single-file name a finished backup is packed into.
+	 *
+	 * @param string $folder Folder name (e.g. backup-20260911-123000-42).
+	 * @return string
+	 */
+	public static function archive_name( string $folder ): string {
+		return $folder . '.tar.gz';
+	}
+
+	/**
+	 * Absolute path of a finished backup archive.
+	 *
+	 * The archive is a SIBLING of the working folder, not inside it, so that
+	 * once packing is done the folder can be deleted outright and the backup
+	 * is exactly one file on disk.
+	 *
+	 * @param string $folder Folder name.
+	 * @return string Empty string when the folder name is not ours.
+	 */
+	public static function archive_path( string $folder ): string {
+		if ( ! self::valid_folder( $folder ) ) {
+			return '';
+		}
+
+		$base = self::ensure_dir();
+
+		return '' === $base ? '' : $base . '/' . self::archive_name( $folder );
+	}
+
+	/**
+	 * Has this backup been packed into its single file yet?
+	 *
+	 * @param string $folder Folder name.
+	 * @return bool
+	 */
+	public static function has_archive( string $folder ): bool {
+		$path = self::archive_path( $folder );
+
+		return '' !== $path && is_readable( $path );
+	}
+
+	/* =================================================================
+	 * Writing the archive: a tar built a chunk at a time, straight into a
+	 * gzip stream.
+	 *
+	 * Written by hand rather than with PharData because PharData builds a
+	 * whole .tar first and compresses it afterwards -- two full passes and a
+	 * second copy of a multi-hundred-megabyte file on disk -- and because
+	 * `phar.readonly` is on in this container, which is a setting a host can
+	 * change underneath us. Shelling out to tar(1) was the other option, but
+	 * the cron container that runs most passes is a different image from the
+	 * web one, so "tar exists" is not a safe assumption to build a backup on.
+	 *
+	 * Appending to a gzip file produces a multi-member gzip stream, which is
+	 * valid and which gzip, zcat and tar all read transparently -- that is
+	 * what makes a resumable, checkpointed pack possible at all.
+	 * ============================================================== */
+
+	/** Bytes copied per read/write while packing or extracting. */
+	public const COPY_CHUNK = 1048576;
+
+	/**
+	 * One 512-byte ustar header block.
+	 *
+	 * @param string $name  Member name (must be under 100 bytes; every member
+	 *                      this plugin writes is a fixed short name).
+	 * @param int    $size  Member size in bytes.
+	 * @param int    $mtime Modification time.
+	 * @return string 512 bytes.
+	 */
+	public static function tar_header( string $name, int $size, int $mtime ): string {
+		$header = pack( 'a100', $name )
+			. pack( 'a8', '0000644' . chr( 0 ) )
+			. pack( 'a8', '0000000' . chr( 0 ) )
+			. pack( 'a8', '0000000' . chr( 0 ) )
+			. pack( 'a12', sprintf( '%011o', $size ) . chr( 0 ) )
+			. pack( 'a12', sprintf( '%011o', $mtime ) . chr( 0 ) )
+			. str_repeat( ' ', 8 )
+			. pack( 'a1', '0' )
+			. pack( 'a100', '' )
+			. pack( 'a6', 'ustar' )
+			. pack( 'a2', '00' )
+			. pack( 'a32', 'vulnhub' )
+			. pack( 'a32', 'vulnhub' )
+			. pack( 'a8', '' )
+			. pack( 'a8', '' )
+			. pack( 'a155', '' )
+			. str_repeat( chr( 0 ), 12 );
+
+		$sum = 0;
+
+		for ( $i = 0, $len = strlen( $header ); $i < $len; $i++ ) {
+			$sum += ord( $header[ $i ] );
+		}
+
+		// The checksum field is written last, over the spaces it was summed with.
+		return substr_replace( $header, sprintf( '%06o', $sum ) . chr( 0 ) . ' ', 148, 8 );
+	}
+
+	/**
+	 * Zero padding that takes a member up to the next 512-byte boundary.
+	 *
+	 * @param int $size Member size in bytes.
+	 * @return string
+	 */
+	public static function tar_padding( int $size ): string {
+		$remainder = $size % 512;
+
+		return 0 === $remainder ? '' : str_repeat( chr( 0 ), 512 - $remainder );
+	}
+
+	/**
+	 * Open the archive for appending (creating it if this is the first pass).
+	 *
+	 * @param string $path Archive path.
+	 * @return resource|false
+	 */
+	public static function tar_open( string $path ) {
+		return gzopen( $path, 'ab9' );
+	}
+
+	/**
+	 * Copy part of a member into the archive, stopping at the deadline.
+	 *
+	 * @param resource $gz       Open gzip handle.
+	 * @param string   $source   File being packed.
+	 * @param int      $offset   Bytes of it already written.
+	 * @param float    $deadline microtime after which to stop and checkpoint.
+	 * @return int New offset, or -1 when the source could not be read.
+	 */
+	public static function tar_copy_member( $gz, string $source, int $offset, float $deadline ): int {
+		$handle = fopen( $source, 'rb' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+		if ( ! $handle ) {
+			return -1;
+		}
+
+		if ( $offset > 0 && 0 !== fseek( $handle, $offset ) ) {
+			fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+			return -1;
+		}
+
+		while ( ! feof( $handle ) ) {
+			$chunk = fread( $handle, self::COPY_CHUNK );
+
+			if ( false === $chunk || '' === $chunk ) {
+				break;
+			}
+
+			if ( false === gzwrite( $gz, $chunk ) ) {
+				fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+				return -1;
+			}
+
+			$offset += strlen( $chunk );
+
+			if ( microtime( true ) >= $deadline ) {
+				break;
+			}
+		}
+
+		fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+		return $offset;
+	}
+
+	/**
+	 * Write the two zero blocks that mark the end of a tar.
+	 *
+	 * Their absence is how a truncated archive is recognised on the way back
+	 * in — see extract_targz().
+	 *
+	 * @param resource $gz Open gzip handle.
+	 * @return void
+	 */
+	public static function tar_terminate( $gz ): void {
+		gzwrite( $gz, str_repeat( chr( 0 ), 1024 ) );
+	}
+
+	/* =================================================================
+	 * Reading the archive back
+	 * ============================================================== */
+
+	/**
+	 * Stream a .tar.gz into a directory.
+	 *
+	 * Refuses any member that is not one of the names we write: a backup
+	 * archive is an operator-supplied file arriving over an upload form, so
+	 * it gets treated as hostile — no absolute paths, no traversal, nothing
+	 * outside the expected three names, and no symlinks or devices.
+	 *
+	 * A short read, or the end of the file arriving before the terminator
+	 * blocks, is reported as truncation rather than quietly restoring half a
+	 * database.
+	 *
+	 * @param string             $archive Archive path.
+	 * @param string             $dest    Directory to extract into.
+	 * @param array<int,string>  $allow   Permitted member names.
+	 * @return array{ok:bool,members:array<int,string>,error:string}
+	 */
+	public static function extract_targz( string $archive, string $dest, array $allow ): array {
+		$fail = static fn( string $message ): array => array(
+			'ok'      => false,
+			'members' => array(),
+			'error'   => $message,
+		);
+
+		$gz = gzopen( $archive, 'rb' );
+
+		if ( ! $gz ) {
+			return $fail( __( 'The archive could not be opened.', 'vulnhub' ) );
+		}
+
+		$members    = array();
+		$terminated = false;
+
+		while ( true ) {
+			$header = gzread( $gz, 512 );
+
+			if ( false === $header || '' === $header ) {
+				break;
+			}
+
+			if ( 512 !== strlen( $header ) ) {
+				gzclose( $gz );
+				return $fail( __( 'The archive ends mid-header — the file is truncated or corrupt.', 'vulnhub' ) );
+			}
+
+			// Two zero blocks end the archive.
+			if ( '' === trim( $header, chr( 0 ) ) ) {
+				$terminated = true;
+				break;
+			}
+
+			$name = trim( substr( $header, 0, 100 ), chr( 0 ) . ' ' );
+			$size = (int) octdec( trim( substr( $header, 124, 12 ), chr( 0 ) . ' ' ) );
+			$type = substr( $header, 156, 1 );
+
+			if ( ! in_array( $name, $allow, true ) || '0' !== $type && chr( 0 ) !== $type ) {
+				gzclose( $gz );
+
+				return $fail(
+					sprintf(
+						/* translators: %s: name of an unexpected file inside the archive. */
+						__( 'The archive contains something a VulnHub backup never holds (%s).', 'vulnhub' ),
+						'' === $name ? '?' : $name
+					)
+				);
+			}
+
+			$target = $dest . '/' . $name;
+			$out    = fopen( $target, 'wb' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+			if ( ! $out ) {
+				gzclose( $gz );
+				return $fail( __( 'A file from the archive could not be written to the staging directory.', 'vulnhub' ) );
+			}
+
+			$left = $size;
+
+			while ( $left > 0 ) {
+				$chunk = gzread( $gz, (int) min( self::COPY_CHUNK, $left ) );
+
+				if ( false === $chunk || '' === $chunk ) {
+					fclose( $out ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+					gzclose( $gz );
+					return $fail( __( 'The archive ends part-way through a file — the download is incomplete.', 'vulnhub' ) );
+				}
+
+				fwrite( $out, $chunk ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+				$left -= strlen( $chunk );
+			}
+
+			fclose( $out ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+			$padding = self::tar_padding( $size );
+
+			if ( '' !== $padding ) {
+				gzread( $gz, strlen( $padding ) );
+			}
+
+			$members[] = $name;
+		}
+
+		gzclose( $gz );
+
+		if ( ! $terminated ) {
+			return $fail( __( 'The archive has no end marker — it did not finish downloading.', 'vulnhub' ) );
+		}
+
+		return array( 'ok' => true, 'members' => $members, 'error' => '' );
+	}
+
+	/**
+	 * Read manifest.json out of an archive without unpacking the rest.
+	 *
+	 * The manifest is written first precisely so this costs one small read —
+	 * the backups list calls it for every row on the page.
+	 *
+	 * @param string $archive Archive path.
+	 * @return array<string,mixed>
+	 */
+	public static function manifest_from_archive( string $archive ): array {
+		$gz = gzopen( $archive, 'rb' );
+
+		if ( ! $gz ) {
+			return array();
+		}
+
+		$header = gzread( $gz, 512 );
+
+		if ( ! is_string( $header ) || 512 !== strlen( $header ) ) {
+			gzclose( $gz );
+			return array();
+		}
+
+		$name = trim( substr( $header, 0, 100 ), chr( 0 ) . ' ' );
+		$size = (int) octdec( trim( substr( $header, 124, 12 ), chr( 0 ) . ' ' ) );
+
+		if ( 'manifest.json' !== $name || $size <= 0 || $size > 1048576 ) {
+			gzclose( $gz );
+			return array();
+		}
+
+		$body = (string) gzread( $gz, $size );
+		gzclose( $gz );
+
+		$decoded = json_decode( $body, true );
+
+		return is_array( $decoded ) ? $decoded : array();
+	}
+
+	/**
+	 * List completed local backups: packed archives and any older folders.
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
@@ -136,49 +484,91 @@ final class VulnHub_Backup_Storage {
 			return array();
 		}
 
-		$dirs = glob( $base . '/backup-*', GLOB_ONLYDIR );
-
-		if ( ! is_array( $dirs ) ) {
-			return array();
-		}
-
 		$sets = array();
+		$seen = array();
 
-		foreach ( $dirs as $dir ) {
-			$folder = basename( $dir );
+		// Packed backups: one file each, newest first once sorted below.
+		foreach ( (array) glob( $base . '/backup-*.tar.gz' ) as $archive ) {
+			if ( ! is_file( $archive ) ) {
+				continue;
+			}
+
+			$folder = substr( basename( $archive ), 0, -7 );
 
 			if ( ! self::valid_folder( $folder ) ) {
+				continue;
+			}
+
+			$manifest = self::manifest_from_archive( $archive );
+			$size     = (int) filesize( $archive );
+
+			$seen[ $folder ] = true;
+
+			$sets[] = array(
+				'folder'       => $folder,
+				'format'       => 'archive',
+				'file'         => basename( $archive ),
+				'downloadName' => self::archive_name( $folder ),
+				// What the backups screen offers for download. One entry, because
+				// that is now the whole backup.
+				'files'        => array( self::archive_name( $folder ) ),
+				'sizeBytes'    => $size,
+				'sizeLabel'    => size_format( $size, 1 ),
+				'createdAt'    => (string) ( $manifest['created_at'] ?? gmdate( 'Y-m-d H:i:s', (int) filemtime( $archive ) ) ),
+				'manifest'     => $manifest,
+			);
+		}
+
+		/*
+		 * Folders: either a backup taken before backups became one file, or
+		 * the working directory of a job that is still running. Both are worth
+		 * listing -- the first so it can still be downloaded and restored, the
+		 * second so an interrupted job is visible rather than invisible -- but
+		 * a folder whose archive already exists is just leftovers.
+		 */
+		foreach ( (array) glob( $base . '/backup-*', GLOB_ONLYDIR ) as $dir ) {
+			$folder = basename( $dir );
+
+			if ( ! self::valid_folder( $folder ) || isset( $seen[ $folder ] ) ) {
 				continue;
 			}
 
 			$files     = glob( $dir . '/*' );
 			$total     = 0;
 			$manifest  = array();
-			$has_files = false;
+			$names     = array();
 
 			foreach ( (array) $files as $file ) {
 				if ( ! is_file( $file ) ) {
 					continue;
 				}
-				$has_files = true;
-				$total    += (int) filesize( $file );
+				$name    = basename( $file );
+				$names[] = $name;
+				$total  += (int) filesize( $file );
 
-				if ( 'manifest.json' === basename( $file ) ) {
+				if ( 'manifest.json' === $name ) {
 					$decoded  = json_decode( (string) file_get_contents( $file ), true ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 					$manifest = is_array( $decoded ) ? $decoded : array();
 				}
 			}
 
-			if ( ! $has_files ) {
+			if ( ! $names ) {
 				continue;
 			}
 
 			$sets[] = array(
-				'folder'    => $folder,
-				'sizeBytes' => $total,
-				'sizeLabel' => size_format( $total, 1 ),
-				'createdAt' => (string) ( $manifest['created_at'] ?? gmdate( 'Y-m-d H:i:s', (int) filemtime( $dir ) ) ),
-				'manifest'  => $manifest,
+				'folder'       => $folder,
+				'format'       => 'folder',
+				'file'         => '',
+				'downloadName' => '',
+				// Whatever this one actually has: an older three-file backup
+				// offers three downloads, and a job still running offers the
+				// members it has finished so far.
+				'files'        => $names,
+				'sizeBytes'    => $total,
+				'sizeLabel'    => size_format( $total, 1 ),
+				'createdAt'    => (string) ( $manifest['created_at'] ?? gmdate( 'Y-m-d H:i:s', (int) filemtime( $dir ) ) ),
+				'manifest'     => $manifest,
 			);
 		}
 
@@ -188,25 +578,52 @@ final class VulnHub_Backup_Storage {
 	}
 
 	/**
-	 * Delete one local backup set entirely.
+	 * Delete one local backup entirely: the archive, and the working folder if
+	 * an interrupted job left one behind.
 	 *
 	 * @param string $folder Folder name.
-	 * @return bool
+	 * @return bool True when something was actually removed.
 	 */
 	public static function delete_local_set( string $folder ): bool {
 		if ( ! self::valid_folder( $folder ) ) {
 			return false;
 		}
 
-		$dir = self::set_dir( $folder );
+		$removed = false;
+		$archive = self::archive_path( $folder );
+
+		if ( '' !== $archive && is_file( $archive ) ) {
+			wp_delete_file( $archive );
+			$removed = true;
+		}
+
+		$removed = self::delete_work_dir( $folder ) || $removed;
+
+		return $removed;
+	}
+
+	/**
+	 * Remove a backup's working directory and everything in it.
+	 *
+	 * Called after packing (the members now live in the archive) and by
+	 * delete_local_set().
+	 *
+	 * @param string $folder Folder name.
+	 * @return bool
+	 */
+	public static function delete_work_dir( string $folder ): bool {
+		if ( ! self::valid_folder( $folder ) ) {
+			return false;
+		}
+
+		$base = self::ensure_dir();
+		$dir  = '' === $base ? '' : $base . '/' . $folder;
 
 		if ( '' === $dir || ! is_dir( $dir ) ) {
 			return false;
 		}
 
-		$files = glob( $dir . '/*' );
-
-		foreach ( (array) $files as $file ) {
+		foreach ( (array) glob( $dir . '/*' ) as $file ) {
 			if ( is_file( $file ) ) {
 				wp_delete_file( $file );
 			}
@@ -228,10 +645,31 @@ final class VulnHub_Backup_Storage {
 			return '';
 		}
 
-		$dir  = self::set_dir( $folder );
 		$name = basename( $filename );
 
-		if ( '' === $dir || '' === $name || ! in_array( $name, array( 'db.sql.gz', 'wp-content.zip', 'manifest.json' ), true ) ) {
+		/*
+		 * The whole backup, which is the only thing worth downloading now:
+		 * asked for by its own name, or by the word "archive" so a caller can
+		 * link to it without knowing the naming scheme.
+		 */
+		if ( 'archive' === $name || self::archive_name( $folder ) === $name ) {
+			$archive = self::archive_path( $folder );
+
+			return '' !== $archive && is_readable( $archive ) ? $archive : '';
+		}
+
+		// A backup taken before packing existed: its three files, individually.
+		if ( ! in_array( $name, array( 'db.sql.gz', 'wp-content.zip', 'manifest.json' ), true ) ) {
+			return '';
+		}
+
+		// Read-only: set_dir() would create the folder, littering an empty
+		// directory beside a packed backup every time someone asked it for a
+		// member it no longer has.
+		$base = self::ensure_dir();
+		$dir  = '' === $base ? '' : $base . '/' . $folder;
+
+		if ( '' === $dir || ! is_dir( $dir ) ) {
 			return '';
 		}
 
@@ -240,53 +678,12 @@ final class VulnHub_Backup_Storage {
 		return is_readable( $path ) ? $path : '';
 	}
 
-	/**
-	 * Build a single downloadable zip (db.sql.gz + wp-content.zip +
-	 * manifest.json at its root) from a finished backup set.
-	 *
-	 * @param string $folder Folder name.
-	 * @return string Temp file path, or an empty string on failure.
+	/*
+	 * build_bundle_temp() used to zip a finished set into one downloadable
+	 * file on demand. The backup is now written as one file to begin with, so
+	 * there is nothing left to bundle: path_for_download() hands back the
+	 * archive itself, with no temp copy of a multi-hundred-megabyte file.
 	 */
-	public static function build_bundle_temp( string $folder ): string {
-		if ( ! self::valid_folder( $folder ) ) {
-			return '';
-		}
-
-		$dir = self::set_dir( $folder );
-
-		if ( '' === $dir ) {
-			return '';
-		}
-
-		$parts = array( 'manifest.json', 'db.sql.gz', 'wp-content.zip' );
-
-		foreach ( $parts as $name ) {
-			if ( ! is_readable( $dir . '/' . $name ) ) {
-				return '';
-			}
-		}
-
-		$tmp = wp_tempnam( 'vulnhub-backup-bundle' );
-
-		if ( ! $tmp ) {
-			return '';
-		}
-
-		$zip = new ZipArchive();
-
-		if ( true !== $zip->open( $tmp, ZipArchive::OVERWRITE ) ) {
-			wp_delete_file( $tmp );
-			return '';
-		}
-
-		foreach ( $parts as $name ) {
-			$zip->addFile( $dir . '/' . $name, $name );
-		}
-
-		$zip->close();
-
-		return $tmp;
-	}
 
 	/* =================================================================
 	 * Chunked restore upload — mirrors VulnHub_Import_Storage exactly;
@@ -577,10 +974,10 @@ final class VulnHub_Backup_Storage {
 	}
 
 	/**
-	 * Does the head of the staged file look like a zip archive?
+	 * Does the head of the staged file look like a backup we can read?
 	 *
 	 * @param string $key Storage key.
-	 * @return array{ok:bool,message:string}
+	 * @return array{ok:bool,message:string,format:string}
 	 */
 	public static function sniff( string $key ): array {
 		$path = self::path( $key );
@@ -589,6 +986,7 @@ final class VulnHub_Backup_Storage {
 			return array(
 				'ok'      => false,
 				'message' => __( 'The staged file could not be read.', 'vulnhub' ),
+				'format'  => '',
 			);
 		}
 
@@ -598,26 +996,51 @@ final class VulnHub_Backup_Storage {
 			return array(
 				'ok'      => false,
 				'message' => __( 'The staged file could not be read.', 'vulnhub' ),
+				'format'  => '',
 			);
 		}
 
 		$head = (string) fread( $handle, 4 );
 		fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 
-		// A zip local-file-header signature: 'PK\x03\x04' (or the empty-archive
-		// variant 'PK\x05\x06'). A VulnHub backup bundle is a zip of a zip plus
-		// a gzip file plus a manifest, so this is the outer container's sniff.
-		if ( ! str_starts_with( $head, "PK\x03\x04" ) && ! str_starts_with( $head, "PK\x05\x06" ) ) {
+		$format = self::format_of( $head );
+
+		if ( '' === $format ) {
 			return array(
 				'ok'      => false,
-				'message' => __( 'That does not look like a VulnHub backup bundle.', 'vulnhub' ),
+				'message' => __( 'That does not look like a VulnHub backup. Upload the .tar.gz the backup screen produced.', 'vulnhub' ),
+				'format'  => '',
 			);
 		}
 
 		return array(
 			'ok'      => true,
 			'message' => '',
+			'format'  => $format,
 		);
+	}
+
+	/**
+	 * Which backup format a file's first bytes say it is.
+	 *
+	 * `targz` is what backups are written as now. `zip` is the bundle shape
+	 * downloaded from an older install — still accepted, because a backup
+	 * nobody can restore is not a backup.
+	 *
+	 * @param string $head First few bytes of the file.
+	 * @return string 'targz', 'zip', or '' when it is neither.
+	 */
+	public static function format_of( string $head ): string {
+		if ( str_starts_with( $head, "\x1f\x8b" ) ) {
+			return 'targz';
+		}
+
+		// Zip local-file-header signature, or the empty-archive variant.
+		if ( str_starts_with( $head, "PK\x03\x04" ) || str_starts_with( $head, "PK\x05\x06" ) ) {
+			return 'zip';
+		}
+
+		return '';
 	}
 
 	/**

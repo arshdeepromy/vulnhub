@@ -1,6 +1,107 @@
-.vh-card { background: #fff; border: 1px solid #dcdcde; border-radius: 4px; padding: 16px 20px; margin: 16px 0; }
-.vh-last-run { padding: 8px 12px; border-left: 4px solid #72aee6; background: #f6f7f7; margin-bottom: 12px; }
-.vh-last-run--failed { border-left-color: #d63638; }
-.vh-last-run__message { margin-top: 4px; color: #646970; }
+/*
+ * Backup & Restore screen.
+ *
+ * This file now loads in two places: wp-admin, and the portal's mirror of the
+ * same view. The card and last-run rules below are wp-admin's light chrome and
+ * are scoped to it deliberately — `.vh-card` is also a portal class, and an
+ * unscoped `background: #fff` on it painted a white slab through the middle of
+ * the dark portal. Everything else is written in --vh-* tokens so it follows
+ * whichever theme is in force.
+ */
+
+.wp-admin .vh-card { background: #fff; border: 1px solid #dcdcde; border-radius: 4px; padding: 16px 20px; margin: 16px 0; }
+.wp-admin .vh-last-run { padding: 8px 12px; border-left: 4px solid #72aee6; background: #f6f7f7; margin-bottom: 12px; }
+.wp-admin .vh-last-run--failed { border-left-color: #d63638; }
+.wp-admin .vh-last-run__message { margin-top: 4px; color: #646970; }
+
 #vh-restore-progress { margin: 8px 0; }
 
+/* ------------------------------------------------------------ progress. */
+
+.vh-backup__cost {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--vh-muted, #646970);
+  max-width: 68ch;
+}
+
+.vh-backup-progress {
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--vh-line, #dcdcde);
+  border-radius: var(--vh-radius-sm, 8px);
+  background: var(--vh-surface, #f6f7f7);
+}
+
+.vh-backup-progress__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.vh-backup-progress__head strong { color: var(--vh-ink, #1d2327); font-size: 13.5px; }
+
+.vh-backup-progress__status {
+  font: 500 10.5px/1 var(--vh-mono, monospace);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--vh-muted, #646970);
+}
+
+.vh-backup-progress.is-running .vh-backup-progress__status { color: var(--vh-link, #2271b1); }
+
+/* The track keeps its own height so the bar does not collapse to nothing
+   before the first phase reports a denominator. */
+.vh-backup-progress__track {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--vh-neutral-bg, rgba(0, 0, 0, .06));
+  overflow: hidden;
+}
+
+.vh-backup-progress__fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--vh-good, #2271b1);
+  transition: width .4s ease;
+}
+
+/* Running: a slow shimmer, so a phase that reports no numbers for a while
+   still reads as working rather than stuck. Honours reduced motion. */
+.vh-backup-progress.is-running .vh-backup-progress__fill {
+  background: linear-gradient(90deg, var(--vh-good, #2271b1), var(--vh-accent, #72aee6), var(--vh-good, #2271b1));
+  background-size: 200% 100%;
+  animation: vhBackupShimmer 2.4s linear infinite;
+}
+
+@keyframes vhBackupShimmer {
+  from { background-position: 0 0; }
+  to   { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vh-backup-progress.is-running .vh-backup-progress__fill { animation: none; }
+  .vh-backup-progress__fill { transition: none; }
+}
+
+.vh-backup-progress__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--vh-muted, #646970);
+  font-variant-numeric: tabular-nums;
+}
+
+.vh-backup-progress__error {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: var(--vh-bad, #d63638);
+}

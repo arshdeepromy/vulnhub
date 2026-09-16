@@ -3,11 +3,17 @@
  * The backup pass engine: bounded batches, checkpointed phases, and resume.
  *
  * A job never runs to completion in one request. It moves through phases
- * (db_export -> files_archive -> upload -> retention -> done), and within
- * each phase it runs bounded batches — the same BATCH_SECONDS/WEB_BUDGET/
- * CLI_BUDGET shape as VulnHub_Import_Runner. After every batch the cursor for
- * whichever phase is active is written back to the job row, so the work
- * already done survives a timeout, a killed process, or a container restart.
+ * (db_export -> files_archive -> package -> upload -> retention -> done), and
+ * within each phase it runs bounded batches — the same BATCH_SECONDS/
+ * WEB_BUDGET/CLI_BUDGET shape as VulnHub_Import_Runner. After every batch the
+ * cursor for whichever phase is active is written back to the job row, so the
+ * work already done survives a timeout, a killed process, or a container
+ * restart.
+ *
+ * `package` is what makes a backup one file rather than three: it streams
+ * manifest.json, db.sql.gz and wp-content.zip into a single .tar.gz and then
+ * deletes the working folder. It is a phase of its own, with its own cursor,
+ * so packing 150MB never has to fit inside one pass either.
  *
  * @package VulnHub\Backup
  */
@@ -29,6 +35,20 @@ final class VulnHub_Backup_Runner {
 	/** Cron hook that re-arms jobs whose pass event went missing. */
 	public const SWEEP_HOOK = 'vulnhub_backup_sweep';
 
+	/**
+	 * Phase that packs the finished members into one .tar.gz.
+	 *
+	 * Declared here rather than beside the other phases in
+	 * VulnHub_Backup_Jobs because that file is owned elsewhere; the column is
+	 * a plain string and nothing validates against a list, so this works —
+	 * but it belongs next to its siblings when the two can be touched
+	 * together.
+	 */
+	public const PHASE_PACKAGE = VulnHub_Backup_Jobs::PHASE_PACKAGE;
+
+	/** Members of the archive, in the order they are written. */
+	private const MEMBERS = array( 'manifest.json', 'db.sql.gz', 'wp-content.zip' );
+
 	/** Rows fetched per table batch. */
 	public const BATCH_ROWS = 2000;
 
@@ -38,8 +58,18 @@ final class VulnHub_Backup_Runner {
 	/** Budget for a pass driven by the operator's browser. */
 	public const WEB_BUDGET = 12.0;
 
-	/** Budget for a pass driven by cron or WP-CLI. */
-	public const CLI_BUDGET = 240.0;
+	/**
+	 * Budget for a pass driven by cron or WP-CLI.
+	 *
+	 * Deliberately under the cron worker's 60-second tick. That worker runs
+	 * `wp cron event run` under `flock -n`, so whatever a pass holds, it holds
+	 * against every other scheduled job: at the old 240s a backup blocked four
+	 * ticks in a row, and because passes chain, a long backup starved the
+	 * connector syncs and the 5-minute staged-sync resume sweep for as long as
+	 * it ran. 45s finishes inside a tick and lets the queue interleave; a
+	 * backup takes a few more passes and nothing else stops.
+	 */
+	public const CLI_BUDGET = 45.0;
 
 	/** How long a run lock is leased for. */
 	private const LEASE = 300;
@@ -154,8 +184,17 @@ final class VulnHub_Backup_Runner {
 			vulnhub()->logger->audit( 'backup.start', sprintf( 'Started a %s backup', $mode ), 'backup_job', $job_id );
 		}
 
+		/*
+		 * Queue it and hand the browser back straight away.
+		 *
+		 * This used to run a pass inline first, which meant the "Backup now"
+		 * POST sat there for up to WEB_BUDGET seconds before it could even
+		 * redirect -- the operator pressed a button and watched a dead tab,
+		 * on the request least able to afford it. The job is picked up by the
+		 * next cron tick and the panel renders a running job on load, so
+		 * nothing is lost by returning now.
+		 */
 		self::schedule( $job_id );
-		self::run( $job_id, self::WEB_BUDGET );
 
 		return $job_id;
 	}
@@ -209,6 +248,7 @@ final class VulnHub_Backup_Runner {
 			$done  = match ( $phase ) {
 				VulnHub_Backup_Jobs::PHASE_DB_EXPORT     => self::batch_db_export( $job ),
 				VulnHub_Backup_Jobs::PHASE_FILES_ARCHIVE  => self::batch_files_archive( $job ),
+				self::PHASE_PACKAGE                       => self::batch_package( $job ),
 				VulnHub_Backup_Jobs::PHASE_UPLOAD         => self::batch_upload( $job ),
 				VulnHub_Backup_Jobs::PHASE_RETENTION      => self::batch_retention( $job ),
 				default                                    => true,
@@ -274,7 +314,8 @@ final class VulnHub_Backup_Runner {
 	private static function next_phase( string $phase ): ?string {
 		return match ( $phase ) {
 			VulnHub_Backup_Jobs::PHASE_DB_EXPORT      => VulnHub_Backup_Jobs::PHASE_FILES_ARCHIVE,
-			VulnHub_Backup_Jobs::PHASE_FILES_ARCHIVE  => VulnHub_Backup_Jobs::PHASE_UPLOAD,
+			VulnHub_Backup_Jobs::PHASE_FILES_ARCHIVE  => self::PHASE_PACKAGE,
+			self::PHASE_PACKAGE                       => VulnHub_Backup_Jobs::PHASE_UPLOAD,
 			VulnHub_Backup_Jobs::PHASE_UPLOAD         => VulnHub_Backup_Jobs::PHASE_RETENTION,
 			VulnHub_Backup_Jobs::PHASE_RETENTION      => null,
 			default                                    => null,
@@ -640,6 +681,10 @@ final class VulnHub_Backup_Runner {
 			'job_id'        => $job_id,
 			'created_at'    => current_time( 'mysql', true ),
 			'app_version'   => defined( 'VULNHUB_VERSION' ) ? VULNHUB_VERSION : '',
+			// What a restore is looking at. Bundles written before packing
+			// existed have no `format` key at all, which is how they are told
+			// apart from these.
+			'format'        => 'tar.gz.v1',
 			'db_bytes'      => is_file( $db_path ) ? filesize( $db_path ) : 0,
 			'db_sha256'     => is_file( $db_path ) ? hash_file( 'sha256', $db_path ) : '',
 			'zip_bytes'     => is_file( $zip_path ) ? filesize( $zip_path ) : 0,
@@ -652,9 +697,156 @@ final class VulnHub_Backup_Runner {
 	}
 
 	/* =================================================================
-	 * Phase: upload — push db.sql.gz, wp-content.zip and manifest.json to
-	 * S3 when configured. put_object() under the 100MB threshold,
-	 * multipart in checkpointed 32MB part-batches above it.
+	 * Phase: package — manifest.json + db.sql.gz + wp-content.zip into one
+	 * .tar.gz, a chunk at a time, then throw the loose copies away.
+	 * ============================================================== */
+
+	/**
+	 * Process one bounded batch of the packing step.
+	 *
+	 * The cursor (which member, and how far into it) lives in the counters
+	 * blob, so a pass that runs out of budget half way through a 100MB member
+	 * picks up exactly where it stopped. Appending to a gzip file is legal and
+	 * produces a multi-member stream every reader handles, which is what makes
+	 * that possible without holding the archive open across requests.
+	 *
+	 * @param array<string,mixed> $job Job row.
+	 * @return bool True once the archive is complete.
+	 */
+	private static function batch_package( array $job ): bool {
+		$job_id  = (int) $job['id'];
+		$folder  = (string) $job['folder'];
+		$dir     = VulnHub_Backup_Storage::set_dir( $folder );
+		$archive = VulnHub_Backup_Storage::archive_path( $folder );
+
+		if ( '' === $dir || '' === $archive ) {
+			self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'The backup storage directory could not be created.', 'vulnhub' ) );
+			return true;
+		}
+
+		$counters = (array) $job['counters_arr'];
+		$cursor   = (array) ( $counters['package'] ?? array() );
+		$index    = (int) ( $cursor['index'] ?? 0 );
+		$offset   = (int) ( $cursor['offset'] ?? 0 );
+
+		// Only the members that exist: wp-content.zip is absent when there was
+		// nothing under wp-content to archive.
+		$members = array_values(
+			array_filter(
+				self::MEMBERS,
+				static fn( string $name ): bool => is_file( $dir . '/' . $name )
+			)
+		);
+
+		if ( ! $members ) {
+			self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'There is nothing to pack — the backup produced no files.', 'vulnhub' ) );
+			return true;
+		}
+
+		// A restart of this phase (index 0, nothing written yet) must not
+		// append to a half-written archive from an interrupted attempt.
+		if ( 0 === $index && 0 === $offset && is_file( $archive ) ) {
+			wp_delete_file( $archive );
+		}
+
+		$gz = VulnHub_Backup_Storage::tar_open( $archive );
+
+		if ( ! $gz ) {
+			self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'The backup archive could not be written.', 'vulnhub' ) );
+			return true;
+		}
+
+		$deadline = microtime( true ) + self::BATCH_SECONDS;
+		$done     = false;
+
+		while ( $index < count( $members ) ) {
+			$name = (string) $members[ $index ];
+			$path = $dir . '/' . $name;
+			$size = (int) filesize( $path );
+
+			if ( 0 === $offset ) {
+				gzwrite( $gz, VulnHub_Backup_Storage::tar_header( $name, $size, (int) filemtime( $path ) ) );
+			}
+
+			$written = VulnHub_Backup_Storage::tar_copy_member( $gz, $path, $offset, $deadline );
+
+			if ( $written < 0 ) {
+				gzclose( $gz );
+				self::finish(
+					$job_id,
+					VulnHub_Backup_Jobs::FAILED,
+					sprintf(
+						/* translators: %s: file name. */
+						__( '%s could not be read while packing the backup.', 'vulnhub' ),
+						$name
+					)
+				);
+				return true;
+			}
+
+			$offset = $written;
+
+			if ( $offset >= $size ) {
+				// Members are padded to a 512-byte boundary; the next header
+				// has to start on one.
+				gzwrite( $gz, VulnHub_Backup_Storage::tar_padding( $size ) );
+				++$index;
+				$offset = 0;
+			}
+
+			if ( $index >= count( $members ) ) {
+				VulnHub_Backup_Storage::tar_terminate( $gz );
+				$done = true;
+				break;
+			}
+
+			if ( microtime( true ) >= $deadline ) {
+				break;
+			}
+		}
+
+		gzclose( $gz );
+
+		$counters['package'] = array( 'index' => $index, 'offset' => $offset );
+		clearstatcache( true, $archive );
+		$counters['archive_bytes'] = is_file( $archive ) ? (int) filesize( $archive ) : 0;
+
+		if ( ! $done ) {
+			VulnHub_Backup_Jobs::save_counters( $job_id, $counters );
+			return false;
+		}
+
+		/*
+		 * Packed. The hash is of the archive as a whole, recorded on the job
+		 * (it cannot live inside the manifest, which is inside the archive) so
+		 * an operator can check a downloaded copy byte for byte. A restore
+		 * does not depend on it: it verifies each member against the manifest
+		 * and treats a missing tar end-marker as a truncated download.
+		 */
+		$hash = (string) hash_file( 'sha256', $archive );
+
+		$counters['archive_sha256'] = $hash;
+		$counters['archive_name']   = VulnHub_Backup_Storage::archive_name( $folder );
+
+		VulnHub_Backup_Jobs::save_counters( $job_id, $counters );
+		VulnHub_Backup_Jobs::update(
+			$job_id,
+			array(
+				'size_bytes'   => (string) ( $counters['archive_bytes'] ?? 0 ),
+				'content_hash' => $hash,
+			)
+		);
+
+		// The members now live in the archive; the working folder is litter.
+		VulnHub_Backup_Storage::delete_work_dir( $folder );
+
+		return true;
+	}
+
+	/* =================================================================
+	 * Phase: upload — push the packed archive to S3 when configured.
+	 * put_object() under the 100MB threshold, multipart in checkpointed
+	 * 32MB part-batches above it.
 	 * ============================================================== */
 
 	/**
@@ -684,24 +876,27 @@ final class VulnHub_Backup_Runner {
 			return true;
 		}
 
-		$dir    = VulnHub_Backup_Storage::set_dir( (string) $job['folder'] );
-		$prefix = self::s3_prefix( (string) $job['folder'] );
+		$folder = (string) $job['folder'];
 
 		$s3->ensure_lifecycle_rule( (string) $settings->get( 'backup_s3', 'prefix', 'vulnhub-backups' ) );
 
+		/*
+		 * One object per backup now, not three. The key keeps the backup's own
+		 * name so what lands in the bucket is the same file an operator would
+		 * download from the backups screen -- and so retention, which groups
+		 * by the segment after the prefix, still sees one backup as one unit.
+		 */
 		$files = array(
-			'manifest.json'  => 'application/json',
-			'db.sql.gz'      => 'application/gzip',
-			'wp-content.zip' => 'application/zip',
+			VulnHub_Backup_Storage::archive_name( $folder ) => 'application/gzip',
 		);
 
 		$counters = (array) $job['counters_arr'];
 		$upload_state = (array) ( $counters['upload_state'] ?? array() );
 
 		foreach ( $files as $name => $content_type ) {
-			$path = $dir . '/' . $name;
+			$path = VulnHub_Backup_Storage::archive_path( $folder );
 
-			if ( ! is_file( $path ) ) {
+			if ( '' === $path || ! is_file( $path ) ) {
 				continue;
 			}
 			if ( ! empty( $upload_state[ $name ]['done'] ) ) {
@@ -709,7 +904,7 @@ final class VulnHub_Backup_Runner {
 			}
 
 			$size = filesize( $path );
-			$key  = $prefix . '/' . $name;
+			$key  = self::s3_prefix() . $name;
 
 			if ( $size < VulnHub_Backup_S3::MULTIPART_THRESHOLD ) {
 				$body   = file_get_contents( $path ); // phpcs:ignore WordPress.WP.AlternativeFunctions
@@ -830,15 +1025,19 @@ final class VulnHub_Backup_Runner {
 	}
 
 	/**
-	 * The S3 key prefix a given backup folder uploads under.
+	 * The configured S3 key prefix, with a trailing slash.
 	 *
-	 * @param string $folder Local backup folder name.
+	 * It used to take the backup folder and return a per-backup prefix, back
+	 * when a backup was three objects that needed a folder of their own in the
+	 * bucket. One object needs no folder — the archive's own name carries the
+	 * date and job id.
+	 *
 	 * @return string
 	 */
-	private static function s3_prefix( string $folder ): string {
+	private static function s3_prefix(): string {
 		$prefix = function_exists( 'vulnhub' ) ? (string) vulnhub()->settings->get( 'backup_s3', 'prefix', 'vulnhub-backups' ) : 'vulnhub-backups';
 
-		return trim( $prefix, '/' ) . '/' . $folder;
+		return trim( $prefix, '/' ) . '/';
 	}
 
 	/**
@@ -897,8 +1096,10 @@ final class VulnHub_Backup_Runner {
 			$prefix   = trim( (string) vulnhub()->settings->get( 'backup_s3', 'prefix', 'vulnhub-backups' ), '/' ) . '/';
 			$all_keys = $s3->list_all( $prefix );
 
-			// Group by the folder segment right after the prefix, so
-			// retention counts one backup set (three objects) as one unit.
+			// Group by the segment right after the prefix, so retention counts
+			// one backup as one unit whichever shape it is in the bucket: a
+			// packed `<folder>.tar.gz` object, or the `<folder>/` of three
+			// objects an older install uploaded.
 			$folders = array();
 			foreach ( $all_keys as $entry ) {
 				$rest = substr( (string) $entry['key'], strlen( $prefix ) );

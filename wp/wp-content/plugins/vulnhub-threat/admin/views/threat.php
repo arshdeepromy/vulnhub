@@ -47,7 +47,7 @@ $vh_lanes   = VulnHub_Threat_Repo::has_data() ? VulnHub_Threat_Repo::lanes() : n
 			</tr>
 			<tr>
 				<th scope="row"><?php esc_html_e( 'Next scheduled', 'vulnhub' ); ?></th>
-				<td><?php echo esc_html( $vh_status['next_run'] ? gmdate( 'Y-m-d H:i', (int) $vh_status['next_run'] ) . ' UTC' : __( 'not scheduled', 'vulnhub' ) ); ?></td>
+				<td><?php echo esc_html( $vh_status['next_run'] ? vh_date( gmdate( 'Y-m-d H:i:s', (int) $vh_status['next_run'] ) ) : __( 'not scheduled', 'vulnhub' ) ); ?></td>
 			</tr>
 			<tr>
 				<th scope="row"><?php esc_html_e( 'CVEs known', 'vulnhub' ); ?></th>

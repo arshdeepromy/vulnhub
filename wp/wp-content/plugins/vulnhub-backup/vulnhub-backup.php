@@ -170,7 +170,42 @@ function vulnhub_backup_asset_ver( string $rel ): string {
 /**
  * Enqueue this screen's own script/style, on top of the shared vulnhub-app
  * bundle every other integration screen depends on for visual consistency.
+ *
+ * Split out of the hook so the portal can enqueue exactly the same script with
+ * exactly the same REST root and nonces — see vulnhub_backup_portal_assets().
+ *
+ * @return void
  */
+function vulnhub_backup_enqueue(): void {
+	vulnhub_backup_load();
+
+	wp_enqueue_style( 'vulnhub-backup', VULNHUB_BACKUP_URL . 'assets/backup.css', array( 'vulnhub-app' ), vulnhub_backup_asset_ver( 'assets/backup.css' ) );
+	wp_enqueue_script( 'vulnhub-backup', VULNHUB_BACKUP_URL . 'assets/backup.js', array(), vulnhub_backup_asset_ver( 'assets/backup.js' ), true );
+
+	wp_localize_script(
+		'vulnhub-backup',
+		'VulnHubBackup',
+		array(
+			'root'      => esc_url_raw( rest_url( VulnHub_Backup_Rest::NS . '/' ) ),
+			'restNonce' => wp_create_nonce( 'wp_rest' ),
+			'nonce'     => wp_create_nonce( VulnHub_Backup_Rest::NONCE ),
+			'chunkSize' => VulnHub_Backup_Storage::chunk_size(),
+			'maxChunk'  => VulnHub_Backup_Storage::chunk_max(),
+			'siteHost'  => wp_parse_url( home_url(), PHP_URL_HOST ),
+			'i18n'      => array(
+				'confirmRestore' => __( 'This will permanently replace every table and every plugin/theme/upload file on this site. Type the site domain above to confirm.', 'vulnhub' ),
+				'wrongDomain'    => __( 'That does not match this site\'s domain.', 'vulnhub' ),
+				'uploading'      => __( 'Uploading…', 'vulnhub' ),
+				'failed'         => __( 'Something went wrong.', 'vulnhub' ),
+				'finished'       => __( 'Backup finished.', 'vulnhub' ),
+				'failedJob'      => __( 'The backup failed.', 'vulnhub' ),
+				'cancelled'      => __( 'Backup cancelled.', 'vulnhub' ),
+				'working'        => __( 'Working…', 'vulnhub' ),
+			),
+		)
+	);
+}
+
 add_action(
 	'admin_enqueue_scripts',
 	static function ( string $hook ): void {
@@ -183,31 +218,45 @@ add_action(
 			return;
 		}
 
-		wp_enqueue_style( 'vulnhub-backup', VULNHUB_BACKUP_URL . 'assets/backup.css', array( 'vulnhub-app' ), vulnhub_backup_asset_ver( 'assets/backup.css' ) );
-		wp_enqueue_script( 'vulnhub-backup', VULNHUB_BACKUP_URL . 'assets/backup.js', array(), vulnhub_backup_asset_ver( 'assets/backup.js' ), true );
-
-		vulnhub_backup_load();
-
-		wp_localize_script(
-			'vulnhub-backup',
-			'VulnHubBackup',
-			array(
-				'root'      => esc_url_raw( rest_url( VulnHub_Backup_Rest::NS . '/' ) ),
-				'restNonce' => wp_create_nonce( 'wp_rest' ),
-				'nonce'     => wp_create_nonce( VulnHub_Backup_Rest::NONCE ),
-				'chunkSize' => VulnHub_Backup_Storage::chunk_size(),
-				'maxChunk'  => VulnHub_Backup_Storage::chunk_max(),
-				'siteHost'  => wp_parse_url( home_url(), PHP_URL_HOST ),
-				'i18n'      => array(
-					'confirmRestore' => __( 'This will permanently replace every table and every plugin/theme/upload file on this site. Type the site domain above to confirm.', 'vulnhub' ),
-					'wrongDomain'    => __( 'That does not match this site\'s domain.', 'vulnhub' ),
-					'uploading'      => __( 'Uploading…', 'vulnhub' ),
-					'failed'         => __( 'Something went wrong.', 'vulnhub' ),
-				),
-			)
-		);
+		vulnhub_backup_enqueue();
 	}
 );
+
+/**
+ * The same assets, on the portal's copy of this screen.
+ *
+ * `/portal-admin/?section=screen-vulnhub-backup` renders this very view
+ * through core's render_screen(), but it is a front-end page: nothing here was
+ * ever enqueued, so the screen had no progress polling and no uploader at all.
+ * Pressing "Backup now" appeared to do nothing but move you somewhere else.
+ *
+ * Mirrors VulnHub_Admin::portal_assets(), which had to solve this for the
+ * connector cards.
+ *
+ * @return void
+ */
+function vulnhub_backup_portal_assets(): void {
+	if ( ! class_exists( 'VulnHub_Dash_Portal' ) || ! class_exists( 'VulnHub_Dash_App' ) ) {
+		return;
+	}
+	if ( ! current_user_can( \VulnHub\Core\Caps::MANAGE ) ) {
+		return;
+	}
+	if ( VulnHub_Dash_App::view_for_post( get_post() ) !== VulnHub_Dash_Portal::ADMIN_VIEW ) {
+		return;
+	}
+
+	vulnhub_backup_load();
+
+	// Only on this section: the portal's admin area is one page, so without
+	// this every admin screen would carry the uploader's script.
+	if ( VulnHub_Dash_Portal::current_section() !== VulnHub_Dash_Portal::MIRROR_PREFIX . 'vulnhub-backup' ) {
+		return;
+	}
+
+	vulnhub_backup_enqueue();
+}
+add_action( 'wp_enqueue_scripts', 'vulnhub_backup_portal_assets' );
 
 /**
  * Form handlers: manual backup trigger, settings save, local delete.
@@ -226,14 +275,21 @@ add_action(
 
 		$job_id = VulnHub_Backup_Runner::start_new( 'manual' );
 
+		/*
+		 * vh_admin_url(), never admin_url(). The portal mirrors this screen and
+		 * posts to admin-post.php exactly as wp-admin does; a hardcoded
+		 * admin_url() redirect walks the operator out of the portal mid-task,
+		 * and a portal-only account is then bounced from wp-admin to the
+		 * dashboard -- which looks like the button threw the backup away.
+		 */
 		wp_safe_redirect(
-			add_query_arg(
+			vh_admin_url(
+				'vulnhub-backup',
 				array(
-					'page'    => 'vulnhub-backup',
-					'vh_msg'  => $job_id ? __( 'Backup started.', 'vulnhub' ) : __( 'Could not start the backup.', 'vulnhub' ),
+					'vh_msg'  => $job_id ? __( 'Backup started. It runs in the background — this page follows it.', 'vulnhub' ) : __( 'Could not start the backup.', 'vulnhub' ),
 					'vh_type' => $job_id ? 'success' : 'error',
-				),
-				admin_url( 'admin.php' )
+					'vh_job'  => $job_id,
+				)
 			)
 		);
 		exit;
@@ -281,13 +337,12 @@ add_action(
 		vulnhub()->logger->audit( 'backup.settings_saved', __( 'Backup settings updated', 'vulnhub' ), 'backup', '', array( 'enabled' => $values['enabled'], 'interval' => $values['interval'] ) );
 
 		wp_safe_redirect(
-			add_query_arg(
+			vh_admin_url(
+				'vulnhub-backup',
 				array(
-					'page'    => 'vulnhub-backup',
 					'vh_msg'  => __( 'Backup settings saved.', 'vulnhub' ),
 					'vh_type' => 'success',
-				),
-				admin_url( 'admin.php' )
+				)
 			)
 		);
 		exit;
@@ -311,13 +366,12 @@ add_action(
 		}
 
 		wp_safe_redirect(
-			add_query_arg(
+			vh_admin_url(
+				'vulnhub-backup',
 				array(
-					'page'    => 'vulnhub-backup',
 					'vh_msg'  => __( 'Local backup deleted.', 'vulnhub' ),
 					'vh_type' => 'success',
-				),
-				admin_url( 'admin.php' )
+				)
 			)
 		);
 		exit;

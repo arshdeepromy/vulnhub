@@ -92,7 +92,14 @@ final class Logger {
 		if ( ! $run_id ) {
 			return;
 		}
-		$stamp = gmdate( 'H:i:s' );
+		/*
+		 * The site timezone, not UTC. This stamp is only ever read by a person
+		 * -- it is the "[09:32:14]" down the left of the sync log -- and a
+		 * reader comparing it against their own clock is the entire point of
+		 * having it. Stored data stays UTC (vh_now); this is presentation that
+		 * happens to be written down.
+		 */
+		$stamp = wp_date( 'H:i:s' );
 		$wpdb->query(
 			$wpdb->prepare(
 				'UPDATE ' . vh_table( 'sync_runs' ) . ' SET log_text = CONCAT(COALESCE(log_text, ""), %s) WHERE id = %d',
