@@ -113,9 +113,30 @@ public function fields(): array {
             'options' => array( 'info' => 'Info and above', 'low' => 'Low and above' ),
             'default' => 'low',
         ),
+        array(
+            'key'       => 'sn_url',
+            'label'     => __( 'ServiceNow instance URL', 'vulnhub' ),
+            'type'      => 'text',
+            // Only while another setting has one of these values.
+            'show_when' => array( 'source' => array( 'servicenow' ) ),
+        ),
     );
 }
 ```
+
+`show_when` is what keeps a multi-source connector's settings screen
+readable. The CMDB connector can read from ServiceNow, Jira Assets, a
+Confluence page or a CSV, and without it the form asked for all four sets
+at once -- twenty-odd inputs, most of them irrelevant whichever source was
+selected. Name the controlling setting and the values that reveal the
+field, and the Integrations screen renders it as data attributes that
+`admin.js` resolves on load and on change.
+
+Two things it deliberately does not do. A hidden row is still submitted,
+so switching source and saving cannot wipe credentials configured for
+another one -- and switching back finds them still there. And with
+scripting off every row stays visible, which is exactly what the screen
+did before, so nothing becomes unreachable.
 
 `select` options are `value => label`. `checkbox` may add `checkbox_label`.
 A blank secret field on submit means "keep the stored value" — never clear it.

@@ -413,4 +413,60 @@
 	} else {
 		init();
 	}
+
+	/* ---------------------------------------------------------------
+	 * Only the settings that belong to the chosen source
+	 *
+	 * The CMDB connector can read from ServiceNow, Jira Assets, a
+	 * Confluence page or a CSV, and the form asked for all four sets at
+	 * once: twenty-odd inputs, most of them irrelevant whichever way the
+	 * Source system select was set. A field can now name the setting it
+	 * belongs to (`show_when` in the connector's field definition), and
+	 * this hides the rows that do not apply.
+	 *
+	 * Hidden rows keep their values -- switching source and back does not
+	 * lose what was typed, and a save still posts every field, so an
+	 * operator who configured ServiceNow last year does not have it wiped
+	 * by saving while Assets is selected.
+	 * ------------------------------------------------------------- */
+	( function () {
+		var rows = document.querySelectorAll( '[data-vh-when-field]' );
+
+		if ( ! rows.length ) {
+			return;
+		}
+
+		function apply() {
+			rows.forEach( function ( row ) {
+				var field = row.getAttribute( 'data-vh-when-field' );
+				var want = ( row.getAttribute( 'data-vh-when-value' ) || '' ).split( ',' );
+				var control = document.querySelector( '[name="' + field + '"]' );
+
+				if ( ! control ) {
+					return;
+				}
+
+				row.hidden = want.indexOf( control.value ) === -1;
+			} );
+		}
+
+		// One listener per control, not per row: a dozen rows can hang off
+		// the same select.
+		var controls = {};
+
+		rows.forEach( function ( row ) {
+			controls[ row.getAttribute( 'data-vh-when-field' ) ] = true;
+		} );
+
+		Object.keys( controls ).forEach( function ( name ) {
+			var control = document.querySelector( '[name="' + name + '"]' );
+
+			if ( control ) {
+				control.addEventListener( 'change', apply );
+			}
+		} );
+
+		apply();
+	}() );
+
 }() );

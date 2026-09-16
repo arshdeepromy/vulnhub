@@ -119,9 +119,30 @@ $vh_active   = $vh_selected ? vulnhub()->connectors->get( $vh_selected ) : null;
 						 * one-line label stranded beside a tall block and
 						 * reads as though the prose belongs to that input.
 						 */
+						/*
+						 * A field can say which setting it belongs to, so a
+						 * connector with four sources does not ask for all
+						 * four sets at once: `show_when => [ 'source' =>
+						 * [ 'assets' ] ]` means "only while Source system is
+						 * Assets". Rendered as data attributes and resolved by
+						 * admin.js; with scripting off every row stays
+						 * visible, which is what this screen did before.
+						 */
+						$vh_when_attr = '';
+
+						foreach ( (array) ( $vh_field['show_when'] ?? array() ) as $vh_ctrl => $vh_vals ) {
+							$vh_when_attr = sprintf(
+								' data-vh-when-field="%s" data-vh-when-value="%s"',
+								esc_attr( 'vh_' . $vh_ctrl ),
+								esc_attr( implode( ',', array_map( 'strval', (array) $vh_vals ) ) )
+							);
+							break; // One control is enough; more would be a rule, not a field.
+						}
+
 						if ( 'note' === $vh_type ) {
 							printf(
-								'<tr class="vh-field-note"><td colspan="2">%s</td></tr>',
+								'<tr class="vh-field-note"%s><td colspan="2">%s</td></tr>',
+								$vh_when_attr, // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built from esc_attr above.
 								wp_kses_post( (string) ( $vh_field['help'] ?? '' ) )
 							);
 							continue;
@@ -133,7 +154,7 @@ $vh_active   = $vh_selected ? vulnhub()->connectors->get( $vh_selected ) : null;
 						$vh_value  = $vh_secret ? '' : (string) vulnhub()->settings->get( $vh_active->id(), $vh_key, (string) ( $vh_field['default'] ?? '' ) );
 						$vh_hint   = $vh_secret ? vulnhub()->settings->secret_hint( $vh_active->id(), $vh_key ) : '';
 						?>
-						<tr>
+						<tr<?php echo $vh_when_attr; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built from esc_attr above. ?>>
 							<th scope="row">
 								<label for="<?php echo esc_attr( $vh_id ); ?>">
 									<?php echo esc_html( (string) $vh_field['label'] ); ?>

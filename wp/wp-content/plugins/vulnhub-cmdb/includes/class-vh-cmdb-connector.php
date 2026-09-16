@@ -178,6 +178,7 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			/* --- ServiceNow ------------------------------------------- */
 			array(
 				'key'         => 'sn_url',
+				'show_when' => array( 'source' => array( 'servicenow' ) ),
 				'label'       => __( 'ServiceNow instance URL', 'vulnhub' ),
 				'type'        => 'url',
 				'placeholder' => 'https://acme.service-now.com',
@@ -185,12 +186,14 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			),
 			array(
 				'key'   => 'sn_user',
+				'show_when' => array( 'source' => array( 'servicenow' ) ),
 				'label' => __( 'ServiceNow user name', 'vulnhub' ),
 				'type'  => 'text',
 				'help'  => __( 'Give the integration its own account with a read-only role (snc_read_only plus read access to the CMDB tables). It never needs to write.', 'vulnhub' ),
 			),
 			array(
 				'key'    => 'sn_token',
+				'show_when' => array( 'source' => array( 'servicenow' ) ),
 				'label'  => __( 'ServiceNow password or API token', 'vulnhub' ),
 				'type'   => 'text',
 				'secret' => true,
@@ -198,6 +201,7 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			),
 			array(
 				'key'     => 'sn_tables',
+				'show_when' => array( 'source' => array( 'servicenow' ) ),
 				'label'   => __( 'CI tables to read', 'vulnhub' ),
 				'type'    => 'text',
 				'default' => 'cmdb_ci_server,cmdb_ci_netgear',
@@ -205,6 +209,7 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			),
 			array(
 				'key'         => 'sn_query',
+				'show_when' => array( 'source' => array( 'servicenow' ) ),
 				'label'       => __( 'Encoded query filter', 'vulnhub' ),
 				'type'        => 'text',
 				'placeholder' => 'install_status=1^operational_status=1',
@@ -212,6 +217,7 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			),
 			array(
 				'key'     => 'sn_page_size',
+				'show_when' => array( 'source' => array( 'servicenow' ) ),
 				'label'   => __( 'Records per request', 'vulnhub' ),
 				'type'    => 'number',
 				'default' => 500,
@@ -221,12 +227,14 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			/* --- Jira Service Management Assets ------------------------- */
 			array(
 				'key'   => 'as_email',
+				'show_when' => array( 'source' => array( 'assets' ) ),
 				'label' => __( 'Atlassian account email', 'vulnhub' ),
 				'type'  => 'email',
 				'help'  => __( 'The account the API token belongs to. Basic auth uses email:token. A dedicated integration account with read-only Assets access is preferable to a person\'s login.', 'vulnhub' ),
 			),
 			array(
 				'key'    => 'as_token',
+				'show_when' => array( 'source' => array( 'assets' ) ),
 				'label'  => __( 'Assets API token', 'vulnhub' ),
 				'type'   => 'text',
 				'secret' => true,
@@ -234,6 +242,7 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			),
 			array(
 				'key'         => 'as_cloud_id',
+				'show_when' => array( 'source' => array( 'assets' ) ),
 				'label'       => __( 'Atlassian cloud id', 'vulnhub' ),
 				'type'        => 'text',
 				'placeholder' => '00000000-0000-0000-0000-000000000000',
@@ -241,6 +250,7 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			),
 			array(
 				'key'         => 'as_workspace_id',
+				'show_when' => array( 'source' => array( 'assets' ) ),
 				'label'       => __( 'Assets workspace id', 'vulnhub' ),
 				'type'        => 'text',
 				'placeholder' => '00000000-0000-0000-0000-000000000000',
@@ -248,6 +258,7 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			),
 			array(
 				'key'     => 'as_schema_id',
+				'show_when' => array( 'source' => array( 'assets' ) ),
 				'label'   => __( 'Object schema id', 'vulnhub' ),
 				'type'    => 'number',
 				'default' => 6,
@@ -255,6 +266,7 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			),
 			array(
 				'key'     => 'as_types',
+				'show_when' => array( 'source' => array( 'assets' ) ),
 				'label'   => __( 'Object types to read', 'vulnhub' ),
 				'type'    => 'text',
 				'default' => 'Servers, Computing Devices',
@@ -264,6 +276,7 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			/* --- Confluence -------------------------------------------- */
 			array(
 				'key'         => 'cf_url',
+				'show_when' => array( 'source' => array( 'confluence' ) ),
 				'label'       => __( 'Confluence site URL', 'vulnhub' ),
 				'type'        => 'url',
 				'placeholder' => 'https://acme.atlassian.net',
@@ -271,12 +284,14 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			),
 			array(
 				'key'   => 'cf_email',
+				'show_when' => array( 'source' => array( 'confluence' ) ),
 				'label' => __( 'Atlassian account email', 'vulnhub' ),
 				'type'  => 'email',
 				'help'  => __( 'The account the API token belongs to. Basic auth uses email:token.', 'vulnhub' ),
 			),
 			array(
 				'key'    => 'cf_token',
+				'show_when' => array( 'source' => array( 'confluence' ) ),
 				'label'  => __( 'Confluence API token', 'vulnhub' ),
 				'type'   => 'text',
 				'secret' => true,
@@ -284,6 +299,7 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			),
 			array(
 				'key'         => 'cf_pages',
+				'show_when' => array( 'source' => array( 'confluence' ) ),
 				'label'       => __( 'Page ids', 'vulnhub' ),
 				'type'        => 'text',
 				'placeholder' => '196611, 229377',
@@ -291,6 +307,7 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			),
 			array(
 				'key'         => 'cf_cql',
+				'show_when' => array( 'source' => array( 'confluence' ) ),
 				'label'       => __( 'CQL search (instead of page ids)', 'vulnhub' ),
 				'type'        => 'text',
 				'placeholder' => 'space = IT AND label = "asset-register"',
@@ -298,6 +315,7 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			),
 			array(
 				'key'         => 'cf_space',
+				'show_when' => array( 'source' => array( 'confluence' ) ),
 				'label'       => __( 'Space key (fallback)', 'vulnhub' ),
 				'type'        => 'text',
 				'placeholder' => 'IT',
