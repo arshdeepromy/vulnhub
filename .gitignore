@@ -11,5 +11,9 @@ wp/wp-content/upgrade/
 .mcp_token
 .portal_test_pass
 
-# Real/sensitive sample data — never commit
+# Real/sensitive sample data — never commit.
+# The EOS reconciliation drop is a live register: real hostnames, applications,
+# risk ratings and decommission plans. It belongs on the box, not in a public
+# repository, and no code reads it -- it was imported once through the screen.
 dev/real-*.csv
+wp/wp-content/plugins/vulnhub-eos/data/
