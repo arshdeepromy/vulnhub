@@ -63,6 +63,17 @@ final class VulnHub_Cmdb_Assets_Client {
 	 */
 	private const HARD_MAX_PAGES = 400;
 
+	/**
+	 * The value `total` saturates at.
+	 *
+	 * Atlassian counts matches up to 1000 and then stops counting: a query
+	 * matching 1,186 objects reports `total: 1000` on every page, while
+	 * `isLast` stays false and paging keeps returning objects past 1000. So
+	 * `total` is a lower bound, not a count, and nothing here may treat
+	 * reaching it as having read everything.
+	 */
+	private const TOTAL_CAP = 1000;
+
 	/** Seconds allowed per request. Assets pages are small; 30s is generous. */
 	private const TIMEOUT = 30;
 
@@ -377,6 +388,18 @@ final class VulnHub_Cmdb_Assets_Client {
 	}
 
 	/**
+	 * Render `total` for humans, marking it when it has saturated.
+	 *
+	 * Printing a bare "1000" invites exactly the misreading that hid the
+	 * truncation: it looks like a count when it is a floor.
+	 */
+	private static function count_label( int $total ): string {
+		return $total >= self::TOTAL_CAP
+			? number_format_i18n( self::TOTAL_CAP ) . '+'
+			: number_format_i18n( $total );
+	}
+
+	/**
 	 * A single cheap call, for the connection test.
 	 *
 	 * @param string $aql AQL query to count against.
@@ -413,7 +436,7 @@ final class VulnHub_Cmdb_Assets_Client {
 			'message' => sprintf(
 				/* translators: %s: number of objects matching the query. */
 				__( 'Connected. %s object(s) match.', 'vulnhub' ),
-				number_format_i18n( $page['total'] )
+				self::count_label( $page['total'] )
 			),
 			'detail'  => array(
 				'status' => $page['status'],
@@ -426,10 +449,12 @@ final class VulnHub_Cmdb_Assets_Client {
 	/**
 	 * Page through every object matching the query.
 	 *
-	 * Stops on `isLast`, on a short page, on reaching `total`, or on the
-	 * runaway guard — whichever comes first. A failed page aborts the whole
-	 * fetch rather than returning a partial set, because a partial set handed
-	 * to the importer looks exactly like a shrinking CMDB.
+	 * Stops on `isLast`, on a short page, or on the runaway guard — whichever
+	 * comes first. `total` is deliberately NOT a stop condition: it saturates
+	 * at TOTAL_CAP, so honouring it truncated the read at exactly 1000 of
+	 * 1,186 objects. A failed page aborts the whole fetch rather than
+	 * returning a partial set, because a partial set handed to the importer
+	 * looks exactly like a shrinking CMDB.
 	 *
 	 * @param string        $aql      AQL query.
 	 * @param callable|null $progress Called as f(fetched, total) after each page.
@@ -468,11 +493,11 @@ final class VulnHub_Cmdb_Assets_Client {
 			call_user_func(
 				$this->log,
 				sprintf(
-					'Assets: page %d (startAt %d) returned %d of %d object(s).',
+					'Assets: page %d (startAt %d) returned %d object(s); %s reported.',
 					$pages,
 					$start_at,
 					count( $page['values'] ),
-					$total
+					self::count_label( $total )
 				)
 			);
 
@@ -481,16 +506,16 @@ final class VulnHub_Cmdb_Assets_Client {
 			}
 
 			/*
-			 * Tighten the guard once `total` is known: the brief's
-			 * total/PAGE_SIZE + 5. Until then HARD_MAX_PAGES applies.
+			 * Tighten the guard once `total` is known to be a real count. A
+			 * saturated total says only "1000 or more", so it cannot bound
+			 * anything and HARD_MAX_PAGES stays in force.
 			 */
-			if ( $total > 0 ) {
+			if ( $total > 0 && $total < self::TOTAL_CAP ) {
 				$max_pages = min( self::HARD_MAX_PAGES, (int) ceil( $total / self::PAGE_SIZE ) + 5 );
 			}
 
 			$exhausted = $page['is_last']
-				|| count( $page['values'] ) < self::PAGE_SIZE
-				|| ( $total > 0 && count( $objects ) >= $total );
+				|| count( $page['values'] ) < self::PAGE_SIZE;
 
 			$start_at += self::PAGE_SIZE;
 		} while ( ! $exhausted && $pages < $max_pages );

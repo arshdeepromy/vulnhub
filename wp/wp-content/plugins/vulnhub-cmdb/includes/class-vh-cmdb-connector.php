@@ -707,6 +707,25 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			$this->counts['locations_set']
 		);
 
+		/*
+		 * Held records are the single largest bucket on a first live run --
+		 * 231 of 1,186 on this workspace -- so leaving them out of the summary
+		 * makes the arithmetic look wrong. Named here, they read as what they
+		 * are: records waiting for evidence, not errors.
+		 */
+		if ( $this->counts['held'] > 0 ) {
+			$message .= ' ' . sprintf(
+				/* translators: %d: number of CIs held. */
+				_n(
+					'%d CI is held out of the inventory until something sees it.',
+					'%d CIs are held out of the inventory until something sees them.',
+					$this->counts['held'],
+					'vulnhub'
+				),
+				$this->counts['held']
+			);
+		}
+
 		if ( $dry_run ) {
 			$message = __( 'Dry run — nothing was written. ', 'vulnhub' ) . $message;
 		}
@@ -732,6 +751,7 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			'unchanged'      => 0,
 			'skipped'        => 0,
 			'unissued'       => 0,
+			'held'           => 0,
 			'invalid'        => 0,
 			'teams_set'      => 0,
 			'teams_made'     => 0,
@@ -965,15 +985,10 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			);
 		}
 
-		$records = array();
-		foreach ( $fetched['rows'] as $row ) {
-			$records[] = $this->normalise_assets( $row, $fetched['map'] );
-		}
-
 		return array(
 			'ok'      => true,
 			'message' => '',
-			'records' => $records,
+			'records' => $this->normalise_assets_rows( $fetched['rows'], $fetched['map'] ),
 		);
 	}
 
@@ -1183,14 +1198,109 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 	}
 
 	/**
+	 * Normalise a whole set of flattened Assets objects.
+	 *
+	 * One Assets workspace is not one spreadsheet. Each object type carries
+	 * its own attributes, and here the two overlap only in part: `Servers`
+	 * holds the hostname in "Host Name", which `Computing Devices` does not
+	 * have at all -- it uses "Name". A single workspace-wide mapping has to
+	 * pick one, so binding hostname to "Host Name" left every one of the 791
+	 * Computing Devices with no hostname, and the validator rejected the lot.
+	 *
+	 * So each object type also gets its own detected mapping, over only the
+	 * attributes objects of that type actually carry. The shared mapping --
+	 * the one an operator can edit on the CMDB screen -- still wins wherever
+	 * it produces a value; the type's own mapping fills what is left.
+	 *
+	 * @param array<int,array<string,string>> $rows Flattened objects.
+	 * @param array<string,string>            $map  Shared mapping.
+	 * @return array<int,array<string,string>>
+	 */
+	public function normalise_assets_rows( array $rows, array $map ): array {
+		$groups = array();
+
+		foreach ( $rows as $row ) {
+			if ( is_array( $row ) ) {
+				$groups[ (string) ( $row['Assets Object Type'] ?? '' ) ][] = $row;
+			}
+		}
+
+		$type_maps = array();
+		foreach ( $groups as $type => $group ) {
+			$type_maps[ $type ] = VulnHub_Cmdb_Schema::detect_mapping( self::assets_headers( $group ), $group );
+		}
+
+		$this->log_assets_type_maps( $groups, $map, $type_maps );
+
+		$records = array();
+		foreach ( $rows as $row ) {
+			if ( is_array( $row ) ) {
+				$type      = (string) ( $row['Assets Object Type'] ?? '' );
+				$records[] = $this->normalise_assets( $row, $map, $type_maps[ $type ] ?? array() );
+			}
+		}
+
+		return $records;
+	}
+
+	/**
+	 * Record, per object type, what the type's own mapping had to fill in.
+	 *
+	 * The shared mapping is already logged. What matters for review is the
+	 * difference: which fields this object type binds somewhere else, and
+	 * which it cannot fill at all.
+	 *
+	 * @param array<string,array<int,array<string,string>>> $groups    Rows by object type.
+	 * @param array<string,string>                          $map       Shared mapping.
+	 * @param array<string,array<string,string>>            $type_maps Mapping per object type.
+	 */
+	private function log_assets_type_maps( array $groups, array $map, array $type_maps ): void {
+		foreach ( $type_maps as $type => $type_map ) {
+			$extra = array();
+
+			foreach ( $type_map as $field => $attribute ) {
+				$shared = (string) ( $map[ $field ] ?? '' );
+
+				if ( $shared !== $attribute ) {
+					$extra[] = $field . ' ← ' . $attribute . ( '' !== $shared ? ' (not "' . $shared . '")' : '' );
+				}
+			}
+
+			$this->log(
+				sprintf(
+					'Assets: %s — %d object(s); %s',
+					'' !== $type ? $type : 'untyped',
+					count( $groups[ $type ] ?? array() ),
+					$extra
+						? 'this type binds ' . implode( '; ', $extra )
+						: 'the shared mapping covers every field.'
+				)
+			);
+		}
+	}
+
+	/**
 	 * Map one flattened Assets object on to the canonical record shape.
 	 *
-	 * @param array<string,string> $row Flattened object.
-	 * @param array<string,string> $map canonical field => attribute name.
+	 * @param array<string,string> $row      Flattened object.
+	 * @param array<string,string> $map      Canonical field => attribute name.
+	 * @param array<string,string> $type_map Same, detected for this object
+	 *                                       type alone; fills only what the
+	 *                                       shared mapping left empty.
 	 * @return array<string,string>
 	 */
-	public function normalise_assets( array $row, array $map ): array {
+	public function normalise_assets( array $row, array $map, array $type_map = array() ): array {
 		$record = VulnHub_Cmdb_Schema::apply_mapping( $row, $map );
+
+		if ( $type_map ) {
+			$fallback = VulnHub_Cmdb_Schema::apply_mapping( $row, $type_map );
+
+			foreach ( $fallback as $field => $value ) {
+				if ( '' === trim( (string) ( $record[ $field ] ?? '' ) ) && '' !== trim( (string) $value ) ) {
+					$record[ $field ] = $value;
+				}
+			}
+		}
 
 		$object_type = (string) ( $row['Assets Object Type'] ?? '' );
 		$type        = self::assets_asset_type( $object_type );
@@ -1560,6 +1670,36 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			}
 
 			$result = \VulnHub\Core\Repo::upsert_asset( $payload );
+
+			/*
+			 * A held record is not a failed one.
+			 *
+			 * `Repo::upsert_asset()` declines to *create* an asset from a CMDB
+			 * row that no scanner or sensor has ever seen and that shows fewer
+			 * than two of an address, a qualified name and a CI number -- or
+			 * that the CMDB itself does not call In Service. The row is parked
+			 * in the stale-record hold instead, and released in full the moment
+			 * something proves the machine is real.
+			 *
+			 * That is the platform working. Counting it as `failed`, which is
+			 * what used to happen, reported 231 of 1,186 CIs as errors on a run
+			 * where nothing had gone wrong -- and buried any real write failure
+			 * among them.
+			 */
+			if ( ! $result['id'] && ! empty( $result['held'] ) ) {
+				++$this->counts['skipped'];
+				++$this->counts['held'];
+				$this->bump( 'skipped' );
+				$outcomes[] = array(
+					'row'      => (int) $index + 1,
+					'hostname' => (string) $record['hostname'],
+					'action'   => 'skipped',
+					'reason'   => 'held',
+					'detail'   => __( 'Held out of the inventory: nothing has seen this machine, and the CMDB record is too thin to stand on its own. It is released automatically if a scanner or sensor finds it.', 'vulnhub' ),
+					'changes'  => array(),
+				);
+				continue;
+			}
 
 			if ( ! $result['id'] ) {
 				++$this->counts['invalid'];

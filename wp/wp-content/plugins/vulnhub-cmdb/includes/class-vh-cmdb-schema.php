@@ -340,6 +340,15 @@ final class VulnHub_Cmdb_Schema {
 		if ( str_contains( $record['hostname'], '.' ) ) {
 			$record['hostname'] = (string) strtok( $record['hostname'], '.' );
 		}
+		/*
+		 * And the reverse. A row that carries only a DNS name still names a
+		 * host, and without this it fails validation for having no hostname --
+		 * which is how three Servers in a live Assets workspace, recorded with
+		 * a DNS name and nothing else, were rejected outright.
+		 */
+		if ( '' === trim( $record['hostname'] ) && '' !== trim( $record['fqdn'] ) ) {
+			$record['hostname'] = (string) strtok( trim( $record['fqdn'] ), '.' );
+		}
 		$record['hostname'] = strtolower( trim( $record['hostname'] ) );
 		$record['fqdn']     = strtolower( trim( $record['fqdn'] ) );
 

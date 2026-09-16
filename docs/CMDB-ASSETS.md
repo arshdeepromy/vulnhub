@@ -32,6 +32,32 @@ always arrives over ~24 requests. Pagination is not optional and is not a
 performance nicety; without it you silently import the first 50 objects and
 believe the register is 50 assets long.
 
+### `total` is a floor, not a count
+
+Atlassian counts matches up to **1000** and then stops counting. A query
+matching 1,186 objects reports `total: 1000` on *every* page, while `isLast`
+stays `false` and paging keeps returning objects well past 1000:
+
+```
+startAt    0  values=50  total=1000  isLast=false
+startAt  950  values=50  total=1000  isLast=false
+startAt 1000  values=50  total=1000  isLast=false   <- past the "total"
+startAt 1150  values=36  total=1000  isLast=true    <- 1150 + 36 = 1186
+```
+
+So `fetch_all()` stops on `isLast` or a short page, and on nothing else. It used
+to also stop once `count($objects) >= $total`, which read exactly 1000 of 1,186
+objects and reported success — the worst possible failure, because a truncated
+read is indistinguishable, once imported, from a CMDB that has shrunk.
+
+For the same reason `total` cannot bound the runaway page guard, and is only
+allowed to tighten it while it is below the cap. Anywhere a total is shown to a
+person it is rendered by `count_label()`, which prints `1,000+` once saturated —
+a bare `1000` invites exactly the misreading that hid the truncation.
+
+Per-type counts are exact, because each is below the cap: query one object type
+at a time if you need to verify a total.
+
 It is a POST because AQL is a body, not because anything is written. There is no
 PUT, PATCH or DELETE anywhere in this feature, and the operator's token is
 scoped to five read-only scopes, so a write would be refused by Atlassian even
@@ -100,6 +126,33 @@ from, in order:
 Each layer only fills what the layer above left empty, so correcting one field
 on the screen never throws away the rest of the detection.
 
+### One workspace is not one spreadsheet
+
+Those three layers produce a single workspace-wide mapping, and a single mapping
+cannot describe two object types that carry different attributes. In the live
+workspace `Servers` holds the hostname in **Host Name**; `Computing Devices`
+does not have that attribute at all and uses **Name**. The shared mapping picked
+`Host Name`, so all 791 Computing Devices normalised with an empty hostname and
+the validator rejected every one of them — 866 of 1,000 rows "failed" on a run
+where the API and the importer were both working correctly.
+
+So `normalise_assets_rows()` groups the rows by `Assets Object Type` and runs
+`detect_mapping()` again over each group, against only the attributes objects of
+that type actually carry. The shared mapping still wins wherever it produces a
+value; the type's own mapping fills what is left. Nothing is hard-coded — the
+same alias table does the work, just over a narrower set of columns.
+
+Each run logs the difference, which is the part worth reviewing:
+
+```
+Assets: Servers — 395 object(s); this type binds os_version ← OS Version (not "OS Version (Cherwell)")
+Assets: Computing Devices — 791 object(s); this type binds hostname ← Name (not "Host Name")
+```
+
+The second line is the bug above, now visible. The first is the same class of
+problem in a field nobody had noticed: `OS Version (Cherwell)` exists only on
+Computing Devices, so every Server had been importing with no OS version.
+
 The mapping is kept in `assets_map`, **not** in `column_map`. Both are
 `field => column`, but the columns come from different vocabularies — a
 spreadsheet's headings and a workspace's attribute names — and sharing one key
@@ -128,17 +181,55 @@ with `unknown`.
 startAt = 0
 loop: POST …?startAt={startAt}&maxResults=50&includeAttributes=true
       collect values[]; startAt += 50
-until isLast, or a short page, or count >= total, or the page guard
+until isLast, or a short page, or the page guard
 ```
 
-The guard is `ceil(total / 50) + 5`, capped at 400 pages. The five pages of
-headroom mean a healthy workspace never reaches it, so reaching it means the API
-stopped advancing — and a set that stopped early is indistinguishable, once
-imported, from a CMDB that has shrunk. So hitting the guard **fails the fetch**
-and imports nothing, rather than returning a partial set.
+`count >= total` is deliberately **not** a stop condition — see "`total` is a
+floor, not a count" above.
+
+The guard is `ceil(total / 50) + 5`, capped at 400 pages, and only tightens from
+400 while `total` is below the 1000 cap; a saturated total says merely "1000 or
+more" and cannot bound anything. The five pages of headroom mean a healthy
+workspace never reaches the guard, so reaching it means the API stopped
+advancing — and a set that stopped early is indistinguishable, once imported,
+from a CMDB that has shrunk. So hitting the guard **fails the fetch** and
+imports nothing, rather than returning a partial set.
 
 429 and 5xx are not handled here at all: `VulnHub\Core\Http` already retries them
 with exponential backoff and jitter and honours `Retry-After`.
+
+## What a run actually reports
+
+A first live run against the real workspace lands like this:
+
+```
+Read 1186 CI(s): 2 asset(s) created, 623 updated. Resolved 0 team(s) and
+202 location(s). 231 CIs are held out of the inventory until something sees them.
+```
+
+Three of those numbers need reading carefully.
+
+**Held is not failed.** `Repo::upsert_asset()` declines to *create* an asset from
+a CMDB row that no scanner or sensor has ever seen and that shows fewer than two
+of an address, a qualified name and a CI number — or that the CMDB itself does
+not call In Service. The row is parked in the stale-record hold and released in
+full the moment something proves the machine is real. That is the platform
+working as designed, and it is the largest single bucket on a first run. It used
+to be counted as `failed`, which reported 231 of 1,186 CIs as errors on a run
+where nothing had gone wrong, and buried any real write failure among them. It is
+now counted as skipped, named in the summary, and carries `reason => held` on the
+row outcome.
+
+**Resolved 0 team(s)** counts teams newly *set*, not teams matched. An asset that
+already has the right team keeps it silently; a disagreement is logged as a note
+rather than acted on, because the ownership rules own that field.
+
+**~70 assets report as updated on every run, forever.** The connector computes
+`$changes` by diffing its own payload against the stored row, but
+`Repo::upsert_asset()` then declines some of those writes — it will not replace a
+qualified FQDN with a bare hostname, for instance. The write is correctly
+refused and the stored value is correct; only the count is wrong. Known, not yet
+fixed: the diff would have to ask the repo what it would accept.
 
 ## The secret
 

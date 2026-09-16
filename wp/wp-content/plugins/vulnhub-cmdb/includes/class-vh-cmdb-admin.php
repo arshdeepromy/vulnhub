@@ -335,13 +335,7 @@ final class VulnHub_Cmdb_Admin {
 				return array();
 			}
 
-			foreach ( $rows as $row ) {
-				if ( is_array( $row ) ) {
-					$records[] = $connector->normalise_assets( $row, $map );
-				}
-			}
-
-			return $records;
+			return $connector->normalise_assets_rows( $rows, $map );
 		}
 
 		foreach ( $rows as $row ) {
