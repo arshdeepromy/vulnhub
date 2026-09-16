@@ -750,10 +750,10 @@ final class VulnHub_Jira_Client {
 		$body = array(
 			'globalId'     => $global_id,
 			'application'  => array(
-				'type' => 'com.example.vulnhub',
+				'type' => 'remediation-tracking',
 				'name' => 'Remediation tracking',
 			),
-			'relationship' => 'tracked in VulnHub',
+			'relationship' => 'tracked in',
 			'object'       => array(
 				'url'     => $url,
 				'title'   => $title,
