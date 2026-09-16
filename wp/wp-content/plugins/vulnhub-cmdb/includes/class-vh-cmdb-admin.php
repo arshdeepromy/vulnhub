@@ -43,6 +43,7 @@ final class VulnHub_Cmdb_Admin {
 		add_action( 'admin_post_vulnhub_cmdb_import', array( $this, 'handle_import' ) );
 		add_action( 'admin_post_vulnhub_cmdb_mapping', array( $this, 'handle_mapping' ) );
 		add_action( 'admin_post_vulnhub_cmdb_discard', array( $this, 'handle_discard' ) );
+		add_action( 'admin_post_vulnhub_cmdb_assets_preview', array( $this, 'handle_assets_preview' ) );
 	}
 
 	/* =================================================================
@@ -92,6 +93,8 @@ final class VulnHub_Cmdb_Admin {
 
 		$token = $this->stage(
 			array(
+				'source'    => 'csv',
+				'tab'       => 'csv',
 				'file'      => $checked['name'],
 				'headers'   => $parsed['headers'],
 				'rows'      => $parsed['rows'],
@@ -117,6 +120,65 @@ final class VulnHub_Cmdb_Admin {
 	}
 
 	/**
+	 * Fetch live Jira Assets objects and stage the same preview a CSV upload
+	 * would stage.
+	 *
+	 * Deliberately the identical flow: fetch, flatten, detect the mapping,
+	 * dry run, show the operator what would change, let them correct the
+	 * mapping, and only then import. An API source is not a reason to skip the
+	 * step where somebody looks at the data before it lands on the inventory.
+	 */
+	public function handle_assets_preview(): void {
+		$this->guard( 'vulnhub_cmdb_assets_preview' );
+
+		$connector = $this->connector();
+
+		if ( ! $connector ) {
+			$this->notice( 'error', __( 'The CMDB connector is not registered.', 'vulnhub' ) );
+			$this->redirect( 'assets' );
+		}
+
+		if ( 'assets' !== $connector->source() ) {
+			$this->notice( 'error', __( 'Set the source system to Jira Service Management Assets on the Integrations screen first.', 'vulnhub' ) );
+			$this->redirect( 'assets' );
+		}
+
+		$fetched = $connector->fetch_assets_rows();
+
+		if ( ! $fetched['ok'] ) {
+			$this->notice( 'error', $fetched['message'] );
+			$this->redirect( 'assets' );
+		}
+
+		$token = $this->stage(
+			array(
+				'source'    => 'assets',
+				'tab'       => 'assets',
+				'file'      => __( 'Jira Assets', 'vulnhub' ),
+				'headers'   => $fetched['headers'],
+				'rows'      => $fetched['rows'],
+				'errors'    => array(),
+				'delimiter' => '',
+				'truncated' => false,
+				'map'       => $fetched['map'],
+				'detected'  => $fetched['map'],
+			)
+		);
+
+		$this->notice(
+			'success',
+			sprintf(
+				/* translators: 1: number of objects, 2: number of attribute names. */
+				__( 'Read %1$d object(s) carrying %2$d distinct attribute name(s). Check the mapping and the preview below, then import.', 'vulnhub' ),
+				count( $fetched['rows'] ),
+				count( $fetched['headers'] )
+			)
+		);
+
+		$this->redirect( 'assets', array( 'preview' => $token ) );
+	}
+
+	/**
 	 * Re-apply an operator-corrected column mapping to a staged preview.
 	 */
 	public function handle_remap(): void {
@@ -126,23 +188,24 @@ final class VulnHub_Cmdb_Admin {
 		$staged  = $this->staged( $token );
 
 		if ( ! $staged ) {
-			$this->notice( 'error', __( 'That preview has expired. Upload the file again.', 'vulnhub' ) );
+			$this->notice( 'error', __( 'That preview has expired. Fetch the source again.', 'vulnhub' ) );
 			$this->redirect( 'csv' );
 		}
 
+		$tab           = $this->tab_for( $staged );
 		$staged['map'] = $this->map_from_request( (array) $staged['headers'] );
 
 		set_transient( self::PREVIEW_PREFIX . $token, $staged, self::PREVIEW_TTL );
 
 		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- guard() verified the nonce.
 		if ( ! empty( $_POST['vh_cmdb_save_mapping'] ) ) {
-			$this->save_mapping( $staged['map'] );
-			$this->notice( 'success', __( 'Mapping updated and saved as the default for this connector.', 'vulnhub' ) );
+			$this->save_mapping( $staged['map'], (string) ( $staged['source'] ?? 'csv' ) );
+			$this->notice( 'success', __( 'Mapping updated and saved as the default for this source.', 'vulnhub' ) );
 		} else {
 			$this->notice( 'success', __( 'Mapping updated. The preview below reflects it.', 'vulnhub' ) );
 		}
 
-		$this->redirect( 'csv', array( 'preview' => $token ) );
+		$this->redirect( $tab, array( 'preview' => $token ) );
 	}
 
 	/**
@@ -155,35 +218,44 @@ final class VulnHub_Cmdb_Admin {
 		$staged = $this->staged( $token );
 
 		if ( ! $staged ) {
-			$this->notice( 'error', __( 'That preview has expired. Upload the file again.', 'vulnhub' ) );
+			$this->notice( 'error', __( 'That preview has expired. Fetch the source again.', 'vulnhub' ) );
 			$this->redirect( 'csv' );
 		}
 
+		$tab       = $this->tab_for( $staged );
 		$connector = $this->connector();
 
 		if ( ! $connector ) {
 			$this->notice( 'error', __( 'The CMDB connector is not registered.', 'vulnhub' ) );
-			$this->redirect( 'csv' );
+			$this->redirect( $tab );
 		}
 
 		$records = $this->records_from( $staged );
 
 		if ( ! $records ) {
-			$this->notice( 'error', __( 'No usable rows in that file.', 'vulnhub' ) );
-			$this->redirect( 'csv', array( 'preview' => $token ) );
+			$this->notice( 'error', __( 'No usable rows in that preview.', 'vulnhub' ) );
+			$this->redirect( $tab, array( 'preview' => $token ) );
 		}
 
-		// Stage the rows first so a scheduled sync can replay exactly what was
-		// imported, then run the import through the connector's own sync entry
-		// point — which gives it a run log, the 30-minute lock and, on
-		// success, the ownership mapping pass.
-		$connector->store_rows(
-			$records,
-			array(
-				'file'   => (string) $staged['file'],
-				'source' => 'upload',
-			)
-		);
+		/*
+		 * A CSV has no source to go back to, so its rows are staged for replay
+		 * on the next scheduled sync. Assets does have one: staging a copy
+		 * there would mean a nightly sync replayed a week-old snapshot of the
+		 * workspace instead of reading it, so it re-fetches instead.
+		 */
+		if ( 'assets' !== (string) ( $staged['source'] ?? 'csv' ) ) {
+			// Stage the rows first so a scheduled sync can replay exactly what
+			// was imported, then run the import through the connector's own
+			// sync entry point — which gives it a run log, the 30-minute lock
+			// and, on success, the ownership mapping pass.
+			$connector->store_rows(
+				$records,
+				array(
+					'file'   => (string) $staged['file'],
+					'source' => 'upload',
+				)
+			);
+		}
 
 		$result = $connector->sync(
 			array(
@@ -200,7 +272,7 @@ final class VulnHub_Cmdb_Admin {
 			(string) ( $result['message'] ?? '' )
 		);
 
-		$this->redirect( 'csv' );
+		$this->redirect( $tab );
 	}
 
 	/**
@@ -250,6 +322,27 @@ final class VulnHub_Cmdb_Admin {
 		$rows    = (array) ( $staged['rows'] ?? array() );
 		$file    = (string) ( $staged['file'] ?? '' );
 		$records = array();
+
+		/*
+		 * Assets records go through the connector's own normaliser rather than
+		 * bare `apply_mapping()`, because the object type has to survive as an
+		 * explicit asset type and the provenance has to say Assets, not CSV.
+		 */
+		if ( 'assets' === (string) ( $staged['source'] ?? 'csv' ) ) {
+			$connector = $this->connector();
+
+			if ( ! $connector ) {
+				return array();
+			}
+
+			foreach ( $rows as $row ) {
+				if ( is_array( $row ) ) {
+					$records[] = $connector->normalise_assets( $row, $map );
+				}
+			}
+
+			return $records;
+		}
 
 		foreach ( $rows as $row ) {
 			if ( ! is_array( $row ) ) {
@@ -338,13 +431,29 @@ final class VulnHub_Cmdb_Admin {
 	/**
 	 * Persist a column mapping on the connector's settings.
 	 *
-	 * @param array<string,string> $map Column mapping.
+	 * @param array<string,string> $map    Column mapping.
+	 * @param string               $source Which source the mapping belongs to.
 	 */
-	private function save_mapping( array $map ): void {
+	private function save_mapping( array $map, string $source = 'csv' ): void {
+		$key = 'assets' === $source
+			? VulnHub_Cmdb_Connector::OPT_ASSETS_MAP
+			: VulnHub_Cmdb_Connector::OPT_COLUMN_MAP;
+
 		vulnhub()->settings->update(
 			VulnHub_Cmdb_Connector::SOURCE,
-			array( VulnHub_Cmdb_Connector::OPT_COLUMN_MAP => $map )
+			array( $key => $map )
 		);
+	}
+
+	/**
+	 * Which tab a staged preview belongs to.
+	 *
+	 * @param array<string,mixed> $staged Staged preview.
+	 */
+	private function tab_for( array $staged ): string {
+		$tab = sanitize_key( (string) ( $staged['tab'] ?? 'csv' ) );
+
+		return in_array( $tab, array( 'csv', 'assets' ), true ) ? $tab : 'csv';
 	}
 
 	/**

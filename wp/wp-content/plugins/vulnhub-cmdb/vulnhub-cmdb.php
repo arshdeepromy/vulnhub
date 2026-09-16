@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       VulnHub CMDB
  * Plugin URI:        https://github.com/arshdeepromy/vulnhub
- * Description:       Configuration management database integration for VulnHub — resolves the owning team, business service and site for assets that are not bound to a person, from ServiceNow, a Confluence page, or an uploaded CSV.
+ * Description:       Configuration management database integration for VulnHub — resolves the owning team, business service and site for assets that are not bound to a person, from ServiceNow, Jira Service Management Assets, a Confluence page, or an uploaded CSV.
  * Version:           1.0.0
  * Requires at least: 6.5
  * Requires PHP:      8.1
@@ -31,6 +31,7 @@ function vulnhub_cmdb_load(): void {
 	require_once VULNHUB_CMDB_DIR . 'includes/class-vh-cmdb-html.php';
 	require_once VULNHUB_CMDB_DIR . 'includes/class-vh-cmdb-csv.php';
 	require_once VULNHUB_CMDB_DIR . 'includes/class-vh-cmdb-servicenow-client.php';
+	require_once VULNHUB_CMDB_DIR . 'includes/class-vh-cmdb-assets-client.php';
 	require_once VULNHUB_CMDB_DIR . 'includes/class-vh-cmdb-confluence-client.php';
 	require_once VULNHUB_CMDB_DIR . 'includes/class-vh-cmdb-mock.php';
 	require_once VULNHUB_CMDB_DIR . 'includes/class-vh-cmdb-connector.php';

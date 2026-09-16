@@ -9,8 +9,9 @@
  * that answer lives in a configuration management database — or, honestly, in
  * a Confluence page, or in a spreadsheet somebody maintains by hand.
  *
- * So this connector supports three interchangeable back ends and normalises
- * all of them into one record shape before a single row is written.
+ * So this connector supports four interchangeable back ends — ServiceNow, Jira
+ * Service Management Assets, a Confluence page and an uploaded CSV — and
+ * normalises all of them into one record shape before a single row is written.
  *
  * Layering, per the core contract: the mapping engine owns ownership, and this
  * connector's first job is to emit clean signals — asset type, tags, business
@@ -40,6 +41,16 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 
 	/** Settings key holding the operator's column mapping. */
 	public const OPT_COLUMN_MAP = 'column_map';
+
+	/**
+	 * Settings key holding the Jira Assets attribute mapping.
+	 *
+	 * Kept apart from OPT_COLUMN_MAP on purpose. Both are field => column, but
+	 * the columns are drawn from different vocabularies — a spreadsheet's
+	 * headings and a workspace's attribute names — and letting one overwrite
+	 * the other would silently re-map the source the operator was not editing.
+	 */
+	public const OPT_ASSETS_MAP = 'assets_map';
 
 	/** Largest number of CSV rows kept for replay on a scheduled sync. */
 	public const MAX_STORED_ROWS = 2000;
@@ -101,7 +112,7 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 	 * One-line description for the Integrations card.
 	 */
 	public function description(): string {
-		return __( 'Resolves the owning team, business service and site for servers, network devices and cloud resources, from ServiceNow, a Confluence page, or an uploaded CSV.', 'vulnhub' );
+		return __( 'Resolves the owning team, business service and site for servers, network devices and cloud resources, from ServiceNow, Jira Assets, a Confluence page, or an uploaded CSV.', 'vulnhub' );
 	}
 
 	/**
@@ -135,7 +146,7 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 	public function source(): string {
 		$source = (string) $this->get( 'source', 'servicenow' );
 
-		return in_array( $source, array( 'servicenow', 'confluence', 'csv' ), true ) ? $source : 'csv';
+		return in_array( $source, array( 'servicenow', 'assets', 'confluence', 'csv' ), true ) ? $source : 'csv';
 	}
 
 	/**
@@ -157,10 +168,11 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 				'default' => 'servicenow',
 				'options' => array(
 					'servicenow' => __( 'ServiceNow (Table API)', 'vulnhub' ),
+					'assets'     => __( 'Jira Service Management Assets (AQL)', 'vulnhub' ),
 					'confluence' => __( 'Confluence page (HTML table)', 'vulnhub' ),
 					'csv'        => __( 'CSV upload', 'vulnhub' ),
 				),
-				'help'    => __( 'All three produce the same records and run through the same normalisation. Pick CSV when there is no API to talk to — it needs no credentials and no vendor, and it is usually the first one an organisation can actually use.', 'vulnhub' ),
+				'help'    => __( 'All four produce the same records and run through the same normalisation. Pick CSV when there is no API to talk to — it needs no credentials and no vendor, and it is usually the first one an organisation can actually use.', 'vulnhub' ),
 			),
 
 			/* --- ServiceNow ------------------------------------------- */
@@ -204,6 +216,49 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 				'type'    => 'number',
 				'default' => 500,
 				'help'    => __( 'Sent as sysparm_limit, with sysparm_offset advancing each page. ServiceNow permits up to 10000, but large pages time out on busy instances.', 'vulnhub' ),
+			),
+
+			/* --- Jira Service Management Assets ------------------------- */
+			array(
+				'key'   => 'as_email',
+				'label' => __( 'Atlassian account email', 'vulnhub' ),
+				'type'  => 'email',
+				'help'  => __( 'The account the API token belongs to. Basic auth uses email:token. A dedicated integration account with read-only Assets access is preferable to a person\'s login.', 'vulnhub' ),
+			),
+			array(
+				'key'    => 'as_token',
+				'label'  => __( 'Assets API token', 'vulnhub' ),
+				'type'   => 'text',
+				'secret' => true,
+				'help'   => __( 'A scoped API token from id.atlassian.com → Security → API tokens, carrying exactly these five read scopes: read:cmdb-object:jira, read:cmdb-attribute:jira, read:cmdb-schema:jira, read:cmdb-type:jira, read:cmdb-icon:jira. Those scopes make writing physically impossible, which is the read-only guarantee. Stored encrypted; leave blank when editing to keep the stored value.', 'vulnhub' ),
+			),
+			array(
+				'key'         => 'as_cloud_id',
+				'label'       => __( 'Atlassian cloud id', 'vulnhub' ),
+				'type'        => 'text',
+				'placeholder' => '00000000-0000-0000-0000-000000000000',
+				'help'        => __( 'The site\'s cloud id, from {site}/_edge/tenant_info. Addresses the site on api.atlassian.com.', 'vulnhub' ),
+			),
+			array(
+				'key'         => 'as_workspace_id',
+				'label'       => __( 'Assets workspace id', 'vulnhub' ),
+				'type'        => 'text',
+				'placeholder' => '00000000-0000-0000-0000-000000000000',
+				'help'        => __( 'From {site}/rest/servicedeskapi/assets/workspace. Not the same value as the cloud id.', 'vulnhub' ),
+			),
+			array(
+				'key'     => 'as_schema_id',
+				'label'   => __( 'Object schema id', 'vulnhub' ),
+				'type'    => 'number',
+				'default' => 6,
+				'help'    => __( 'The numeric id of the object schema holding the asset register, visible in the Assets URL when the schema is open.', 'vulnhub' ),
+			),
+			array(
+				'key'     => 'as_types',
+				'label'   => __( 'Object types to read', 'vulnhub' ),
+				'type'    => 'text',
+				'default' => 'Servers, Computing Devices',
+				'help'    => __( 'Comma separated, exactly as they are spelled in Assets. Quote a type whose name contains a comma. Leave blank to read every object in the schema, which is rarely what you want.', 'vulnhub' ),
 			),
 
 			/* --- Confluence -------------------------------------------- */
@@ -296,6 +351,10 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			'servicenow' => '' !== trim( (string) $this->get( 'sn_url', '' ) )
 				&& '' !== trim( (string) $this->get( 'sn_user', '' ) )
 				&& $this->settings->has_secret( $this->id(), 'sn_token' ),
+			'assets'     => '' !== trim( (string) $this->get( 'as_email', '' ) )
+				&& '' !== trim( (string) $this->get( 'as_cloud_id', '' ) )
+				&& '' !== trim( (string) $this->get( 'as_workspace_id', '' ) )
+				&& $this->settings->has_secret( $this->id(), 'as_token' ),
 			'confluence' => '' !== trim( (string) $this->get( 'cf_url', '' ) )
 				&& '' !== trim( (string) $this->get( 'cf_email', '' ) )
 				&& $this->settings->has_secret( $this->id(), 'cf_token' ),
@@ -374,6 +433,63 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 	}
 
 	/**
+	 * Build a Jira Assets client from the stored credentials.
+	 */
+	public function assets(): VulnHub_Cmdb_Assets_Client {
+		return new VulnHub_Cmdb_Assets_Client(
+			(string) $this->get( 'as_email', '' ),
+			$this->secret( 'as_token' ),
+			(string) $this->get( 'as_cloud_id', '' ),
+			(string) $this->get( 'as_workspace_id', '' ),
+			$this->http,
+			array( $this, 'log' )
+		);
+	}
+
+	/**
+	 * Object types the operator configured.
+	 *
+	 * @return array<int,string>
+	 */
+	public function assets_types(): array {
+		return VulnHub_Cmdb_Assets_Client::parse_types( (string) $this->get( 'as_types', 'Servers, Computing Devices' ) );
+	}
+
+	/**
+	 * The AQL the configured settings produce.
+	 */
+	public function assets_aql(): string {
+		return VulnHub_Cmdb_Assets_Client::build_aql(
+			$this->settings->get_int( $this->id(), 'as_schema_id', 6 ),
+			$this->assets_types()
+		);
+	}
+
+	/**
+	 * The operator's Assets attribute mapping, if they have saved one.
+	 *
+	 * @return array<string,string>
+	 */
+	public function assets_map(): array {
+		$map = $this->get( self::OPT_ASSETS_MAP, array() );
+
+		if ( ! is_array( $map ) ) {
+			return array();
+		}
+
+		$fields = VulnHub_Cmdb_Schema::fields();
+		$clean  = array();
+
+		foreach ( $map as $field => $attribute ) {
+			if ( isset( $fields[ (string) $field ] ) && is_scalar( $attribute ) && '' !== trim( (string) $attribute ) ) {
+				$clean[ (string) $field ] = trim( (string) $attribute );
+			}
+		}
+
+		return $clean;
+	}
+
+	/**
 	 * Build a Confluence client from the stored credentials.
 	 */
 	public function confluence(): VulnHub_Cmdb_Confluence_Client {
@@ -430,6 +546,17 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 			$result             = $client->ping();
 			$result['detail']   = $result['detail'] ?? array();
 			$result['detail']['tables'] = $this->servicenow_tables();
+
+			return $result;
+		}
+
+		if ( 'assets' === $source ) {
+			$client = $this->assets();
+			$aql    = $this->assets_aql();
+			$result = $client->test_connection( $aql );
+
+			$result['detail']          = $result['detail'] ?? array();
+			$result['detail']['types'] = $this->assets_types();
 
 			return $result;
 		}
@@ -629,6 +756,7 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 	public function fetch_records( string $source ): array {
 		return match ( $source ) {
 			'servicenow' => $this->fetch_servicenow(),
+			'assets'     => $this->fetch_assets(),
 			'confluence' => $this->fetch_confluence(),
 			default      => $this->fetch_csv(),
 		};
@@ -790,6 +918,307 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 		$record['source_kind'] = 'servicenow:' . $table;
 
 		return $record;
+	}
+
+	/* =================================================================
+	 * Jira Service Management Assets
+	 * ============================================================== */
+
+	/**
+	 * Assets: read every matching object and normalise it.
+	 *
+	 * The whole point of the flattening step is that once an Assets object is
+	 * a name => value row, it is a spreadsheet row, and the CSV path's
+	 * detection, mapping and normalisation apply to it unchanged. Attribute
+	 * names are workspace-specific and nobody outside Acme knows what
+	 * they are called, so nothing here hard-codes them: the mapping is
+	 * detected, overridable, and logged.
+	 *
+	 * @return array{ok:bool,message:string,records:array<int,array<string,string>>}
+	 */
+	private function fetch_assets(): array {
+		$fetched = $this->fetch_assets_rows();
+
+		if ( ! $fetched['ok'] ) {
+			return array(
+				'ok'      => false,
+				'message' => $fetched['message'],
+				'records' => array(),
+			);
+		}
+
+		$records = array();
+		foreach ( $fetched['rows'] as $row ) {
+			$records[] = $this->normalise_assets( $row, $fetched['map'] );
+		}
+
+		return array(
+			'ok'      => true,
+			'message' => '',
+			'records' => $records,
+		);
+	}
+
+	/**
+	 * Read every matching Assets object and flatten it, without normalising.
+	 *
+	 * Split out so the CMDB screen can stage exactly what a sync would import
+	 * and dry-run it first — the same "look before it lands" step the CSV
+	 * importer has always had.
+	 *
+	 * @return array{ok:bool,message:string,rows:array<int,array<string,string>>,headers:array<int,string>,map:array<string,string>}
+	 */
+	public function fetch_assets_rows(): array {
+		$fail = static fn( string $message ): array => array(
+			'ok'      => false,
+			'message' => $message,
+			'rows'    => array(),
+			'headers' => array(),
+			'map'     => array(),
+		);
+
+		if ( $this->is_mock() ) {
+			/*
+			 * Mock mode builds the real AQL envelope and reads it back through
+			 * the same flattener the live path uses — including the page-level
+			 * attribute-name lookup, which is the part a live workspace will
+			 * exercise and a hand-written fixture would otherwise skip.
+			 */
+			$page    = VulnHub_Cmdb_Mock::assets_page( 0, VulnHub_Cmdb_Assets_Client::PAGE_SIZE );
+			$objects = VulnHub_Cmdb_Mock::assets_objects();
+			$names   = VulnHub_Cmdb_Assets_Client::attribute_names( $page );
+
+			$this->log( sprintf( 'Assets: %d object(s) (mock).', count( $objects ) ) );
+		} else {
+			$client = $this->assets();
+
+			if ( ! $client->has_credentials() ) {
+				return $fail(
+					sprintf(
+						/* translators: %s: comma separated list of missing settings. */
+						__( 'Jira Assets is not configured yet — still missing: %s.', 'vulnhub' ),
+						implode( ', ', $client->missing() )
+					)
+				);
+			}
+
+			$aql = $this->assets_aql();
+
+			$this->log( sprintf( 'Assets: querying %s', $aql ) );
+
+			$fetched = $client->fetch_all( $aql );
+
+			if ( ! $fetched['ok'] ) {
+				return $fail( $fetched['message'] );
+			}
+
+			$objects = $fetched['objects'];
+			$names   = $fetched['attribute_names'];
+		}
+
+		$rows = array();
+		foreach ( $objects as $object ) {
+			if ( is_array( $object ) ) {
+				$rows[] = VulnHub_Cmdb_Assets_Client::flatten( $object, $names );
+			}
+		}
+
+		if ( ! $rows ) {
+			return $fail( __( 'The query succeeded but matched no objects. Check the schema id and the object type names — they must be spelled exactly as they are in Assets.', 'vulnhub' ) );
+		}
+
+		$map = $this->assets_mapping( $rows );
+
+		$this->log_assets_mapping( $rows, $map );
+
+		return array(
+			'ok'      => true,
+			'message' => '',
+			'rows'    => $rows,
+			'headers' => self::assets_headers( $rows ),
+			'map'     => $map,
+		);
+	}
+
+	/**
+	 * Every attribute name seen across a set of flattened rows, in first-seen
+	 * order.
+	 *
+	 * @param array<int,array<string,string>> $rows Flattened objects.
+	 * @return array<int,string>
+	 */
+	public static function assets_headers( array $rows ): array {
+		$headers = array();
+
+		foreach ( $rows as $row ) {
+			foreach ( array_keys( (array) $row ) as $name ) {
+				$headers[ (string) $name ] = true;
+			}
+		}
+
+		return array_keys( $headers );
+	}
+
+	/**
+	 * Decide which attribute feeds which canonical field.
+	 *
+	 * Three layers, most specific first: what the operator saved, what the
+	 * shared detector recognises from the attribute names, and finally the
+	 * object's own built-in fields. Each layer only fills what the one above
+	 * it left empty, so correcting a single field on the screen never throws
+	 * away the rest of the detection.
+	 *
+	 * @param array<int,array<string,string>> $rows Flattened objects.
+	 * @return array<string,string> canonical field => attribute name.
+	 */
+	public function assets_mapping( array $rows ): array {
+		$headers = self::assets_headers( $rows );
+		$saved   = $this->assets_map();
+		$map     = array();
+
+		// The saved mapping only applies where the attribute still exists — a
+		// renamed attribute should fall back to detection, not to nothing.
+		foreach ( $saved as $field => $attribute ) {
+			if ( in_array( $attribute, $headers, true ) ) {
+				$map[ $field ] = $attribute;
+			}
+		}
+
+		$detected = VulnHub_Cmdb_Schema::detect_mapping( $headers, array_slice( $rows, 0, 50 ) );
+
+		foreach ( $detected as $field => $attribute ) {
+			if ( ! isset( $map[ $field ] ) ) {
+				$map[ $field ] = $attribute;
+			}
+		}
+
+		foreach ( self::assets_builtin_map() as $field => $attribute ) {
+			if ( ! isset( $map[ $field ] ) && in_array( $attribute, $headers, true ) ) {
+				$map[ $field ] = $attribute;
+			}
+		}
+
+		return $map;
+	}
+
+	/**
+	 * The object's own fields, as a last-resort mapping.
+	 *
+	 * These are the columns `VulnHub_Cmdb_Assets_Client::flatten()` synthesises
+	 * from the object itself rather than from its attributes, so they are the
+	 * one part of an Assets workspace whose names are known in advance. They
+	 * are applied last: a workspace that has a real "Name" or "Serial Number"
+	 * attribute should always win over the object's generic label.
+	 *
+	 * @return array<string,string>
+	 */
+	public static function assets_builtin_map(): array {
+		return array(
+			'cmdb_id'    => 'Assets Object Id',
+			'cmdb_key'   => 'Assets Object Key',
+			'hostname'   => 'Assets Label',
+			'asset_type' => 'Assets Object Type',
+			'last_scan'  => 'Assets Updated',
+		);
+	}
+
+	/**
+	 * Write the attribute names and the resulting mapping to the run log.
+	 *
+	 * Nobody can review a mapping they cannot see. The workspace's attribute
+	 * names are not knowable from here, so every run records what it actually
+	 * found and what it could not place — which is what turns "ownership is
+	 * still empty" into "the support group attribute is called Service Owner".
+	 *
+	 * @param array<int,array<string,string>> $rows Flattened objects.
+	 * @param array<string,string>            $map  Resolved mapping.
+	 */
+	private function log_assets_mapping( array $rows, array $map ): void {
+		$headers = self::assets_headers( $rows );
+
+		$this->log(
+			sprintf(
+				'Assets: %d attribute name(s) seen: %s',
+				count( $headers ),
+				vh_trim( implode( ', ', $headers ), 600 )
+			)
+		);
+
+		$bound = array();
+		foreach ( $map as $field => $attribute ) {
+			$bound[] = $field . ' ← ' . $attribute;
+		}
+
+		$this->log( sprintf( 'Assets: mapping in use: %s', $bound ? implode( '; ', $bound ) : 'none' ) );
+
+		$unmapped = array_values( array_diff( array_keys( VulnHub_Cmdb_Schema::fields() ), array_keys( $map ) ) );
+
+		if ( $unmapped ) {
+			$this->note(
+				sprintf(
+					/* translators: %s: comma separated list of field names. */
+					__( 'No Assets attribute matched these fields: %s. Map them on the CMDB screen if the workspace has them under another name.', 'vulnhub' ),
+					implode( ', ', $unmapped )
+				)
+			);
+		}
+	}
+
+	/**
+	 * Map one flattened Assets object on to the canonical record shape.
+	 *
+	 * @param array<string,string> $row Flattened object.
+	 * @param array<string,string> $map canonical field => attribute name.
+	 * @return array<string,string>
+	 */
+	public function normalise_assets( array $row, array $map ): array {
+		$record = VulnHub_Cmdb_Schema::apply_mapping( $row, $map );
+
+		$object_type = (string) ( $row['Assets Object Type'] ?? '' );
+		$type        = self::assets_asset_type( $object_type );
+
+		/*
+		 * The object type is a class a human chose in Assets, which is stronger
+		 * evidence than anything inferred from an OS string — and stronger than
+		 * what `Schema::asset_type()` can make of it, since "Computing Devices"
+		 * matches none of its patterns. Marking it explicit is what lets
+		 * `reconcile_asset_type()` treat it as authoritative.
+		 */
+		if ( '' !== $type ) {
+			$record['asset_type']        = $type;
+			$record['asset_type_source'] = 'explicit';
+		}
+
+		$record['source_ref']  = (string) ( $row['Assets Object Key'] ?? '' ) ?: (string) ( $row['Assets Object Id'] ?? '' );
+		$record['source_kind'] = 'assets:' . ( '' !== $object_type ? $object_type : 'object' );
+
+		return $record;
+	}
+
+	/**
+	 * Translate an Assets object type name into core's asset type vocabulary.
+	 *
+	 * Returns an empty string when the type says nothing useful, so the record
+	 * keeps whatever the operating system and hostname implied rather than
+	 * being overwritten with "unknown".
+	 */
+	public static function assets_asset_type( string $object_type ): string {
+		$needle = strtolower( trim( $object_type ) );
+
+		if ( '' === $needle ) {
+			return '';
+		}
+
+		if ( str_contains( $needle, 'server' ) ) {
+			return 'server';
+		}
+		if ( preg_match( '/(computing device|computer|workstation|desktop|laptop|notebook|endpoint)/', $needle ) ) {
+			return 'workstation';
+		}
+
+		$mapped = VulnHub_Cmdb_Schema::asset_type( $object_type );
+
+		return 'unknown' === $mapped ? '' : $mapped;
 	}
 
 	/**

@@ -117,7 +117,7 @@ without touching the rest. They all build against the contract in
 | **vulnhub-core** | Data model (14 tables), connector framework, encrypted credential vault, ownership mapping engine, RBAC, REST API, the wp-admin screens |
 | **vulnhub-tenable** | Tenable VM export API → assets, vulnerabilities, tags. Owns closure verification |
 | **vulnhub-intune** | Microsoft Graph → managed devices, users, departments, offices, groups |
-| **vulnhub-cmdb** | ServiceNow / Confluence / CSV → business service, team and site for non-user assets |
+| **vulnhub-cmdb** | ServiceNow / Jira Assets / Confluence / CSV → business service, team and site for non-user assets |
 | **vulnhub-jira** | Ticket creation with real ADF, status sync, the automation engine, reopen-on-failed-verification |
 | **vulnhub-auth** | TOTP MFA + recovery codes, Okta OIDC, Entra ID OIDC, generic OIDC, LDAP/AD |
 | **vulnhub-dashboard** | The front-end application served at your own domain — every portal view (including **Inventory sources**, which compares the registers against each other), the dashboard board, and the portal **Administration** area (`/portal-admin/`), which mirrors core's wp-admin screens so nobody needs wp-admin |
@@ -206,8 +206,11 @@ What each connector needs:
   `DeviceManagementManagedDevices.Read.All`, `User.Read.All`, `Group.Read.All`.
   The Intune screen lists these as a copyable checklist.
 - **Jira** — site URL, account email, API token, default project key.
-- **CMDB** — ServiceNow instance + token, or Confluence page ids, or just upload
-  a CSV (the CSV path has a mapping UI and a dry-run preview).
+- **CMDB** — ServiceNow instance + token, or Jira Service Management Assets
+  (Atlassian account email + a read-only scoped API token, plus the site's cloud
+  id, the Assets workspace id and the object schema id), or Confluence page ids,
+  or just upload a CSV. The CSV and Jira Assets paths share one mapping UI and
+  one dry-run preview: nothing is written until you have looked at it.
 - **Okta / Entra SSO** — the redirect URI to register is shown on
   **Administration → Authentication** (wp-admin: **VulnHub → Authentication → Single sign-on**).
 
@@ -411,6 +414,12 @@ stylesheet in the browser's network tab before re-reading the CSS.
   than three files, why it is written with hand-rolled tar headers instead of
   PharData or `tar(1)`, and the three separate reasons the old backup screen
   made the whole app feel slow — none of which were the backup.
+- **Jira Assets as a CMDB source** — `docs/CMDB-ASSETS.md` covers why an Assets
+  object is flattened into a spreadsheet row before anything else happens, why
+  a 401 on a correct-looking token is almost always a missing scope, why the
+  connector refuses to retry without attributes even though that call would
+  succeed, and why hitting the pagination guard fails the whole fetch instead of
+  importing what it managed to read.
 - **Coverage** — `docs/COVERAGE.md` covers what the Intune CSV import was
   losing (last check-in on all 848 devices, compliance, enrolment, join type,
   office), the CMDB's dropped `Last Scan Date` column, why every imported

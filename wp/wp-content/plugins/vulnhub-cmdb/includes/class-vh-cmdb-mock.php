@@ -284,6 +284,196 @@ final class VulnHub_Cmdb_Mock {
 	}
 
 	/* =================================================================
+	 * Jira Service Management Assets
+	 * ============================================================== */
+
+	/**
+	 * Attribute definitions, as the AQL response returns them once per page.
+	 *
+	 * The names are deliberately NOT the canonical field names. A real Assets
+	 * workspace is named by whoever built it, and a fixture whose attributes
+	 * happen to be called exactly what the schema calls them would prove the
+	 * detector works on a sheet nobody has. These are plausible instead —
+	 * "Service Owner Group", "Primary IP Address" — so mock mode exercises the
+	 * same detection a live workspace will.
+	 *
+	 * @return array<int,array{id:string,name:string}>
+	 */
+	public static function assets_attribute_defs(): array {
+		$names = array(
+			'Name',
+			'Serial Number',
+			'Primary IP Address',
+			'Operating System',
+			'OS Version',
+			'Manufacturer',
+			'Model',
+			'Service Owner Group',
+			'Business Service',
+			'Environment',
+			'Site',
+			'Technical Owner',
+			'Status',
+			'Criticality',
+			'MAC Address',
+		);
+
+		$defs = array();
+		foreach ( $names as $i => $name ) {
+			$defs[] = array(
+				'id'   => (string) ( 1000 + $i ),
+				'name' => $name,
+			);
+		}
+
+		return $defs;
+	}
+
+	/**
+	 * The devices this fixture presents as Assets objects.
+	 *
+	 * Servers and workstations only. Network gear is left out rather than
+	 * filed under one of the two object types the connector asks for, because
+	 * a fixture that mislabels a switch as a server would quietly bless the
+	 * same mistake in the normaliser.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	private static function assets_devices(): array {
+		return array_values(
+			array_filter(
+				\VulnHub\Core\Mock::devices(),
+				static fn( array $device ): bool => in_array( (string) $device['asset_type'], array( 'server', 'workstation' ), true )
+			)
+		);
+	}
+
+	/**
+	 * Every fixture object, in `values[]` shape.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	public static function assets_objects(): array {
+		$objects = array();
+
+		foreach ( self::assets_devices() as $i => $device ) {
+			$objects[] = self::assets_object( $device, $i + 1 );
+		}
+
+		return $objects;
+	}
+
+	/**
+	 * One page of the AQL response, so the pagination loop can be exercised
+	 * end to end against the real envelope.
+	 *
+	 * @param int $start_at    Offset.
+	 * @param int $max_results Page size.
+	 * @return array<string,mixed>
+	 */
+	public static function assets_page( int $start_at = 0, int $max_results = 50 ): array {
+		$all         = self::assets_objects();
+		$max_results = max( 1, min( 50, $max_results ) );
+		$start_at    = max( 0, $start_at );
+		$values      = array_slice( $all, $start_at, $max_results );
+
+		return array(
+			'objectEntries'        => $values,
+			'values'               => $values,
+			'objectTypeAttributes' => self::assets_attribute_defs(),
+			'total'                => count( $all ),
+			'startAt'              => $start_at,
+			'maxResults'           => $max_results,
+			'isLast'               => ( $start_at + count( $values ) ) >= count( $all ),
+		);
+	}
+
+	/**
+	 * One Assets object, in the shape `includeAttributes=true` returns.
+	 *
+	 * @param array<string,mixed> $device Shared fixture device.
+	 * @param int                 $n      Sequence, for the object id and key.
+	 * @return array<string,mixed>
+	 */
+	private static function assets_object( array $device, int $n ): array {
+		$is_server = 'server' === (string) $device['asset_type'];
+		$owner     = self::owner_for( (string) $device['team'] );
+		$location  = self::location_for( (string) $device['office_location'] );
+
+		$values = array(
+			'Name'                => (string) $device['hostname'],
+			'Serial Number'       => (string) $device['serial'],
+			'Primary IP Address'  => (string) $device['ipv4'],
+			'Operating System'    => (string) $device['operating_system'],
+			'OS Version'          => (string) $device['os_version'],
+			'Manufacturer'        => (string) $device['manufacturer'],
+			'Model'               => (string) $device['model'],
+			'Service Owner Group' => (string) $device['team'],
+			'Business Service'    => (string) $device['business_service'],
+			'Environment'         => ucfirst( (string) $device['environment'] ),
+			'Site'                => $location['name'],
+			'Status'              => 'In Production',
+			'Criticality'         => ucfirst( (string) $device['criticality'] ),
+			'MAC Address'         => (string) $device['mac'],
+		);
+
+		$attributes = array();
+
+		foreach ( self::assets_attribute_defs() as $def ) {
+			$name = (string) $def['name'];
+
+			// The technical owner is a user attribute, not a string one, so it
+			// is built separately below — that path is the one that has to
+			// produce something the people table can resolve.
+			if ( 'Technical Owner' === $name ) {
+				if ( ! $owner ) {
+					continue;
+				}
+
+				$attributes[] = array(
+					'objectTypeAttributeId' => (string) $def['id'],
+					'objectAttributeValues' => array(
+						array(
+							'user' => array(
+								'displayName'  => (string) $owner['displayName'],
+								'emailAddress' => (string) $owner['mail'],
+							),
+						),
+					),
+				);
+				continue;
+			}
+
+			if ( ! isset( $values[ $name ] ) || '' === $values[ $name ] ) {
+				continue;
+			}
+
+			$attributes[] = array(
+				'objectTypeAttributeId' => (string) $def['id'],
+				'objectAttributeValues' => array(
+					array(
+						'value'        => $values[ $name ],
+						'displayValue' => $values[ $name ],
+					),
+				),
+			);
+		}
+
+		return array(
+			'id'         => (string) ( 200000 + $n ),
+			'objectKey'  => sprintf( 'BCA-%d', 200000 + $n ),
+			'label'      => (string) $device['hostname'],
+			'objectType' => array(
+				'id'   => $is_server ? '11' : '12',
+				'name' => $is_server ? 'Servers' : 'Computing Devices',
+			),
+			'created'    => (string) $device['first_seen'],
+			'updated'    => (string) $device['last_seen'],
+			'attributes' => $attributes,
+		);
+	}
+
+	/* =================================================================
 	 * Confluence
 	 * ============================================================== */
 

@@ -47,6 +47,7 @@ $vh_cmdb_map      = $vh_cmdb_connector ? $vh_cmdb_connector->column_map() : arra
 
 $vh_cmdb_source_labels = array(
 	'servicenow' => __( 'ServiceNow Table API', 'vulnhub' ),
+	'assets'     => __( 'Jira Assets (AQL)', 'vulnhub' ),
 	'confluence' => __( 'Confluence page', 'vulnhub' ),
 	'csv'        => __( 'CSV upload', 'vulnhub' ),
 );
@@ -60,6 +61,7 @@ $vh_cmdb_gap   = isset( $_GET['gap'] ) ? sanitize_key( wp_unslash( $_GET['gap'] 
 $vh_cmdb_tabs = array(
 	'status'   => __( 'Source status', 'vulnhub' ),
 	'csv'      => __( 'CSV import', 'vulnhub' ),
+	'assets'   => __( 'Jira Assets', 'vulnhub' ),
 	'mapping'  => __( 'Column mapping', 'vulnhub' ),
 	'coverage' => __( 'Coverage', 'vulnhub' ),
 );
@@ -217,14 +219,20 @@ $vh_cmdb_percent = static fn( int $part, int $whole ): string => $whole > 0 ? nu
 		</div>
 	<?php endif; ?>
 
-<?php elseif ( 'csv' === $vh_cmdb_tab ) : ?>
+<?php elseif ( 'csv' === $vh_cmdb_tab || 'assets' === $vh_cmdb_tab ) : ?>
 
 	<?php
+	/*
+	 * Both importers share this block. A staged preview is a staged preview
+	 * whatever produced it, and the point of flattening Assets objects into
+	 * rows was precisely so that the mapping form, the dry run and the problem
+	 * list would not have to be written twice.
+	 */
 	$vh_cmdb_staged = $vh_cmdb_admin->staged( $vh_cmdb_token );
 	$vh_cmdb_rows   = $vh_cmdb_connector ? $vh_cmdb_connector->stored_rows() : array();
 	?>
 
-	<?php if ( $vh_cmdb_staged && $vh_cmdb_connector ) : ?>
+	<?php if ( $vh_cmdb_staged && $vh_cmdb_connector && (string) ( $vh_cmdb_staged['tab'] ?? 'csv' ) === $vh_cmdb_tab ) : ?>
 
 		<?php
 		$vh_cmdb_records = $vh_cmdb_admin->records_from( $vh_cmdb_staged );
@@ -236,7 +244,7 @@ $vh_cmdb_percent = static fn( int $part, int $whole ): string => $whole > 0 ? nu
 
 		<div class="vh-grid vh-grid--4">
 			<div class="vh-card">
-				<h2><?php esc_html_e( 'Rows parsed', 'vulnhub' ); ?></h2>
+				<h2><?php echo esc_html( 'assets' === $vh_cmdb_tab ? __( 'Objects read', 'vulnhub' ) : __( 'Rows parsed', 'vulnhub' ) ); ?></h2>
 				<p class="vh-card__value"><?php echo esc_html( number_format_i18n( count( $vh_cmdb_records ) ) ); ?></p>
 				<p class="vh-card__meta"><?php echo esc_html( vh_trim( (string) $vh_cmdb_staged['file'], 40 ) ); ?></p>
 			</div>
@@ -266,9 +274,23 @@ $vh_cmdb_percent = static fn( int $part, int $whole ): string => $whole > 0 ? nu
 		</div>
 
 		<div class="vh-card">
-			<h2><?php esc_html_e( 'Column mapping for this file', 'vulnhub' ); ?></h2>
+			<h2>
+				<?php
+				echo esc_html(
+					'assets' === $vh_cmdb_tab
+						? __( 'Attribute mapping for this workspace', 'vulnhub' )
+						: __( 'Column mapping for this file', 'vulnhub' )
+				);
+				?>
+			</h2>
 			<p class="vh-muted" style="margin:0 0 12px">
-				<?php esc_html_e( 'Detected from the headings. Correct anything that is wrong and the preview below updates; nothing is written until you press Import.', 'vulnhub' ); ?>
+				<?php
+				echo esc_html(
+					'assets' === $vh_cmdb_tab
+						? __( 'Detected from the attribute names this workspace actually returned. Correct anything that is wrong and the preview below updates; nothing is written until you press Import.', 'vulnhub' )
+						: __( 'Detected from the headings. Correct anything that is wrong and the preview below updates; nothing is written until you press Import.', 'vulnhub' )
+				);
+				?>
 			</p>
 
 			<?php if ( $vh_cmdb_can_manage ) : ?>
@@ -287,7 +309,15 @@ $vh_cmdb_percent = static fn( int $part, int $whole ): string => $whole > 0 ? nu
 									<?php endif; ?>
 								</label>
 								<select id="vh-cmdb-map-<?php echo esc_attr( $vh_cmdb_field ); ?>" name="vh_cmdb_map[<?php echo esc_attr( $vh_cmdb_field ); ?>]">
-									<option value=""><?php esc_html_e( '— not in this file —', 'vulnhub' ); ?></option>
+									<option value="">
+										<?php
+										echo esc_html(
+											'assets' === $vh_cmdb_tab
+												? __( '— not in this workspace —', 'vulnhub' )
+												: __( '— not in this file —', 'vulnhub' )
+										);
+										?>
+									</option>
 									<?php foreach ( $vh_cmdb_headers as $vh_cmdb_header ) : ?>
 										<option value="<?php echo esc_attr( (string) $vh_cmdb_header ); ?>"
 											<?php selected( (string) ( $vh_cmdb_active[ $vh_cmdb_field ] ?? '' ), (string) $vh_cmdb_header ); ?>>
@@ -350,7 +380,15 @@ $vh_cmdb_percent = static fn( int $part, int $whole ): string => $whole > 0 ? nu
 		<?php endif; ?>
 
 		<div class="vh-card">
-			<h2><?php esc_html_e( 'Dry run — what importing this file would do', 'vulnhub' ); ?></h2>
+			<h2>
+				<?php
+				echo esc_html(
+					'assets' === $vh_cmdb_tab
+						? __( 'Dry run — what importing these objects would do', 'vulnhub' )
+						: __( 'Dry run — what importing this file would do', 'vulnhub' )
+				);
+				?>
+			</h2>
 			<div class="vh-table-wrap">
 				<table class="wp-list-table widefat striped">
 					<thead>
@@ -429,13 +467,105 @@ $vh_cmdb_percent = static fn( int $part, int $whole ): string => $whole > 0 ? nu
 					<input type="hidden" name="action" value="vulnhub_cmdb_import">
 					<input type="hidden" name="vh_cmdb_token" value="<?php echo esc_attr( $vh_cmdb_token ); ?>">
 					<button type="submit" class="button button-primary">
-						<?php esc_html_e( 'Import these rows', 'vulnhub' ); ?>
+						<?php
+						echo esc_html(
+							'assets' === $vh_cmdb_tab
+								? __( 'Import these objects', 'vulnhub' )
+								: __( 'Import these rows', 'vulnhub' )
+						);
+						?>
 					</button>
-					<a class="button" href="<?php echo esc_url( vh_admin_url( 'vulnhub-cmdb', array( 'tab' => 'csv' ) ) ); ?>">
+					<a class="button" href="<?php echo esc_url( vh_admin_url( 'vulnhub-cmdb', array( 'tab' => $vh_cmdb_tab ) ) ); ?>">
 						<?php esc_html_e( 'Cancel', 'vulnhub' ); ?>
 					</a>
 				</form>
 			<?php endif; ?>
+		</div>
+
+	<?php elseif ( 'assets' === $vh_cmdb_tab ) : ?>
+
+		<?php
+		$vh_cmdb_as_ready = $vh_cmdb_connector && 'assets' === $vh_cmdb_source && $vh_cmdb_connector->is_configured();
+		$vh_cmdb_as_aql   = $vh_cmdb_connector ? $vh_cmdb_connector->assets_aql() : '';
+		$vh_cmdb_as_map   = $vh_cmdb_connector ? $vh_cmdb_connector->assets_map() : array();
+		?>
+
+		<div class="vh-grid vh-grid--2">
+			<div class="vh-card">
+				<h2><?php esc_html_e( 'Read from Jira Assets', 'vulnhub' ); ?></h2>
+				<p style="margin:0 0 10px;line-height:1.6">
+					<?php esc_html_e( 'Runs one AQL object search against the configured schema and pages through every match, 50 objects at a time. Each object is flattened to its attribute names and then goes through exactly the same mapping, normalisation and identity matching a CSV import does — so a server that Tenable already knows about is enriched, not duplicated.', 'vulnhub' ); ?>
+				</p>
+				<p class="vh-muted" style="margin:0 0 12px;line-height:1.6">
+					<?php esc_html_e( 'Read only. The token carries the five Assets read scopes and nothing in this connector issues a write of any kind.', 'vulnhub' ); ?>
+				</p>
+
+				<div class="vh-table-wrap">
+					<table class="wp-list-table widefat striped">
+						<tbody>
+							<tr>
+								<td><?php esc_html_e( 'Active source', 'vulnhub' ); ?></td>
+								<td><?php echo esc_html( (string) ( $vh_cmdb_source_labels[ $vh_cmdb_source ] ?? $vh_cmdb_source ) ); ?></td>
+							</tr>
+							<tr>
+								<td><?php esc_html_e( 'Credentials', 'vulnhub' ); ?></td>
+								<td>
+									<?php
+									echo $vh_cmdb_as_ready
+										? esc_html__( 'complete', 'vulnhub' )
+										: esc_html__( 'incomplete — set them on the Integrations screen', 'vulnhub' );
+									?>
+								</td>
+							</tr>
+							<tr>
+								<td><?php esc_html_e( 'AQL', 'vulnhub' ); ?></td>
+								<td class="vh-mono"><?php echo esc_html( $vh_cmdb_as_aql ); ?></td>
+							</tr>
+							<tr>
+								<td><?php esc_html_e( 'Saved attribute mapping', 'vulnhub' ); ?></td>
+								<td>
+									<?php
+									echo $vh_cmdb_as_map
+										? esc_html(
+											sprintf(
+												/* translators: %d: number of mapped fields. */
+												_n( '%d field pinned by hand', '%d fields pinned by hand', count( $vh_cmdb_as_map ), 'vulnhub' ),
+												count( $vh_cmdb_as_map )
+											)
+										)
+										: esc_html__( 'none — detected from the attribute names each run', 'vulnhub' );
+									?>
+								</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+
+				<?php if ( $vh_cmdb_can_manage ) : ?>
+					<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin-top:14px">
+						<?php wp_nonce_field( 'vulnhub_cmdb_assets_preview' ); ?>
+						<input type="hidden" name="action" value="vulnhub_cmdb_assets_preview">
+						<button type="submit" class="button button-primary" <?php disabled( ! $vh_cmdb_as_ready && ! ( $vh_cmdb_connector && $vh_cmdb_connector->is_mock() ) ); ?>>
+							<?php esc_html_e( 'Fetch and preview', 'vulnhub' ); ?>
+						</button>
+						<a class="button" href="<?php echo esc_url( vh_admin_url( 'vulnhub-integrations', array( 'connector' => 'cmdb' ) ) ); ?>">
+							<?php esc_html_e( 'Credentials and schedule', 'vulnhub' ); ?>
+						</a>
+					</form>
+				<?php else : ?>
+					<p class="vh-muted"><?php esc_html_e( 'You need the manage capability to run an import.', 'vulnhub' ); ?></p>
+				<?php endif; ?>
+			</div>
+
+			<div class="vh-card">
+				<h2><?php esc_html_e( 'What to expect the first time', 'vulnhub' ); ?></h2>
+				<p style="margin:0 0 10px;line-height:1.6">
+					<?php esc_html_e( 'Attribute names belong to whoever built the workspace, so the first fetch is as much a discovery step as an import. The preview lists every attribute name it saw and which VulnHub field it bound each one to; correct anything that is wrong, save it as the default, and scheduled syncs will use the corrected mapping from then on.', 'vulnhub' ); ?>
+				</p>
+				<p class="vh-muted" style="margin:0;line-height:1.6">
+					<?php esc_html_e( 'A 401 with an otherwise correct token almost always means the token is missing read:cmdb-attribute:jira. This connector never drops the attribute request to work around it: an import of a thousand objects with nothing on them but a name would look like a success and leave the inventory worse than before.', 'vulnhub' ); ?>
+				</p>
+			</div>
 		</div>
 
 	<?php else : ?>
@@ -513,6 +643,9 @@ $vh_cmdb_percent = static fn( int $part, int $whole ): string => $whole > 0 ? nu
 		</p>
 		<p class="vh-muted" style="margin:0 0 16px;line-height:1.6;max-width:840px">
 			<?php esc_html_e( 'Enter the heading exactly as it appears in the source, including capitals and spaces.', 'vulnhub' ); ?>
+		</p>
+		<p class="vh-muted" style="margin:0 0 16px;line-height:1.6;max-width:840px">
+			<?php esc_html_e( 'Jira Assets keeps its own mapping, because its columns are attribute names rather than spreadsheet headings and the two vocabularies would overwrite each other. Set that one from the preview on the Jira Assets tab.', 'vulnhub' ); ?>
 		</p>
 
 		<?php if ( $vh_cmdb_can_manage ) : ?>
