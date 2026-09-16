@@ -162,6 +162,21 @@ in the string format").
 - **A priority the project does not allow is flagged** in the review before
   anything is sent.
 
+## Urgency and Impact
+
+Service desk projects often carry select fields named **Urgency** and
+**Impact** on their create screen. The review offers them as dropdowns of the
+options Jira lists for the project and issue type, starting at *Not set*.
+Nothing is sent unless one is chosen.
+
+- **Found by name,** from create metadata (`VulnHub_Jira_Ticketer::REVIEW_SELECTS`,
+  `create_meta_summary()`, cached for an hour), never by custom field id,
+  because ids differ on every site. A project without them shows no dropdown.
+- **A choice travels as `selects[<slug>] = <option id>`** and is set on the
+  issue as `{"id": …}` (`apply_review_selects()`). An id Jira did not list is
+  ignored.
+- **Applies to finding tickets and asset tickets.**
+
 ## Nothing sent to Jira names the product
 
 Tickets arrive in Jira without any mark of where they came from. This covers

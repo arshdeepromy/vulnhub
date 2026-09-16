@@ -480,6 +480,31 @@
 				return;
 			}
 
+			// Urgency / Impact: dropdowns of the options Jira lists, not set by default.
+			var select = ( draft.selects || [] ).filter( function ( s ) { return s.label === pair[0]; } )[0];
+			if ( select ) {
+				var sd = el( 'dd', 'vh-review__due' );
+				var ss = el( 'select' );
+				ss.setAttribute( 'aria-label', select.label );
+				var blank = el( 'option', null, 'Not set' );
+				blank.value = 'none';
+				ss.appendChild( blank );
+				select.options.forEach( function ( o ) {
+					var opt = el( 'option', null, o.value );
+					opt.value = o.id;
+					ss.appendChild( opt );
+				} );
+				ss.value = select.value || 'none';
+				ss.addEventListener( 'change', function () {
+					request.selects = request.selects || {};
+					request.selects[ select.key ] = ss.value;
+					loadDraft( d, request, true );
+				} );
+				sd.appendChild( ss );
+				dl.appendChild( sd );
+				return;
+			}
+
 			// Priority: the values the project really allows, read from Jira.
 			if ( 'Priority' === pair[0] && draft.priority ) {
 				var pd = el( 'dd', 'vh-review__due' );

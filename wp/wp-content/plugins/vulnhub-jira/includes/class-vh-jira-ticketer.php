@@ -407,6 +407,8 @@ final class VulnHub_Jira_Ticketer {
 			return $fail( (string) $built['message'], array( 'scope' => $scope_out ) );
 		}
 
+		$built = $this->apply_review_selects( $connector, $built, $params );
+
 		return $this->present_draft(
 			$connector,
 			$built,
@@ -499,6 +501,10 @@ final class VulnHub_Jira_Ticketer {
 			array( __( 'Assignee', 'vulnhub' ), isset( $fields['assignee']['id'] ) ? (string) $fields['assignee']['id'] : __( 'not set (Jira decides)', 'vulnhub' ) ),
 		);
 
+		foreach ( (array) ( $built['selects'] ?? array() ) as $select ) {
+			$shown[] = array( (string) $select['label'], '' !== $select['text'] ? (string) $select['text'] : __( 'not set', 'vulnhub' ) );
+		}
+
 		if ( '' !== (string) $built['routing']['team_field'] && isset( $fields[ (string) $built['routing']['team_field'] ] ) ) {
 			$shown[] = array( __( 'Team', 'vulnhub' ) . ' (' . (string) $built['routing']['team_field'] . ')', (string) $built['routing']['team_value'] );
 		}
@@ -545,6 +551,7 @@ final class VulnHub_Jira_Ticketer {
 				'value' => (string) ( $fields['duedate'] ?? '' ),
 				'min'   => wp_date( 'Y-m-d' ),
 			),
+			'selects'     => array_values( (array) ( $built['selects'] ?? array() ) ),
 			'priority'    => array(
 				'value'   => (string) ( $fields['priority']['name'] ?? '' ),
 				'options' => $allowed_prio['names'],
@@ -807,7 +814,35 @@ final class VulnHub_Jira_Ticketer {
 			return $none;
 		}
 
-		$key    = 'vh_jira_prio_' . md5( $project . '|' . wp_json_encode( $type_ref ) );
+		return $this->create_meta_summary( $connector, $project, $type_ref )['priority'];
+	}
+
+	/**
+	 * The selectable fields the review offers, besides priority, by the name
+	 * Jira gives them. Matched by name rather than id, because custom field
+	 * ids differ on every site.
+	 */
+	public const REVIEW_SELECTS = array(
+		'urgency' => 'Urgency',
+		'impact'  => 'Impact',
+	);
+
+	/**
+	 * What the project's create screen allows for the ticket's issue type:
+	 * priorities, and the REVIEW_SELECTS fields with their options. Read from
+	 * create metadata and cached for an hour.
+	 *
+	 * @param array<string,string> $type_ref `{id}` or `{name}` as sent.
+	 * @return array{priority:array{names:string[],default:string},selects:array<string,array{field:string,label:string,options:array<int,array{id:string,value:string}>}>}
+	 */
+	public function create_meta_summary( VulnHub_Jira_Connector $connector, string $project, array $type_ref ): array {
+		$none = array( 'priority' => array( 'names' => array(), 'default' => '' ), 'selects' => array() );
+
+		if ( '' === $project || $connector->is_mock() ) {
+			return $none;
+		}
+
+		$key    = 'vh_jira_meta_' . md5( $project . '|' . wp_json_encode( $type_ref ) );
 		$cached = get_transient( $key );
 
 		if ( is_array( $cached ) ) {
@@ -841,17 +876,78 @@ final class VulnHub_Jira_Ticketer {
 		$out = $none;
 
 		foreach ( (array) ( $meta->data()['fields'] ?? $meta->data()['values'] ?? array() ) as $field ) {
-			if ( 'priority' !== (string) ( $field['fieldId'] ?? '' ) ) {
+			$field_id = (string) ( $field['fieldId'] ?? '' );
+
+			if ( 'priority' === $field_id ) {
+				$out['priority']['names']   = array_values( array_filter( array_map( static fn( $v ): string => (string) ( $v['name'] ?? '' ), (array) ( $field['allowedValues'] ?? array() ) ) ) );
+				$out['priority']['default'] = (string) ( $field['defaultValue']['name'] ?? '' );
 				continue;
 			}
 
-			$out['names']   = array_values( array_filter( array_map( static fn( $v ): string => (string) ( $v['name'] ?? '' ), (array) ( $field['allowedValues'] ?? array() ) ) ) );
-			$out['default'] = (string) ( $field['defaultValue']['name'] ?? '' );
+			$slug = array_search( strtolower( trim( (string) ( $field['name'] ?? '' ) ) ), array_map( 'strtolower', self::REVIEW_SELECTS ), true );
+
+			if ( false === $slug || empty( $field['allowedValues'] ) || isset( $out['selects'][ $slug ] ) ) {
+				continue;
+			}
+
+			$out['selects'][ $slug ] = array(
+				'field'   => $field_id,
+				'label'   => (string) $field['name'],
+				'options' => array_values(
+					array_map(
+						static fn( $v ): array => array(
+							'id'    => (string) ( $v['id'] ?? '' ),
+							'value' => (string) ( $v['value'] ?? $v['name'] ?? '' ),
+						),
+						(array) $field['allowedValues']
+					)
+				),
+			);
 		}
 
 		set_transient( $key, $out, HOUR_IN_SECONDS );
 
 		return $out;
+	}
+
+	/**
+	 * Put the reviewer's Urgency / Impact choices on a built issue, and
+	 * describe the fields for the review.
+	 *
+	 * Nothing is set unless chosen: a choice is `{id}` of an option Jira
+	 * listed for this project and issue type; anything else is ignored.
+	 *
+	 * @param array<string,mixed> $built  From build_issue() / build_scope_issue().
+	 * @param array<string,mixed> $params Draft params (`selects` => slug => option id).
+	 * @return array<string,mixed> The built issue with fields set and `selects` for the review.
+	 */
+	public function apply_review_selects( VulnHub_Jira_Connector $connector, array $built, array $params ): array {
+		$meta    = $this->create_meta_summary( $connector, (string) $built['project'], (array) ( $built['fields']['issuetype'] ?? array() ) );
+		$chosen  = (array) ( $params['selects'] ?? array() );
+		$review  = array();
+
+		foreach ( $meta['selects'] as $slug => $def ) {
+			$pick  = sanitize_text_field( (string) ( $chosen[ $slug ] ?? '' ) );
+			$valid = array_column( $def['options'], 'value', 'id' );
+			$value = '';
+
+			if ( '' !== $pick && 'none' !== $pick && isset( $valid[ $pick ] ) ) {
+				$built['fields'][ $def['field'] ] = array( 'id' => $pick );
+				$value                            = $pick;
+			}
+
+			$review[] = array(
+				'key'     => $slug,
+				'label'   => $def['label'],
+				'value'   => $value,
+				'text'    => '' !== $value ? (string) $valid[ $value ] : '',
+				'options' => $def['options'],
+			);
+		}
+
+		$built['selects'] = $review;
+
+		return $built;
 	}
 
 	/**

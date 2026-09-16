@@ -473,6 +473,7 @@ final class Rest {
 			'notes'       => (string) $request->get_param( 'notes' ),
 			'due_date'    => (string) $request->get_param( 'due_date' ),
 			'priority'    => (string) $request->get_param( 'priority' ),
+			'selects'     => (array) $request->get_param( 'selects' ),
 		);
 
 		/**
