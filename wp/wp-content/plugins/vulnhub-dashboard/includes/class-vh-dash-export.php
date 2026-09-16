@@ -478,7 +478,7 @@ final class VulnHub_Dash_Export {
 	 * @param array<string,mixed> $args Query arguments.
 	 * @return array<string,string>
 	 */
-	private static function carried( array $args ): array {
+	public static function carried( array $args ): array {
 		$args = array_filter(
 			$args,
 			static fn( $v ): bool => '' !== $v && null !== $v && 0 !== $v && ! is_array( $v )
@@ -540,11 +540,6 @@ final class VulnHub_Dash_Export {
 			)
 			: __( 'Download CSV', 'vulnhub' );
 
-		$groups = array();
-
-		foreach ( $cols as $key => $col ) {
-			$groups[ (string) $col['group'] ][ $key ] = $col;
-		}
 		?>
 		<details class="vh-export">
 			<summary class="vh-btn vh-btn--ghost vh-btn--sm">
@@ -587,25 +582,45 @@ final class VulnHub_Dash_Export {
 					<p class="vh-export__scope"><?php echo esc_html( $scope ); ?></p>
 				<?php endif; ?>
 
-				<div class="vh-export__cols">
-					<?php foreach ( $groups as $vh_group => $vh_items ) : ?>
-						<fieldset class="vh-export__group">
-							<legend><?php echo esc_html( (string) $vh_group ); ?></legend>
-							<?php foreach ( $vh_items as $vh_key => $vh_col ) : ?>
-								<label>
-									<input type="checkbox" name="cols[]" value="<?php echo esc_attr( (string) $vh_key ); ?>" <?php checked( ! empty( $vh_col['default'] ) ); ?>>
-									<span><?php echo esc_html( (string) $vh_col['label'] ); ?></span>
-								</label>
-							<?php endforeach; ?>
-						</fieldset>
-					<?php endforeach; ?>
-				</div>
+				<?php self::column_picker( $view ); ?>
 
 				<p class="vh-export__note">
 					<?php esc_html_e( 'The filters on this screen still apply. With nothing ticked you get every column.', 'vulnhub' ); ?>
 				</p>
 			</form>
 		</details>
+		<?php
+	}
+
+	/**
+	 * The grouped column checkboxes, as `cols[]`.
+	 *
+	 * Shared by the export popover and the raise-a-ticket dialog, so the file
+	 * a ticket hands over is chosen from exactly the same list.
+	 *
+	 * @param string   $view   View key.
+	 * @param string[] $picked Columns to tick; empty ticks each column's default.
+	 */
+	public static function column_picker( string $view, array $picked = array() ): void {
+		$groups = array();
+
+		foreach ( self::columns( $view ) as $key => $col ) {
+			$groups[ (string) $col['group'] ][ $key ] = $col;
+		}
+		?>
+		<div class="vh-export__cols">
+			<?php foreach ( $groups as $vh_group => $vh_items ) : ?>
+				<fieldset class="vh-export__group">
+					<legend><?php echo esc_html( (string) $vh_group ); ?></legend>
+					<?php foreach ( $vh_items as $vh_key => $vh_col ) : ?>
+						<label>
+							<input type="checkbox" name="cols[]" value="<?php echo esc_attr( (string) $vh_key ); ?>" <?php checked( $picked ? in_array( (string) $vh_key, $picked, true ) : ! empty( $vh_col['default'] ) ); ?>>
+							<span><?php echo esc_html( (string) $vh_col['label'] ); ?></span>
+						</label>
+					<?php endforeach; ?>
+				</fieldset>
+			<?php endforeach; ?>
+		</div>
 		<?php
 	}
 

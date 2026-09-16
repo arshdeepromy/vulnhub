@@ -3524,6 +3524,13 @@ final class VulnHub_Dash_App {
 		 * checkbox column rather than a column of controls that refuse them.
 		 */
 		$vh_can_edit = current_user_can( \VulnHub\Core\Caps::TRIAGE );
+
+		/*
+		 * Outside the bulk form on purpose: the dialog holds a form of its
+		 * own, and a form nested in a form is dropped by the parser.
+		 */
+		VulnHub_Dash_Tickets::raise_button( $args, (int) $q['total'] );
+
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		$vh_here     = self::page_url( 'assets', array_diff_key( is_array( $_GET ) ? array_map( 'sanitize_text_field', wp_unslash( $_GET ) ) : array(), array_flip( array( 'page_id', 'vh_life', 'vh_assets', 'vh_archived', 'vh_restored' ) ) ) );
 		?>
@@ -3616,6 +3623,11 @@ final class VulnHub_Dash_App {
 	/* ---------------------------------------------------------- tickets. */
 
 	private static function view_tickets(): void {
+		if ( self::qi( 'ticket' ) > 0 ) {
+			VulnHub_Dash_Tickets::render_detail( self::qi( 'ticket' ) );
+			return;
+		}
+
 		$s     = Repo::summary();
 		$per   = 25;
 		$paged = max( 1, self::qi( 'tp', 1 ) );
@@ -3624,6 +3636,7 @@ final class VulnHub_Dash_App {
 				array(
 					'status_category'    => self::q( 'status_category' ),
 					'verification_state' => self::q( 'verification_state' ),
+					'kind'               => self::q( 'kind' ),
 					'search'             => self::q( 'search' ),
 					'limit'              => $per,
 					'offset'             => ( $paged - 1 ) * $per,
@@ -3636,7 +3649,7 @@ final class VulnHub_Dash_App {
 		<div class="vh-page-head">
 			<div>
 				<h1><?php esc_html_e( 'Remediation tickets', 'vulnhub' ); ?></h1>
-				<p class="vh-sub"><?php esc_html_e( 'Every ticket raised from a finding, and whether the scanner agrees it is actually fixed.', 'vulnhub' ); ?></p>
+				<p class="vh-sub"><?php esc_html_e( 'Every ticket raised from a finding or an asset list, and whether the data agrees the work is actually done.', 'vulnhub' ); ?></p>
 			</div>
 		</div>
 
@@ -3650,7 +3663,7 @@ final class VulnHub_Dash_App {
 		</section>
 
 		<form class="vh-filters" method="get">
-			<?php self::hidden_filters( array( 'search', 'status_category', 'verification_state' ) ); ?>
+			<?php self::hidden_filters( array( 'search', 'status_category', 'verification_state', 'kind' ) ); ?>
 			<label><?php esc_html_e( 'Search', 'vulnhub' ); ?>
 				<input type="search" name="search" value="<?php echo esc_attr( self::q( 'search' ) ); ?>" placeholder="<?php esc_attr_e( 'key or summary…', 'vulnhub' ); ?>">
 			</label>
@@ -3660,6 +3673,14 @@ final class VulnHub_Dash_App {
 					<option value="new" <?php selected( self::q( 'status_category' ), 'new' ); ?>><?php esc_html_e( 'To do', 'vulnhub' ); ?></option>
 					<option value="indeterminate" <?php selected( self::q( 'status_category' ), 'indeterminate' ); ?>><?php esc_html_e( 'In progress', 'vulnhub' ); ?></option>
 					<option value="done" <?php selected( self::q( 'status_category' ), 'done' ); ?>><?php esc_html_e( 'Done', 'vulnhub' ); ?></option>
+				</select>
+			</label>
+			<label><?php esc_html_e( 'Request type', 'vulnhub' ); ?>
+				<select name="kind">
+					<option value=""><?php esc_html_e( 'All', 'vulnhub' ); ?></option>
+					<?php foreach ( Tickets::kinds() as $vh_kind => $vh_kind_def ) : ?>
+						<option value="<?php echo esc_attr( (string) $vh_kind ); ?>" <?php selected( self::q( 'kind' ), (string) $vh_kind ); ?>><?php echo esc_html( (string) $vh_kind_def['label'] ); ?></option>
+					<?php endforeach; ?>
 				</select>
 			</label>
 			<label><?php esc_html_e( 'Verification', 'vulnhub' ); ?>
@@ -3675,16 +3696,17 @@ final class VulnHub_Dash_App {
 		</form>
 
 		<?php if ( ! $q['rows'] ) : ?>
-			<p class="vh-chart-empty"><?php esc_html_e( 'No tickets yet. Raise one from the Vulnerabilities screen.', 'vulnhub' ); ?></p>
+			<p class="vh-chart-empty"><?php esc_html_e( 'No tickets match. Raise one from the Vulnerabilities screen, or from a filtered list on Assets & owners.', 'vulnhub' ); ?></p>
 		<?php else : ?>
 			<div class="vh-tablewrap">
 				<table class="vh-table">
 					<thead><tr>
 						<th><?php esc_html_e( 'Key', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Type', 'vulnhub' ); ?></th>
 						<th><?php esc_html_e( 'Summary', 'vulnhub' ); ?></th>
 						<th><?php esc_html_e( 'Status', 'vulnhub' ); ?></th>
 						<th><?php esc_html_e( 'Assignee', 'vulnhub' ); ?></th>
-						<th><?php esc_html_e( 'Findings', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Covers', 'vulnhub' ); ?></th>
 						<th><?php esc_html_e( 'Verification', 'vulnhub' ); ?></th>
 					</tr></thead>
 					<tbody>
@@ -3699,11 +3721,27 @@ final class VulnHub_Dash_App {
 						};
 						?>
 						<tr>
-							<td><a class="vh-mono" href="<?php echo esc_url( (string) $t['url'] ); ?>" target="_blank" rel="noopener noreferrer"><strong><?php echo esc_html( (string) $t['external_key'] ); ?></strong></a></td>
+							<td>
+								<a class="vh-mono" href="<?php echo esc_url( self::page_url( 'tickets', array( 'ticket' => (int) $t['id'] ) ) ); ?>"><strong><?php echo esc_html( (string) $t['external_key'] ); ?></strong></a>
+								<?php if ( '' !== (string) $t['url'] ) : ?>
+									<a class="vh-meta" href="<?php echo esc_url( (string) $t['url'] ); ?>" target="_blank" rel="noopener noreferrer" aria-label="<?php esc_attr_e( 'Open in Jira', 'vulnhub' ); ?>">&nearr;</a>
+								<?php endif; ?>
+							</td>
+							<td><?php echo esc_html( Tickets::kind_label( (string) $t['kind'] ) ); ?></td>
 							<td><?php echo esc_html( vh_trim( (string) $t['summary'], 78 ) ); ?></td>
 							<td><span class="vh-chip vh-chip--<?php echo 'done' === $t['status_category'] ? 'good' : 'neutral'; ?>"><?php echo esc_html( (string) $t['status'] ); ?></span></td>
 							<td><?php echo esc_html( (string) ( $t['assignee'] ?: '—' ) ); ?></td>
-							<td><?php echo esc_html( number_format_i18n( (int) $t['finding_count'] ) ); ?></td>
+							<td>
+								<?php
+								echo esc_html(
+									(int) $t['asset_count'] > 0
+										/* translators: %s: number of assets. */
+										? sprintf( _n( '%s asset', '%s assets', (int) $t['asset_count'], 'vulnhub' ), number_format_i18n( (int) $t['asset_count'] ) )
+										/* translators: %s: number of findings. */
+										: sprintf( _n( '%s finding', '%s findings', (int) $t['finding_count'], 'vulnhub' ), number_format_i18n( (int) $t['finding_count'] ) )
+								);
+								?>
+							</td>
 							<td><span class="vh-chip vh-chip--<?php echo esc_attr( $vtone ); ?>"><?php echo esc_html( Tickets::verification_labels()[ $vstate ] ?? '—' ); ?></span></td>
 						</tr>
 					<?php endforeach; ?>
@@ -3881,7 +3919,7 @@ final class VulnHub_Dash_App {
 	private static function hidden_filters( array $own ): void {
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		$get  = is_array( $_GET ) ? wp_unslash( $_GET ) : array();
-		$skip = array_merge( $own, array( 'page_id', 'ap', 'vp', 'tp', 'ep', 'paged', 'asset', 'vuln', 'ticket' ) );
+		$skip = array_merge( $own, array( 'page_id', 'ap', 'vp', 'tp', 'ep', 'paged', 'asset', 'vuln', 'ticket', 'raise_ticket', 'vh_ticket_err', 'vh_ticket_key', 'tap', 'outcome' ) );
 
 		foreach ( $get as $key => $value ) {
 			if ( is_array( $value ) || in_array( (string) $key, $skip, true ) ) {

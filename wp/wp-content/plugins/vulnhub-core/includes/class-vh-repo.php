@@ -1268,6 +1268,17 @@ final class Repo {
 		}
 
 		/*
+		 * A scope ticket that named both halves of a duplicate keeps one row
+		 * for the survivor. IGNORE leaves the colliding rows behind on the
+		 * dropped id, and they are cleared rather than orphaned.
+		 */
+		$ticket_assets                = vh_table( 'ticket_assets' );
+		$out['moved']['ticket_assets'] = (int) $wpdb->query(
+			$wpdb->prepare( "UPDATE IGNORE {$ticket_assets} SET asset_id = %d WHERE asset_id = %d", $keep_id, $drop_id ) // phpcs:ignore WordPress.DB.PreparedSQL
+		);
+		$wpdb->query( $wpdb->prepare( "DELETE FROM {$ticket_assets} WHERE asset_id = %d", $drop_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+
+		/*
 		 * One row per asset, so these move only into a vacancy; where the
 		 * survivor already has its own, the dropped row's is discarded
 		 * rather than colliding with it.

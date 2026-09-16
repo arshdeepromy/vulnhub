@@ -391,10 +391,16 @@ final class Install {
 			remote_closed_at datetime NULL,
 			last_synced_at datetime NULL,
 			payload_json longtext NULL,
+			kind varchar(32) NOT NULL DEFAULT 'vulnerability',
+			source_view varchar(32) NOT NULL DEFAULT '',
+			scope_json longtext NULL,
+			notes text NULL,
+			asset_count int(10) unsigned NOT NULL DEFAULT 0,
 			created_at datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
 			updated_at datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
 			PRIMARY KEY  (id),
 			UNIQUE KEY provider_key (provider,external_key),
+			KEY kind (kind),
 			KEY status_category (status_category),
 			KEY asset_id (asset_id),
 			KEY team_id (team_id),
@@ -413,6 +419,29 @@ final class Install {
 			PRIMARY KEY  (id),
 			UNIQUE KEY ticket_finding (ticket_id,finding_id),
 			KEY finding_id (finding_id)
+		) {$charset};";
+
+		/*
+		 * The assets a scope ticket was raised about, and what each looked
+		 * like at that moment. The snapshot columns are what lets the ticket
+		 * say "was not in Tenable, is now covered" -- the live asset row only
+		 * knows the second half. Hostname is kept so a row still reads when
+		 * the asset itself has since been merged away or deleted.
+		 */
+		$sql[] = "CREATE TABLE {$p}ticket_assets (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			ticket_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			asset_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			hostname varchar(191) NOT NULL DEFAULT '',
+			asset_type varchar(32) NOT NULL DEFAULT '',
+			coverage_state varchar(24) NOT NULL DEFAULT '',
+			defender_coverage_state varchar(24) NOT NULL DEFAULT '',
+			lifecycle_status varchar(32) NOT NULL DEFAULT '',
+			sources_json varchar(191) NOT NULL DEFAULT '',
+			created_at datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
+			PRIMARY KEY  (id),
+			UNIQUE KEY ticket_asset (ticket_id,asset_id),
+			KEY asset_id (asset_id)
 		) {$charset};";
 
 		/* ---------------------------------------------------------------
