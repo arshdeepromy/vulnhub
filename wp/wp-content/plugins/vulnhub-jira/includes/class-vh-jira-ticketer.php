@@ -1842,18 +1842,6 @@ final class VulnHub_Jira_Ticketer {
 			);
 		}
 
-		if ( ! empty( $team['name'] ) ) {
-			$doc->paragraph(
-				sprintf(
-					/* translators: 1: team name, 2: SLA days for this severity. */
-					__( 'Remediation owner: %1$s (SLA for %2$s severity: %3$d days).', 'vulnhub' ),
-					(string) $team['name'],
-					strtolower( vh_severity_label( $severity ) ),
-					vh_sla_days( $severity )
-				)
-			);
-		}
-
 		/* --- 3. Vulnerability detail -------------------------------- */
 
 		$doc->heading( __( 'Vulnerability detail', 'vulnhub' ) );
