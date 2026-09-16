@@ -121,6 +121,23 @@ reopener, automation, routing, or anything added later.
 Blank means unrestricted, which is how existing installs behave. The
 connection test fails if the default project is outside the allowlist.
 
+## Adds are sent once
+
+Anything that adds to Jira is attempted **exactly once**: creating an issue
+(`create_issue`) or a request (`create_request`), commenting (`comment`,
+`request_comment`), and uploading (`attach`, `request_attach`). The limit is
+set by `VulnHub_Jira_Client::CREATE_ATTEMPTS`.
+
+Core's `Http` retries timeouts and 5xx responses up to five times. That is right
+for a read and wrong for an add: Jira can create the issue, post the comment or
+store the file, then fail to answer, and a retry makes a second one. A failed
+add returns its error for a person to repeat.
+
+- **Still retried:** reads, edits (summary, transitions) and the remote link,
+  which is idempotent through its `globalId`.
+- **One retry kept for adds:** the OAuth refresh after a `401`, because a 401
+  means Jira did nothing.
+
 ## Client methods added
 
 | Method | Endpoint |

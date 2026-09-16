@@ -71,6 +71,21 @@ final class VulnHub_Jira_Client {
 	 */
 	public const SD_API = '/rest/servicedeskapi';
 
+	/**
+	 * Anything that adds something to Jira is attempted exactly once: creating
+	 * an issue or a request, commenting, and uploading an attachment.
+	 *
+	 * Core's Http retries timeouts and 5xx responses, which is right for a
+	 * read and wrong for an add: Jira can make the issue, post the comment or
+	 * store the file and then fail to answer, and the retry makes a second
+	 * one. A failed add is reported and left for a person to repeat. Edits
+	 * (summary, status transition) and the idempotent remote link keep
+	 * retrying, since repeating them changes nothing. The one retry kept for
+	 * adds is the OAuth refresh after a 401 in call(): a 401 means Jira did
+	 * nothing.
+	 */
+	public const CREATE_ATTEMPTS = 1;
+
 	/** Jira caps enhanced search at 5000 issues per page. */
 	public const MAX_PAGE = 5000;
 
@@ -285,7 +300,7 @@ final class VulnHub_Jira_Client {
 	 * @param array<string,string>     $extra  Additional request headers, e.g.
 	 *                                         `X-ExperimentalApi: opt-in`.
 	 */
-	private function call( string $method, string $path, array $query = array(), ?array $body = null, array $extra = array(), ?string $raw = null ): \VulnHub\Core\Http_Response {
+	private function call( string $method, string $path, array $query = array(), ?array $body = null, array $extra = array(), ?string $raw = null, ?int $attempts = null ): \VulnHub\Core\Http_Response {
 		$refused = $this->refuse_outside_allowlist( $method, $path, $body );
 
 		if ( $refused ) {
@@ -321,16 +336,18 @@ final class VulnHub_Jira_Client {
 			$url = add_query_arg( array_map( 'strval', $query ), $url );
 		}
 
-		$send = function ( string $token ) use ( $method, $url, $extra, $body, $raw ): \VulnHub\Core\Http_Response {
-			return $this->http->request(
-				$method,
-				$url,
-				array(
-					'headers' => array_merge( $this->headers( $token ), $extra ),
-					'body'    => null !== $raw ? $raw : $body,
-					'timeout' => null !== $raw ? 120 : 45,
-				)
+		$send = function ( string $token ) use ( $method, $url, $extra, $body, $raw, $attempts ): \VulnHub\Core\Http_Response {
+			$args = array(
+				'headers' => array_merge( $this->headers( $token ), $extra ),
+				'body'    => null !== $raw ? $raw : $body,
+				'timeout' => null !== $raw ? 120 : 45,
 			);
+
+			if ( null !== $attempts ) {
+				$args['retries'] = max( 1, $attempts );
+			}
+
+			return $this->http->request( $method, $url, $args );
 		};
 
 		$response = $send( $bearer );
@@ -610,7 +627,7 @@ final class VulnHub_Jira_Client {
 	 *                                    description as ADF, issuetype, …).
 	 */
 	public function create_issue( array $fields ): \VulnHub\Core\Http_Response {
-		return $this->call( 'POST', self::API . '/issue', array(), array( 'fields' => $fields ) );
+		return $this->call( 'POST', self::API . '/issue', array(), array( 'fields' => $fields ), array(), null, self::CREATE_ATTEMPTS );
 	}
 
 	/**
@@ -690,7 +707,10 @@ final class VulnHub_Jira_Client {
 			'POST',
 			self::API . '/issue/' . rawurlencode( $key ) . '/comment',
 			array(),
-			array( 'body' => $adf )
+			array( 'body' => $adf ),
+			array(),
+			null,
+			self::CREATE_ATTEMPTS
 		);
 	}
 
@@ -887,7 +907,10 @@ final class VulnHub_Jira_Client {
 				'serviceDeskId'      => $desk_id,
 				'requestTypeId'      => $request_type_id,
 				'requestFieldValues' => $fields,
-			)
+			),
+			array(),
+			null,
+			self::CREATE_ATTEMPTS
 		);
 	}
 
@@ -905,7 +928,10 @@ final class VulnHub_Jira_Client {
 			array(
 				'body'   => $body,
 				'public' => $public,
-			)
+			),
+			array(),
+			null,
+			self::CREATE_ATTEMPTS
 		);
 	}
 
@@ -952,7 +978,7 @@ final class VulnHub_Jira_Client {
 			$body['additionalComment'] = array( 'body' => $comment );
 		}
 
-		return $this->call( 'POST', self::SD_API . '/request/' . rawurlencode( $key ) . '/attachment', array(), $body );
+		return $this->call( 'POST', self::SD_API . '/request/' . rawurlencode( $key ) . '/attachment', array(), $body, array(), null, self::CREATE_ATTEMPTS );
 	}
 
 	/**
@@ -994,7 +1020,8 @@ final class VulnHub_Jira_Client {
 			array(),
 			null,
 			array( 'Content-Type' => 'multipart/form-data; boundary=' . $boundary ),
-			$body
+			$body,
+			self::CREATE_ATTEMPTS
 		);
 	}
 }
