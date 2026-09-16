@@ -25,6 +25,8 @@ obvious version was tried first and broke something.
 | `docs/CORE-API.md` | **Before writing any integration.** Data model, `Repo`, connector contract |
 | `docs/PORTAL.md` | Front end: request path, views, widgets, filter vocabulary |
 | `docs/FILTERS.md` | Every number is a promise that clicking it gives exactly those rows |
+| `docs/JIRA-OAUTH.md` | Jira OAuth 3LO connect flow, token refresh, the write allowlist, JSM requests and attachments |
+| `docs/TICKETS.md` | Vulnerability vs scope tickets, the Raise Jira ticket dialog, per-asset outcomes, JSM readiness |
 | `docs/SYNC.md` | Staged sync: download → process → finalize, watermarks, resumability |
 | `docs/CMDB-ASSETS.md` | Jira Assets/AQL back end, attribute mapping, per-object-type mapping |
 | `docs/COVERAGE.md`, `docs/LIFECYCLE.md` | What "not scanned" and "in service" mean, and to which assets |

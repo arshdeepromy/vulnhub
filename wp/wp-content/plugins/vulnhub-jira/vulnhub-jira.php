@@ -40,6 +40,7 @@ function vulnhub_jira_load(): void {
 	require_once VULNHUB_JIRA_DIR . 'includes/class-vh-jira-adf.php';
 	require_once VULNHUB_JIRA_DIR . 'includes/class-vh-jira-mock.php';
 	require_once VULNHUB_JIRA_DIR . 'includes/class-vh-jira-client.php';
+	require_once VULNHUB_JIRA_DIR . 'includes/class-vh-jira-oauth.php';
 	require_once VULNHUB_JIRA_DIR . 'includes/class-vh-jira-connector.php';
 	require_once VULNHUB_JIRA_DIR . 'includes/class-vh-jira-directory.php';
 	require_once VULNHUB_JIRA_DIR . 'includes/class-vh-jira-ticketer.php';
@@ -120,6 +121,8 @@ add_action(
 		( new VulnHub_Jira_Reopener() )->hooks();
 		( new VulnHub_Jira_Automation_Admin() )->hooks();
 		( new VulnHub_Jira_Routing_Admin() )->hooks();
+
+		VulnHub_Jira_OAuth::hooks();
 	}
 );
 

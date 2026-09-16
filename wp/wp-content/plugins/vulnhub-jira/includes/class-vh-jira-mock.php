@@ -268,7 +268,119 @@ final class VulnHub_Jira_Mock {
 			return $this->add_remote_link( rawurldecode( $m[1] ), (array) $body );
 		}
 
+		// --- comments, JSM requests, attachments ---------------------------
+		if ( 'GET' === $method && preg_match( '#^/rest/api/3/issue/([^/]+)/comment$#', $path, $m ) ) {
+			$issue = $this->state()['issues'][ strtoupper( rawurldecode( $m[1] ) ) ] ?? null;
+
+			if ( ! $issue ) {
+				return $this->error( 404, array( 'Issue does not exist or you do not have permission to see it.' ) );
+			}
+
+			$comments = array_reverse( (array) $issue['comments'] );
+
+			return $this->ok( array( 'startAt' => 0, 'maxResults' => 50, 'total' => count( $comments ), 'comments' => $comments ) );
+		}
+		if ( 'POST' === $method && preg_match( '#^/rest/api/3/issue/([^/]+)/attachments$#', $path, $m ) ) {
+			return $this->attachment( rawurldecode( $m[1] ), (array) $body );
+		}
+		if ( 'POST' === $method && '/rest/servicedeskapi/request' === $path ) {
+			$desk = $this->service_desk( (string) ( $body['serviceDeskId'] ?? '' ) );
+
+			if ( ! $desk ) {
+				return $this->error( 400, array( 'The service desk does not exist.' ) );
+			}
+
+			$values  = (array) ( $body['requestFieldValues'] ?? array() );
+			$created = $this->create_issue(
+				array(
+					'project'     => array( 'key' => (string) $desk['projectKey'] ),
+					'summary'     => (string) ( $values['summary'] ?? '' ),
+					'issuetype'   => array( 'name' => 'Service Request' ),
+					'description' => VulnHub_Jira_Adf::doc()->paragraph( (string) ( $values['description'] ?? '' ) )->to_array(),
+				)
+			);
+
+			if ( ! $created->ok() ) {
+				return $created;
+			}
+
+			$key = (string) $created->data()['key'];
+
+			return new \VulnHub\Core\Http_Response( 201, array(), '', $this->request_view( $key, (string) $desk['id'], (string) ( $body['requestTypeId'] ?? '' ) ) );
+		}
+		if ( 'GET' === $method && preg_match( '#^/rest/servicedeskapi/request/([^/]+)$#', $path, $m ) ) {
+			$key = strtoupper( rawurldecode( $m[1] ) );
+
+			return isset( $this->state()['issues'][ $key ] )
+				? $this->ok( $this->request_view( $key, '', '' ) )
+				: $this->error( 404, array( 'The request does not exist.' ) );
+		}
+		if ( 'POST' === $method && preg_match( '#^/rest/servicedeskapi/request/([^/]+)/comment$#', $path, $m ) ) {
+			$made = $this->add_comment( rawurldecode( $m[1] ), VulnHub_Jira_Adf::doc()->paragraph( (string) ( $body['body'] ?? '' ) )->to_array() );
+
+			return $made->ok()
+				? new \VulnHub\Core\Http_Response( 201, array(), '', array( 'id' => (string) ( $made->data()['id'] ?? '' ), 'body' => (string) ( $body['body'] ?? '' ), 'public' => ! empty( $body['public'] ) ) )
+				: $made;
+		}
+		if ( 'POST' === $method && preg_match( '#^/rest/servicedeskapi/servicedesk/([^/]+)/attachTemporaryFile$#', $path, $m ) ) {
+			if ( ! $this->service_desk( rawurldecode( $m[1] ) ) ) {
+				return $this->error( 404, array( 'No service desk found for the given id.' ) );
+			}
+
+			return $this->ok( array( 'temporaryAttachments' => array( array( 'temporaryAttachmentId' => 'temp-' . md5( (string) wp_json_encode( $body ) ), 'fileName' => (string) ( $body['filename'] ?? '' ) ) ) ) );
+		}
+		if ( 'POST' === $method && preg_match( '#^/rest/servicedeskapi/request/([^/]+)/attachment$#', $path, $m ) ) {
+			return $this->attachment( rawurldecode( $m[1] ), array( 'filename' => 'temporary attachment', 'size' => 0 ) );
+		}
+
 		return $this->error( 404, array( sprintf( 'The simulated Jira site has no route for %s %s.', $method, $path ) ) );
+	}
+
+	/**
+	 * An attachment record on a simulated issue.
+	 *
+	 * @param array<string,mixed> $file filename, mimeType, size.
+	 */
+	private function attachment( string $key, array $file ): \VulnHub\Core\Http_Response {
+		$state = $this->state();
+		$key   = strtoupper( trim( $key ) );
+
+		if ( ! isset( $state['issues'][ $key ] ) ) {
+			return $this->error( 404, array( 'Issue does not exist or you do not have permission to see it.' ) );
+		}
+
+		$node = array(
+			'id'       => (string) ( 30000 + count( (array) ( $state['issues'][ $key ]['attachments'] ?? array() ) ) ),
+			'filename' => (string) ( $file['filename'] ?? 'attachment.bin' ),
+			'mimeType' => (string) ( $file['mimeType'] ?? 'application/octet-stream' ),
+			'size'     => (int) ( $file['size'] ?? 0 ),
+			'created'  => $this->iso( vh_now() ),
+		);
+
+		$state['issues'][ $key ]['attachments'][] = $node;
+		$state['issues'][ $key ]['updated']       = vh_now();
+		$this->save( $state );
+
+		return $this->ok( array( $node ) );
+	}
+
+	/**
+	 * A JSM request as GET /rest/servicedeskapi/request/{key} shapes it.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private function request_view( string $key, string $desk_id, string $type_id ): array {
+		$issue  = (array) ( $this->state()['issues'][ $key ] ?? array() );
+		$status = $this->workflow_state( $issue );
+
+		return array(
+			'issueId'       => (string) ( $issue['id'] ?? '' ),
+			'issueKey'      => $key,
+			'requestTypeId' => $type_id,
+			'serviceDeskId' => $desk_id,
+			'currentStatus' => array( 'status' => (string) ( $status['name'] ?? 'Open' ) ),
+			'_links'        => array( 'web' => $this->site_url() . '/browse/' . $key ),
+		);
 	}
 
 	/* =================================================================

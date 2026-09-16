@@ -132,7 +132,63 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 	 * @return array<int,array<string,mixed>>
 	 */
 	public function fields(): array {
+		$oauth_only = array( 'auth_method' => array( 'oauth' ) );
+		$basic_only = array( 'auth_method' => array( 'basic' ) );
+
 		return array(
+			array(
+				'key'     => 'auth_method',
+				'label'   => __( 'Sign in with', 'vulnhub' ),
+				'type'    => 'select',
+				'default' => 'basic',
+				'options' => array(
+					'basic' => __( 'API token (email + token)', 'vulnhub' ),
+					'oauth' => __( 'OAuth — connect as yourself', 'vulnhub' ),
+				),
+				'help'    => __( 'OAuth acts as whoever clicks Allow on the Atlassian consent screen, and appears under that person’s Atlassian account → Connected apps. An API token acts as the account it belongs to. Either way, Jira only ever sees what that account is permitted to do.', 'vulnhub' ),
+			),
+			array(
+				'key'       => 'oauth_connection',
+				'type'      => 'note',
+				'show_when' => $oauth_only,
+				'help'      => $this->oauth_note(),
+			),
+			array(
+				'key'         => 'oauth_client_id',
+				'label'       => __( 'OAuth client ID', 'vulnhub' ),
+				'type'        => 'text',
+				'show_when'   => $oauth_only,
+				'placeholder' => 'aBcD1234…',
+				'help'        => __( 'From developer.atlassian.com → Console → your OAuth 2.0 integration → Settings. Add the Jira API and Jira Service Management API permissions to that app first.', 'vulnhub' ),
+			),
+			array(
+				'key'       => 'oauth_client_secret',
+				'label'     => __( 'OAuth client secret', 'vulnhub' ),
+				'type'      => 'text',
+				'secret'    => true,
+				'show_when' => $oauth_only,
+				'help'      => __( 'Stored encrypted. Leave blank when editing to keep the existing secret.', 'vulnhub' ),
+			),
+			array(
+				'key'         => 'oauth_redirect_uri',
+				'label'       => __( 'Callback URL', 'vulnhub' ),
+				'type'        => 'url',
+				'show_when'   => $oauth_only,
+				'placeholder' => VulnHub_Jira_OAuth::default_redirect_uri(),
+				'help'        => sprintf(
+					/* translators: %s: the default callback URL. */
+					__( 'Register exactly this in the Atlassian console under Authorization → OAuth 2.0 (3LO). Leave blank to use %s. Set it when the browser you connect from reaches this server by a different address — http://localhost:… is allowed; any other host must be https.', 'vulnhub' ),
+					VulnHub_Jira_OAuth::default_redirect_uri()
+				),
+			),
+			array(
+				'key'         => 'oauth_scopes',
+				'label'       => __( 'Scopes', 'vulnhub' ),
+				'type'        => 'text',
+				'show_when'   => $oauth_only,
+				'placeholder' => VulnHub_Jira_OAuth::DEFAULT_SCOPES,
+				'help'        => __( 'Leave blank for the defaults, which cover raising, reading, commenting and attaching on Jira and Jira Service Management. offline_access is always added: without it the connection ends an hour after you connect. Every scope must also be enabled on the app in the console.', 'vulnhub' ),
+			),
 			array(
 				'key'         => 'base_url',
 				'label'       => __( 'Jira site URL', 'vulnhub' ),
@@ -140,22 +196,24 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 				'required'    => true,
 				'default'     => 'https://yoursite.atlassian.net',
 				'placeholder' => 'https://yoursite.atlassian.net',
-				'help'        => __( 'Your Atlassian Cloud site, without a path. Jira Data Center is not supported — this connector speaks the Cloud REST API v3.', 'vulnhub' ),
+				'help'        => __( 'Your Atlassian Cloud site, without a path — the *.atlassian.net address, not a custom domain in front of it. Jira Data Center is not supported — this connector speaks the Cloud REST API v3. Under OAuth this picks which site the grant is used for when it reaches more than one.', 'vulnhub' ),
 			),
 			array(
 				'key'         => 'email',
 				'label'       => __( 'Account email', 'vulnhub' ),
 				'type'        => 'email',
 				'required'    => true,
+				'show_when'   => $basic_only,
 				'placeholder' => 'automation@yourcompany.com',
 				'help'        => __( 'The Atlassian account the API token belongs to. Basic auth sends email:token, so both halves must match the same account. Use a dedicated service account so the audit trail in Jira is honest.', 'vulnhub' ),
 			),
 			array(
-				'key'      => 'api_token',
-				'label'    => __( 'API token', 'vulnhub' ),
-				'type'     => 'text',
-				'secret'   => true,
-				'required' => true,
+				'key'       => 'api_token',
+				'label'     => __( 'API token', 'vulnhub' ),
+				'type'      => 'text',
+				'secret'    => true,
+				'required'  => true,
+				'show_when' => $basic_only,
 				'help'     => __( 'Created at id.atlassian.com → Security → API tokens. Stored encrypted. Leave blank when editing to keep the existing token.', 'vulnhub' ),
 			),
 			array(
@@ -166,6 +224,14 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 				'default'     => 'SEC',
 				'placeholder' => 'SEC',
 				'help'        => __( 'Used whenever the owning team has no Jira project key of its own. A wrong project key is the most common misconfiguration, so the connection test checks it exists.', 'vulnhub' ),
+			),
+			array(
+				'key'         => 'allowed_projects',
+				'label'       => __( 'Only write to projects', 'vulnhub' ),
+				'type'        => 'text',
+				'default'     => '',
+				'placeholder' => 'SEC, OPS',
+				'help'        => __( 'Comma-separated project keys. When set, VulnHub refuses to create, comment on, transition, edit or attach to anything outside them — whoever asks, including automation rules and team routing. Reading is not restricted. Leave blank for no restriction. Recommended under OAuth, whose scopes reach every project the person who connected can see.', 'vulnhub' ),
 			),
 			array(
 				'key'         => 'issue_type',
@@ -286,6 +352,89 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 			'per_vulnerability'      => __( 'One ticket per vulnerability (across assets)', 'vulnhub' ),
 			'per_asset_and_severity' => __( 'One ticket per asset and severity', 'vulnhub' ),
 		);
+	}
+
+	/**
+	 * Project keys writes are confined to; empty means unrestricted.
+	 *
+	 * @return string[]
+	 */
+	public function allowed_projects(): array {
+		$raw = (string) $this->get( 'allowed_projects', '' );
+
+		return array_values( array_unique( array_filter( array_map( static fn( string $k ): string => strtoupper( trim( $k ) ), preg_split( '/[\s,;]+/', $raw ) ?: array() ) ) ) );
+	}
+
+	/**
+	 * Configured means "can authenticate", which depends on the sign-in method.
+	 *
+	 * Core's check walks every field marked required, and the email and API
+	 * token are required for API-token sign-in. Under OAuth they are hidden and
+	 * empty by design, so the core check reported a working OAuth connection
+	 * as "Not configured -- required credentials are missing".
+	 */
+	public function is_configured(): bool {
+		if ( 'oauth' !== $this->auth_method() || $this->is_mock() ) {
+			return parent::is_configured();
+		}
+
+		return $this->oauth()->has_app() && $this->oauth()->is_connected() && '' !== $this->default_project();
+	}
+
+	public function auth_method(): string {
+		return 'oauth' === (string) $this->get( 'auth_method', 'basic' ) ? 'oauth' : 'basic';
+	}
+
+	private ?VulnHub_Jira_OAuth $oauth = null;
+
+	public function oauth(): VulnHub_Jira_OAuth {
+		if ( null === $this->oauth ) {
+			$this->oauth = new VulnHub_Jira_OAuth( $this );
+		}
+
+		return $this->oauth;
+	}
+
+	/**
+	 * The connection block on the settings screen: who is connected, and the
+	 * Connect / Disconnect control.
+	 *
+	 * Links rather than buttons because the note sits inside the settings form,
+	 * and a form cannot hold another. Both carry a nonce.
+	 */
+	private function oauth_note(): string {
+		if ( ! function_exists( 'vulnhub' ) || ! did_action( 'init' ) ) {
+			return '';
+		}
+
+		$oauth  = $this->oauth();
+		$status = $oauth->status();
+		$out    = '<strong>' . esc_html__( 'OAuth connection', 'vulnhub' ) . '</strong><br>';
+
+		if ( $status['connected'] ) {
+			$out .= esc_html(
+				sprintf(
+					/* translators: 1: person, 2: site, 3: date. */
+					__( 'Connected as %1$s to %2$s since %3$s.', 'vulnhub' ),
+					'' !== $status['account'] ? $status['account'] : __( 'an unknown account', 'vulnhub' ),
+					$status['site'],
+					vh_date( $status['connected_at'] )
+				)
+			);
+			$out .= ' <a class="button vh-btn vh-btn--ghost vh-btn--sm" href="' . esc_url( VulnHub_Jira_OAuth::disconnect_url() ) . '">' . esc_html__( 'Disconnect', 'vulnhub' ) . '</a>';
+		} elseif ( $oauth->has_app() ) {
+			$out .= esc_html__( 'Not connected. Save any changes first, then connect: you will be sent to Atlassian to click Allow, and brought back here.', 'vulnhub' );
+			$out .= ' <a class="button button-primary vh-btn vh-btn--primary vh-btn--sm" href="' . esc_url( VulnHub_Jira_OAuth::start_url() ) . '">' . esc_html__( 'Connect to Jira', 'vulnhub' ) . '</a>';
+		} else {
+			$out .= esc_html__( 'Not connected. Enter the client ID and secret from your Atlassian OAuth app below and save; a Connect button appears here.', 'vulnhub' );
+		}
+
+		if ( '' !== $status['last_message'] ) {
+			$out .= '<br><em class="' . ( 'error' === $status['last_type'] ? 'vh-bad' : 'vh-muted' ) . '">'
+				. esc_html( vh_date( $status['last_at'] ) . ' — ' . $status['last_message'] ) . '</em>';
+		}
+
+		return $out;
 	}
 
 	/**
@@ -483,6 +632,18 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 				$this->mock_site(),
 				array( $this, 'log' )
 			);
+
+			if ( 'oauth' === $this->auth_method() && ! $this->is_mock() ) {
+				$oauth = $this->oauth();
+
+				$this->client->use_oauth(
+					$oauth->cloud_id(),
+					static fn( bool $force ): string => $oauth->access_token( $force ),
+					$oauth->status()['site']
+				);
+			}
+
+			$this->client->restrict_projects( $this->allowed_projects() );
 		}
 
 		return $this->client;
@@ -529,8 +690,25 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 		if ( ! $client->has_credentials() ) {
 			return array(
 				'ok'      => false,
-				'message' => __( 'Set the Jira site URL, the account email and an API token first.', 'vulnhub' ),
-				'detail'  => array( 'mode' => 'live' ),
+				'message' => 'oauth' === $this->auth_method()
+					? __( 'Jira is set to OAuth but is not connected. Enter the app’s client ID and secret, save, and click Connect to Jira.', 'vulnhub' )
+					: __( 'Set the Jira site URL, the account email and an API token first.', 'vulnhub' ),
+				'detail'  => array( 'mode' => 'live', 'auth' => $this->auth_method() ),
+			);
+		}
+
+		$allowed = $this->allowed_projects();
+
+		if ( $allowed && '' !== $project && ! in_array( $project, $allowed, true ) ) {
+			return array(
+				'ok'      => false,
+				'message' => sprintf(
+					/* translators: 1: default project, 2: allowed projects. */
+					__( 'The default project %1$s is not in the allowed projects (%2$s), so every ticket would be refused. Change one or the other.', 'vulnhub' ),
+					$project,
+					implode( ', ', $allowed )
+				),
+				'detail'  => array( 'project_key' => $project, 'allowed' => $allowed ),
 			);
 		}
 
@@ -612,9 +790,15 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 				$account,
 				(string) ( $project_data['name'] ?? $project ),
 				$project
-			),
+			) . ( 'oauth' === $this->auth_method() ? ' ' . __( 'Signed in over OAuth.', 'vulnhub' ) : '' )
+				. ( $allowed
+					/* translators: %s: allowed project keys. */
+					? ' ' . sprintf( __( 'Writes are limited to %s.', 'vulnhub' ), implode( ', ', $allowed ) )
+					: '' ),
 			'detail'  => array(
 				'endpoint'     => 'GET /rest/api/3/myself + GET /rest/api/3/project/{key}',
+				'auth'         => $this->auth_method(),
+				'allowed'      => $allowed,
 				'account_id'   => $account,
 				'display_name' => $name,
 				'email'        => (string) ( $who['emailAddress'] ?? '' ),

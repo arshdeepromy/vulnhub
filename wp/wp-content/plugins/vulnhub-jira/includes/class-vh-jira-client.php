@@ -6,7 +6,10 @@
  * developer.atlassian.com and the machine-readable OpenAPI description
  * (swagger-v3.v3.json), both verified in September 2026:
  *
- *  - Authentication is HTTP Basic with an Atlassian account email and an API
+ *  - Authentication is either OAuth 2.0 (3LO) -- `Authorization: Bearer`,
+ *    sent to the Atlassian gateway `https://api.atlassian.com/ex/jira/<cloudId>`
+ *    rather than the site host (see VulnHub_Jira_OAuth) -- or HTTP Basic with
+ *    an Atlassian account email and an API
  *    token: `Authorization: Basic base64(email:api_token)`
  *    (developer.atlassian.com/cloud/jira/platform/basic-auth-for-rest-apis).
  *    The vendor's own example uses `echo -n … | base64` — the `-n` matters,
@@ -103,6 +106,33 @@ final class VulnHub_Jira_Client {
 	 */
 	private $log;
 
+	/** `basic` or `oauth`. */
+	private string $auth_mode = 'basic';
+
+	/** The Atlassian cloudId the OAuth grant resolved to. */
+	private string $cloud_id = '';
+
+	/**
+	 * Supplies a Bearer token; called with true to force a refresh.
+	 *
+	 * @var callable(bool):string|null
+	 */
+	private $token_source = null;
+
+	/**
+	 * Project keys writes are allowed to touch. Empty means unrestricted.
+	 *
+	 * @var string[]
+	 */
+	private array $allowed_projects = array();
+
+	/**
+	 * Service desk id => project key, learned while checking the allowlist.
+	 *
+	 * @var array<string,string>
+	 */
+	private array $desk_projects = array();
+
 	/**
 	 * @param string                $base_url Site URL.
 	 * @param string                $email    Account email.
@@ -127,6 +157,43 @@ final class VulnHub_Jira_Client {
 		$this->log      = $log ?? static function ( string $message ): void {
 			unset( $message );
 		};
+	}
+
+	/**
+	 * Switch to OAuth: Bearer tokens through the Atlassian gateway.
+	 *
+	 * @param string              $cloud_id Atlassian cloudId.
+	 * @param callable(bool):string $token  Token source; true forces a refresh.
+	 * @param string              $site     The site's own URL, for browse links
+	 *                                      when no site URL is configured.
+	 */
+	public function use_oauth( string $cloud_id, callable $token, string $site = '' ): void {
+		$this->auth_mode    = 'oauth';
+		$this->cloud_id     = trim( $cloud_id );
+		$this->token_source = $token;
+
+		if ( '' === $this->base_url || str_contains( $this->base_url, 'yoursite.atlassian.net' ) ) {
+			$this->base_url = self::normalise_base_url( $site );
+		}
+	}
+
+	public function auth_mode(): string {
+		return $this->auth_mode;
+	}
+
+	/**
+	 * Refuse writes outside these projects.
+	 *
+	 * Enforced here, in the one method every request goes through, so no
+	 * caller -- ticketer, reopener, automation, or anything added later -- can
+	 * act on a project it was not meant to. OAuth scopes cannot express this:
+	 * they are product-wide, so a token that can write one project can write
+	 * all of them.
+	 *
+	 * @param string[] $keys Project keys.
+	 */
+	public function restrict_projects( array $keys ): void {
+		$this->allowed_projects = array_values( array_unique( array_filter( array_map( static fn( $k ): string => strtoupper( trim( (string) $k ) ), $keys ) ) ) );
 	}
 
 	/**
@@ -172,6 +239,10 @@ final class VulnHub_Jira_Client {
 	 * Do we have everything needed to authenticate?
 	 */
 	public function has_credentials(): bool {
+		if ( 'oauth' === $this->auth_mode ) {
+			return '' !== $this->cloud_id && null !== $this->token_source;
+		}
+
 		return '' !== $this->base_url && '' !== $this->email && '' !== $this->token;
 	}
 
@@ -191,9 +262,11 @@ final class VulnHub_Jira_Client {
 	 *
 	 * @return array<string,string>
 	 */
-	private function headers(): array {
+	private function headers( string $bearer = '' ): array {
 		return array(
-			'Authorization' => 'Basic ' . base64_encode( $this->email . ':' . $this->token ),
+			'Authorization' => 'oauth' === $this->auth_mode
+				? 'Bearer ' . $bearer
+				: 'Basic ' . base64_encode( $this->email . ':' . $this->token ),
 			'Accept'        => 'application/json',
 			'Content-Type'  => 'application/json',
 			'User-Agent'    => \VulnHub\Core\Http::default_user_agent(),
@@ -212,7 +285,13 @@ final class VulnHub_Jira_Client {
 	 * @param array<string,string>     $extra  Additional request headers, e.g.
 	 *                                         `X-ExperimentalApi: opt-in`.
 	 */
-	private function call( string $method, string $path, array $query = array(), ?array $body = null, array $extra = array() ): \VulnHub\Core\Http_Response {
+	private function call( string $method, string $path, array $query = array(), ?array $body = null, array $extra = array(), ?string $raw = null ): \VulnHub\Core\Http_Response {
+		$refused = $this->refuse_outside_allowlist( $method, $path, $body );
+
+		if ( $refused ) {
+			return $refused;
+		}
+
 		if ( $this->mock ) {
 			$response = $this->mock->respond( $method, $path, $query, $body, $extra );
 
@@ -221,21 +300,51 @@ final class VulnHub_Jira_Client {
 			return $response;
 		}
 
-		$url = $this->base_url . $path;
+		$bearer = '';
+
+		if ( 'oauth' === $this->auth_mode ) {
+			$bearer = null !== $this->token_source ? (string) call_user_func( $this->token_source, false ) : '';
+
+			if ( '' === $bearer || '' === $this->cloud_id ) {
+				return new \VulnHub\Core\Http_Response( 401, array(), '', null, 'Jira is not connected: connect it again from the Jira integration settings.' );
+			}
+		}
+
+		// Under OAuth every call goes to the gateway, never the site host.
+		// The path is the same either way.
+		$root = 'oauth' === $this->auth_mode
+			? 'https://api.atlassian.com/ex/jira/' . rawurlencode( $this->cloud_id )
+			: $this->base_url;
+		$url  = $root . $path;
 
 		if ( $query ) {
 			$url = add_query_arg( array_map( 'strval', $query ), $url );
 		}
 
-		$response = $this->http->request(
-			$method,
-			$url,
-			array(
-				'headers' => array_merge( $this->headers(), $extra ),
-				'body'    => $body,
-				'timeout' => 45,
-			)
-		);
+		$send = function ( string $token ) use ( $method, $url, $extra, $body, $raw ): \VulnHub\Core\Http_Response {
+			return $this->http->request(
+				$method,
+				$url,
+				array(
+					'headers' => array_merge( $this->headers( $token ), $extra ),
+					'body'    => null !== $raw ? $raw : $body,
+					'timeout' => null !== $raw ? 120 : 45,
+				)
+			);
+		};
+
+		$response = $send( $bearer );
+
+		// An access token can be revoked or expire early. Refresh once and
+		// retry once; a second 401 is a real answer.
+		if ( 401 === $response->status && 'oauth' === $this->auth_mode && null !== $this->token_source ) {
+			$fresh = (string) call_user_func( $this->token_source, true );
+
+			if ( '' !== $fresh && $fresh !== $bearer ) {
+				$this->trace( sprintf( '%s %s -> HTTP 401; refreshed the OAuth token and retried', strtoupper( $method ), \VulnHub\Core\Http::scrub( $path ) ) );
+				$response = $send( $fresh );
+			}
+		}
 
 		if ( ! $response->ok() ) {
 			$this->trace(
@@ -631,6 +740,262 @@ final class VulnHub_Jira_Client {
 		);
 
 		return $this->call( 'POST', self::API . '/issue/' . rawurlencode( $key ) . '/remotelink', array(), $body );
+	}
+
+	/* =================================================================
+	 * Project allowlist
+	 * ============================================================== */
+
+	/**
+	 * A refusal response when a write would leave the allowed projects.
+	 *
+	 * Reads are never refused: listing desks and request types across the
+	 * site is what the routing screen is for. Anything that creates, edits,
+	 * comments, transitions or attaches is checked. A write whose project
+	 * cannot be worked out is refused too -- failing closed is the point.
+	 *
+	 * @param array<string,mixed>|null $body Request body.
+	 */
+	private function refuse_outside_allowlist( string $method, string $path, ?array $body ): ?\VulnHub\Core\Http_Response {
+		if ( ! $this->allowed_projects || 'GET' === strtoupper( $method ) ) {
+			return null;
+		}
+
+		$project = $this->project_for_write( $path, $body );
+
+		if ( null !== $project && in_array( $project, $this->allowed_projects, true ) ) {
+			return null;
+		}
+
+		$message = sprintf(
+			'Refusing to %s %s: project %s is outside the allowed set (%s).',
+			strtoupper( $method ),
+			$path,
+			null === $project ? '(could not be determined)' : $project,
+			implode( ', ', $this->allowed_projects )
+		);
+
+		$this->trace( $message );
+
+		return new \VulnHub\Core\Http_Response( 403, array(), '', array( 'errorMessages' => array( $message ) ), $message );
+	}
+
+	/**
+	 * The project key a write targets, or null when it cannot be determined.
+	 *
+	 * @param array<string,mixed>|null $body Request body.
+	 */
+	private function project_for_write( string $path, ?array $body ): ?string {
+		// POST /rest/api/3/issue: the project is in the fields.
+		if ( self::API . '/issue' === $path ) {
+			$ref = (array) ( $body['fields']['project'] ?? array() );
+
+			if ( ! empty( $ref['key'] ) ) {
+				return strtoupper( (string) $ref['key'] );
+			}
+
+			return ! empty( $ref['id'] ) ? $this->project_key_for_id( (string) $ref['id'] ) : null;
+		}
+
+		// POST /rest/servicedeskapi/request: the desk decides the project.
+		if ( self::SD_API . '/request' === $path ) {
+			return $this->desk_project( (string) ( $body['serviceDeskId'] ?? '' ) );
+		}
+
+		if ( preg_match( '#^' . preg_quote( self::SD_API, '#' ) . '/servicedesk/([^/]+)/#', $path, $m ) ) {
+			return $this->desk_project( rawurldecode( $m[1] ) );
+		}
+
+		// Anything on an existing issue or request: the key carries the project.
+		if ( preg_match( '#^(?:' . preg_quote( self::API, '#' ) . '/issue|' . preg_quote( self::SD_API, '#' ) . '/request)/([^/]+)#', $path, $m ) ) {
+			$ref = rawurldecode( $m[1] );
+
+			if ( preg_match( '/^([A-Za-z][A-Za-z0-9_]*)-\d+$/', $ref, $k ) ) {
+				return strtoupper( $k[1] );
+			}
+
+			// A numeric issue id: ask Jira which project it is in.
+			$issue = $this->get_issue( $ref, array( 'project' ) );
+
+			return $issue->ok() ? strtoupper( (string) ( $issue->data()['fields']['project']['key'] ?? '' ) ) ?: null : null;
+		}
+
+		return null;
+	}
+
+	private function desk_project( string $desk_id ): ?string {
+		if ( '' === $desk_id ) {
+			return null;
+		}
+
+		if ( ! isset( $this->desk_projects[ $desk_id ] ) ) {
+			$desk = $this->call( 'GET', self::SD_API . '/servicedesk/' . rawurlencode( $desk_id ) );
+
+			$this->desk_projects[ $desk_id ] = $desk->ok() ? strtoupper( (string) ( $desk->data()['projectKey'] ?? '' ) ) : '';
+		}
+
+		return '' !== $this->desk_projects[ $desk_id ] ? $this->desk_projects[ $desk_id ] : null;
+	}
+
+	private function project_key_for_id( string $id ): ?string {
+		$project = $this->call( 'GET', self::API . '/project/' . rawurlencode( $id ) );
+
+		return $project->ok() ? strtoupper( (string) ( $project->data()['key'] ?? '' ) ) ?: null : null;
+	}
+
+	/* =================================================================
+	 * Comments, requests and attachments
+	 * ============================================================== */
+
+	/**
+	 * GET /rest/api/3/issue/{issueIdOrKey}/comment — newest first.
+	 */
+	public function issue_comments( string $key, int $max = 50 ): \VulnHub\Core\Http_Response {
+		return $this->call(
+			'GET',
+			self::API . '/issue/' . rawurlencode( $key ) . '/comment',
+			array(
+				'maxResults' => max( 1, min( 100, $max ) ),
+				'orderBy'    => '-created',
+			)
+		);
+	}
+
+	/**
+	 * GET /rest/servicedeskapi/request/{issueIdOrKey} — the customer-facing
+	 * view of a request: its request type, current status and SLA.
+	 */
+	public function get_request( string $key ): \VulnHub\Core\Http_Response {
+		return $this->call( 'GET', self::SD_API . '/request/' . rawurlencode( $key ), array( 'expand' => 'status,requestType' ) );
+	}
+
+	/**
+	 * POST /rest/servicedeskapi/request — raise a JSM customer request.
+	 *
+	 * Unlike POST /rest/api/3/issue this keeps the portal, the request type
+	 * and its SLAs. `requestFieldValues` takes field ids as keys; summary and
+	 * description are plain text.
+	 *
+	 * @param array<string,mixed> $fields Request field values.
+	 */
+	public function create_request( string $desk_id, string $request_type_id, array $fields ): \VulnHub\Core\Http_Response {
+		return $this->call(
+			'POST',
+			self::SD_API . '/request',
+			array(),
+			array(
+				'serviceDeskId'      => $desk_id,
+				'requestTypeId'      => $request_type_id,
+				'requestFieldValues' => $fields,
+			)
+		);
+	}
+
+	/**
+	 * POST /rest/servicedeskapi/request/{issueIdOrKey}/comment.
+	 *
+	 * @param bool $public True for a reply the customer sees; false for an
+	 *                     internal note.
+	 */
+	public function request_comment( string $key, string $body, bool $public = true ): \VulnHub\Core\Http_Response {
+		return $this->call(
+			'POST',
+			self::SD_API . '/request/' . rawurlencode( $key ) . '/comment',
+			array(),
+			array(
+				'body'   => $body,
+				'public' => $public,
+			)
+		);
+	}
+
+	/**
+	 * POST /rest/api/3/issue/{issueIdOrKey}/attachments — multipart, field `file`.
+	 */
+	public function attach( string $key, string $filename, string $bytes, string $mime = 'application/octet-stream' ): \VulnHub\Core\Http_Response {
+		return $this->upload( self::API . '/issue/' . rawurlencode( $key ) . '/attachments', $filename, $bytes, $mime );
+	}
+
+	/**
+	 * Attach a file to a JSM request: upload it to the desk as a temporary
+	 * file, then attach that to the request. Two calls, because that is the
+	 * only way the JSM request API accepts files.
+	 *
+	 * @param bool $public Whether the customer can see the attachment.
+	 */
+	public function request_attach( string $desk_id, string $key, string $filename, string $bytes, string $mime = 'application/octet-stream', bool $public = true, string $comment = '' ): \VulnHub\Core\Http_Response {
+		$temp = $this->upload( self::SD_API . '/servicedesk/' . rawurlencode( $desk_id ) . '/attachTemporaryFile', $filename, $bytes, $mime );
+
+		if ( ! $temp->ok() ) {
+			return $temp;
+		}
+
+		$ids = array_values(
+			array_filter(
+				array_map(
+					static fn( $t ): string => is_array( $t ) ? (string) ( $t['temporaryAttachmentId'] ?? '' ) : '',
+					(array) ( $temp->data()['temporaryAttachments'] ?? array() )
+				)
+			)
+		);
+
+		if ( ! $ids ) {
+			return new \VulnHub\Core\Http_Response( 502, array(), '', null, 'JSM accepted the upload but returned no temporary attachment id.' );
+		}
+
+		$body = array(
+			'temporaryAttachmentIds' => $ids,
+			'public'                 => $public,
+		);
+
+		if ( '' !== trim( $comment ) ) {
+			$body['additionalComment'] = array( 'body' => $comment );
+		}
+
+		return $this->call( 'POST', self::SD_API . '/request/' . rawurlencode( $key ) . '/attachment', array(), $body );
+	}
+
+	/**
+	 * One multipart/form-data POST with a single `file` part.
+	 *
+	 * Core's Http JSON-encodes array bodies, so the body is assembled here
+	 * and passed as a string, which Http sends untouched. Jira requires
+	 * `X-Atlassian-Token: no-check` on uploads; headers() always sends it.
+	 */
+	private function upload( string $path, string $filename, string $bytes, string $mime ): \VulnHub\Core\Http_Response {
+		$filename = sanitize_file_name( $filename ) ?: 'attachment.bin';
+		$mime     = preg_match( '#^[\w.+-]+/[\w.+-]+$#', $mime ) ? $mime : 'application/octet-stream';
+
+		if ( $this->mock ) {
+			$refused = $this->refuse_outside_allowlist( 'POST', $path, null );
+
+			return $refused ?? $this->mock->respond(
+				'POST',
+				$path,
+				array(),
+				array(
+					'filename' => $filename,
+					'mimeType' => $mime,
+					'size'     => strlen( $bytes ),
+				)
+			);
+		}
+
+		$boundary = 'vulnhub-' . bin2hex( random_bytes( 12 ) );
+		$body     = '--' . $boundary . "\r\n"
+			. 'Content-Disposition: form-data; name="file"; filename="' . str_replace( '"', '', $filename ) . "\"\r\n"
+			. 'Content-Type: ' . $mime . "\r\n\r\n"
+			. $bytes . "\r\n"
+			. '--' . $boundary . "--\r\n";
+
+		return $this->call(
+			'POST',
+			$path,
+			array(),
+			null,
+			array( 'Content-Type' => 'multipart/form-data; boundary=' . $boundary ),
+			$body
+		);
 	}
 }
 
