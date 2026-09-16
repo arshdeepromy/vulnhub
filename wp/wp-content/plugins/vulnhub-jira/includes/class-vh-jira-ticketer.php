@@ -60,6 +60,7 @@ final class VulnHub_Jira_Ticketer {
 	 */
 	public function hooks(): void {
 		add_filter( 'vulnhub_create_ticket', array( $this, 'create_ticket' ), 10, 3 );
+		add_filter( 'vulnhub_preview_ticket', array( $this, 'preview_ticket' ), 10, 2 );
 		add_filter( 'vulnhub_refresh_ticket', array( $this, 'refresh_ticket' ), 10, 2 );
 	}
 
@@ -83,17 +84,15 @@ final class VulnHub_Jira_Ticketer {
 			return null;
 		}
 
-		$options = array( 'created_via' => 'manual' );
-
-		if ( $request instanceof WP_REST_Request ) {
-			$grouping = (string) $request->get_param( 'grouping' );
-
-			if ( '' !== $grouping ) {
-				$options['grouping'] = $grouping;
-			}
-
-			$options['created_via'] = 'api';
-		}
+		/*
+		 * A person asking for a ticket gets exactly one ticket, whatever they
+		 * selected. Grouping into several tickets is for automation, which
+		 * calls raise() directly with its own grouping.
+		 */
+		$options = array(
+			'created_via' => $request instanceof WP_REST_Request ? 'api' : 'manual',
+			'one_ticket'  => true,
+		);
 
 		return $this->raise( array_map( 'intval', $finding_ids ), $options );
 	}
@@ -153,6 +152,10 @@ final class VulnHub_Jira_Ticketer {
 					'message' => __( 'Select at least one finding.', 'vulnhub' ),
 				)
 			);
+		}
+
+		if ( ! empty( $options['one_ticket'] ) ) {
+			return $this->raise_one( $connector, $finding_ids, $options );
 		}
 
 		if ( count( $finding_ids ) > self::MAX_FINDINGS ) {
@@ -249,6 +252,233 @@ final class VulnHub_Jira_Ticketer {
 			'updated' => $updated,
 			'failed'  => $failed,
 		);
+	}
+
+	/* =================================================================
+	 * One ticket per click
+	 * ============================================================== */
+
+	/** Lock name shared by every manual raise: one at a time, site-wide. */
+	private const MANUAL_LOCK = 'manual-raise';
+
+	/**
+	 * What a manual raise of these findings would do, without doing it.
+	 *
+	 * Reads VulnHub's own tables and the cached routing directory only;
+	 * nothing is sent to Jira. The same selection rules as raise_one(), so the
+	 * confirm box and the result can never disagree.
+	 *
+	 * @param int[] $finding_ids Selected findings.
+	 * @return array{ok:bool,message:string,eligible:int,skipped:int,assets:int,project:string,on_tickets:string[]}
+	 */
+	public function preview( array $finding_ids ): array {
+		$connector = vulnhub_jira_connector();
+		$plan      = $this->plan( $finding_ids );
+
+		$base = array(
+			'eligible'   => count( $plan['rows'] ),
+			'skipped'    => $plan['skipped'],
+			'assets'     => count( $this->distinct( $plan['rows'], 'asset_id' ) ),
+			'project'    => '',
+			'on_tickets' => $plan['on_tickets'],
+		);
+
+		if ( ! $connector || ! $connector->is_enabled() ) {
+			return array_merge( $base, array( 'ok' => false, 'message' => __( 'Jira is not enabled.', 'vulnhub' ) ) );
+		}
+
+		if ( '' !== $plan['error'] ) {
+			return array_merge( $base, array( 'ok' => false, 'message' => $plan['error'] ) );
+		}
+
+		$routing         = $this->routing( $connector, $this->dominant_team( $plan['rows'] ) );
+		$base['project'] = $routing['project'];
+
+		$message = sprintf(
+			/* translators: 1: project key, 2: number of findings, 3: number of assets. */
+			_n(
+				'Raise 1 Jira ticket in %1$s covering %2$d finding on %3$d asset?',
+				'Raise 1 Jira ticket in %1$s covering %2$d findings on %3$d asset(s)?',
+				$base['eligible'],
+				'vulnhub'
+			),
+			'' !== $routing['project'] ? $routing['project'] : __( '(no project set)', 'vulnhub' ),
+			$base['eligible'],
+			$base['assets']
+		);
+
+		if ( $plan['skipped'] > 0 ) {
+			$message .= ' ' . sprintf(
+				/* translators: 1: number of findings, 2: ticket keys. */
+				_n(
+					'%1$d finding is already on an open ticket (%2$s) and will be left out.',
+					'%1$d findings are already on open tickets (%2$s) and will be left out.',
+					$plan['skipped'],
+					'vulnhub'
+				),
+				$plan['skipped'],
+				implode( ', ', $plan['on_tickets'] )
+			);
+		}
+
+		return array_merge( $base, array( 'ok' => true, 'message' => $message ) );
+	}
+
+	/**
+	 * Answer `vulnhub_preview_ticket`.
+	 *
+	 * @param array<string,mixed>|null $result      Result from an earlier ITSM plugin.
+	 * @param int[]                    $finding_ids Selected findings.
+	 * @return array<string,mixed>|null
+	 */
+	public function preview_ticket( ?array $result, array $finding_ids ): ?array {
+		return null !== $result ? $result : $this->preview( $finding_ids );
+	}
+
+	/**
+	 * The findings a manual raise will cover, and the ones it leaves out.
+	 *
+	 * Left out: findings already on a ticket that is still open, so a finding
+	 * is never on two open tickets. A finding whose ticket is closed can be
+	 * raised again -- that is how a recurrence gets a fresh ticket.
+	 *
+	 * @param int[] $finding_ids Selected findings.
+	 * @return array{rows:array<int,array<string,mixed>>,skipped:int,on_tickets:string[],error:string}
+	 */
+	private function plan( array $finding_ids ): array {
+		global $wpdb;
+
+		$out         = array( 'rows' => array(), 'skipped' => 0, 'on_tickets' => array(), 'error' => '' );
+		$finding_ids = array_values( array_unique( array_filter( array_map( 'intval', $finding_ids ) ) ) );
+
+		if ( ! $finding_ids ) {
+			$out['error'] = __( 'Select at least one finding.', 'vulnhub' );
+			return $out;
+		}
+
+		// Refused, not trimmed: quietly ticketing the first 500 of 800 would
+		// leave 300 findings looking handled when nobody was asked about them.
+		if ( count( $finding_ids ) > self::MAX_FINDINGS ) {
+			$out['error'] = sprintf(
+				/* translators: 1: selected count, 2: the limit. */
+				__( '%1$d findings are selected; one ticket can cover at most %2$d. Narrow the selection.', 'vulnhub' ),
+				count( $finding_ids ),
+				self::MAX_FINDINGS
+			);
+			return $out;
+		}
+
+		$rows = $this->load_findings( $finding_ids );
+
+		if ( ! $rows ) {
+			$out['error'] = __( 'None of those findings exist any more.', 'vulnhub' );
+			return $out;
+		}
+
+		$ticket_ids = array_values( array_unique( array_filter( array_map( static fn( array $r ): int => (int) $r['ticket_id'], $rows ) ) ) );
+		$open       = array();
+
+		if ( $ticket_ids ) {
+			$found = (array) $wpdb->get_results(
+				'SELECT id, external_key FROM ' . vh_table( 'tickets' ) . " WHERE status_category <> 'done' AND id IN (" . implode( ',', $ticket_ids ) . ')', // phpcs:ignore WordPress.DB.PreparedSQL
+				ARRAY_A
+			);
+
+			foreach ( $found as $t ) {
+				$open[ (int) $t['id'] ] = (string) $t['external_key'];
+			}
+		}
+
+		foreach ( $rows as $row ) {
+			$tid = (int) $row['ticket_id'];
+
+			if ( $tid && isset( $open[ $tid ] ) ) {
+				++$out['skipped'];
+				$out['on_tickets'][ $open[ $tid ] ] = $open[ $tid ];
+				continue;
+			}
+
+			$out['rows'][] = $row;
+		}
+
+		$out['on_tickets'] = array_values( $out['on_tickets'] );
+
+		if ( ! $out['rows'] ) {
+			$out['error'] = sprintf(
+				/* translators: %s: ticket keys. */
+				__( 'Nothing to raise: every selected finding is already on an open ticket (%s).', 'vulnhub' ),
+				implode( ', ', $out['on_tickets'] )
+			);
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Raise exactly one ticket covering a manual selection.
+	 *
+	 * Holds one lock for every manual raise, not one per group: two different
+	 * selections can share findings, and a per-group lock would let both
+	 * create a ticket for the same finding. The selection is re-planned after
+	 * the lock is taken, so a raise that finished a moment earlier is seen.
+	 *
+	 * @param int[]               $finding_ids Selected findings.
+	 * @param array<string,mixed> $options     created_via, created_by.
+	 * @return array<string,mixed>
+	 */
+	private function raise_one( VulnHub_Jira_Connector $connector, array $finding_ids, array $options ): array {
+		$fail = static fn( string $message ): array => array(
+			'ok'      => false,
+			'message' => $message,
+			'tickets' => array(),
+			'created' => 0,
+			'updated' => 0,
+			'failed'  => 1,
+		);
+
+		if ( ! $this->lock_group( self::MANUAL_LOCK ) ) {
+			return $fail( __( 'Another ticket is being raised right now. Try again in a moment.', 'vulnhub' ) );
+		}
+
+		try {
+			$plan = $this->plan( $finding_ids );
+
+			if ( '' !== $plan['error'] ) {
+				return $fail( $plan['error'] );
+			}
+
+			$ids     = array_map( static fn( array $r ): int => (int) $r['id'], $plan['rows'] );
+			sort( $ids );
+			$outcome = $this->create_group_ticket( $connector, 'selection:' . md5( implode( ',', $ids ) ), $plan['rows'], 'per_selection', $options );
+
+			if ( empty( $outcome['ok'] ) ) {
+				return $fail( (string) $outcome['message'] );
+			}
+
+			$message = (string) $outcome['message'];
+
+			if ( $plan['skipped'] > 0 ) {
+				$message .= ' ' . sprintf(
+					/* translators: 1: number of findings, 2: ticket keys. */
+					_n( '%1$d finding already on an open ticket (%2$s) was left out.', '%1$d findings already on open tickets (%2$s) were left out.', $plan['skipped'], 'vulnhub' ),
+					$plan['skipped'],
+					implode( ', ', $plan['on_tickets'] )
+				);
+			}
+
+			return array(
+				'ok'      => true,
+				'message' => $message,
+				'ticket'  => $outcome['ticket'],
+				'tickets' => array( $outcome['ticket'] ),
+				'created' => 1,
+				'updated' => 0,
+				'failed'  => 0,
+				'skipped' => $plan['skipped'],
+			);
+		} finally {
+			$this->unlock_group( self::MANUAL_LOCK );
+		}
 	}
 
 	/* =================================================================
@@ -843,6 +1073,26 @@ final class VulnHub_Jira_Ticketer {
 				vh_trim( (string) $first['vuln_title'], 150 ),
 				count( $this->distinct( $rows, 'asset_id' ) )
 			),
+			'per_selection'     => 1 === $count
+				? sprintf(
+					/* translators: 1: vulnerability title, 2: hostname. */
+					__( '%1$s on %2$s', 'vulnhub' ),
+					vh_trim( (string) $first['vuln_title'], 150 ),
+					$hostname
+				)
+				: ( 1 === count( $this->distinct( $rows, 'asset_id' ) )
+					? sprintf(
+						/* translators: 1: number of vulnerabilities, 2: hostname. */
+						__( '%1$d vulnerabilities to remediate on %2$s', 'vulnhub' ),
+						$count,
+						$hostname
+					)
+					: sprintf(
+						/* translators: 1: number of vulnerabilities, 2: number of assets. */
+						__( '%1$d vulnerabilities to remediate across %2$d assets', 'vulnhub' ),
+						$count,
+						count( $this->distinct( $rows, 'asset_id' ) )
+					) ),
 			'per_asset_and_severity' => 1 === $count
 				? sprintf(
 					/* translators: 1: vulnerability title, 2: hostname. */
@@ -921,7 +1171,11 @@ final class VulnHub_Jira_Ticketer {
 
 		$doc->paragraph(
 			array(
-				VulnHub_Jira_Adf::strong( __( 'Raised automatically by VulnHub.', 'vulnhub' ) ),
+				VulnHub_Jira_Adf::strong(
+					'automation' === (string) ( $options['created_via'] ?? '' )
+						? __( 'Raised automatically by VulnHub.', 'vulnhub' )
+						: __( 'Raised from VulnHub.', 'vulnhub' )
+				),
 				VulnHub_Jira_Adf::text( ' ' ),
 				VulnHub_Jira_Adf::text(
 					sprintf(
@@ -931,7 +1185,9 @@ final class VulnHub_Jira_Ticketer {
 						strtolower( vh_severity_label( $severity ) ),
 						count( $assets ),
 						count( $vulns ),
-						strtolower( (string) ( VulnHub_Jira_Connector::grouping_options()[ $grouping ] ?? $grouping ) )
+						'per_selection' === $grouping
+							? __( 'as one ticket for the selection', 'vulnhub' )
+							: strtolower( (string) ( VulnHub_Jira_Connector::grouping_options()[ $grouping ] ?? $grouping ) )
 					)
 				),
 			)

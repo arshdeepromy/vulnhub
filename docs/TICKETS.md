@@ -13,6 +13,39 @@ Two kinds of ticket share `vulnhub_tickets`:
 The kinds come from `Tickets::kinds()` (filter `vulnhub_ticket_kinds`). Each one
 names the test that decides whether an asset's ask has been met.
 
+## Raising a vulnerability ticket: one ticket per click
+
+A person pressing **Ticket** or **Raise ticket for selected** gets **exactly one
+Jira ticket**, whatever they selected. Grouping into several tickets (per asset,
+per vulnerability, per asset and severity) is only for automation, which calls
+`VulnHub_Jira_Ticketer::raise()` directly with its own grouping. The manual
+route (`vulnhub_create_ticket`, REST `POST /vulnhub/v1/tickets`) always passes
+`one_ticket`.
+
+1. **Preview.** `POST /vulnhub/v1/tickets/preview` (filter
+   `vulnhub_preview_ticket`) reads only VulnHub's tables and the cached routing
+   directory. Nothing is sent to Jira. It returns the sentence the browser
+   confirms with, for example: *Raise 1 Jira ticket in OPS covering 26 findings
+   on 9 assets? 4 findings are already on open tickets (OPS-12) and will be
+   left out.* Cancel sends nothing.
+2. **Selection rules** (`plan()`, shared by preview and raise, so the two agree):
+   - **Findings already on an open ticket are left out,** so a finding is never
+     on two open tickets.
+   - **A finding whose ticket is closed can be raised again.** That is how a
+     recurrence gets a fresh ticket.
+   - **If every selected finding is already on an open ticket,** nothing is
+     created and the message names those tickets.
+   - **More than 500 findings is refused, not trimmed.**
+3. **One manual raise at a time, site-wide.** `raise_one()` holds a single lock
+   for all manual raises. A per-group lock is not enough here, because two
+   different selections can share findings. A raise arriving while another is
+   creating is refused with *Another ticket is being raised right now*. The
+   selection is re-planned once the lock is held.
+4. The ticket is created once (see `docs/JIRA-OAUTH.md`, *Adds are sent once*).
+   Its summary names the scope, for example *[HIGH] 26 vulnerabilities to
+   remediate across 9 assets*, and its description begins *Raised from VulnHub.*
+   (*Raised automatically* is reserved for automation).
+
 ## Raising a scope ticket
 
 **Raise Jira ticket** sits between the filters and the table on Assets & owners

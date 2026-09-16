@@ -141,6 +141,16 @@ final class Rest {
 
 		register_rest_route(
 			self::NS,
+			'/tickets/preview',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'preview_ticket' ),
+				'permission_callback' => array( $this, 'can_raise' ),
+			)
+		);
+
+		register_rest_route(
+			self::NS,
 			'/tickets/(?P<id>\d+)/refresh',
 			array(
 				'methods'             => 'POST',
@@ -438,6 +448,28 @@ final class Rest {
 		}
 		if ( empty( $result['ok'] ) ) {
 			return new WP_Error( 'vulnhub_ticket_failed', (string) ( $result['message'] ?? __( 'Ticket creation failed.', 'vulnhub' ) ), array( 'status' => 502 ) );
+		}
+
+		return new WP_REST_Response( $result );
+	}
+
+	/**
+	 * What raising a ticket for these findings would do, without doing it.
+	 */
+	public function preview_ticket( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$finding_ids = array_filter( array_map( 'intval', (array) $request->get_param( 'finding_ids' ) ) );
+
+		/**
+		 * Filters a ticket preview: how many tickets and findings a raise
+		 * would produce, and a sentence to confirm with. Nothing is created.
+		 *
+		 * @param array<string,mixed>|null $result      Result, null when unhandled.
+		 * @param int[]                    $finding_ids Selected findings.
+		 */
+		$result = apply_filters( 'vulnhub_preview_ticket', null, $finding_ids );
+
+		if ( null === $result ) {
+			return new WP_Error( 'vulnhub_no_itsm', __( 'No ticketing integration is active. Enable and configure the Jira connector first.', 'vulnhub' ), array( 'status' => 409 ) );
 		}
 
 		return new WP_REST_Response( $result );

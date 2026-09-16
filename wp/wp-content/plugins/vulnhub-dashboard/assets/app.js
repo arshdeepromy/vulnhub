@@ -402,12 +402,41 @@
 		button.disabled = true;
 		button.textContent = cfg.i18n.raising;
 
+		function restore() {
+			button.disabled = false;
+			button.textContent = original;
+		}
+
+		/*
+		 * Ask first. The preview says how many findings the single ticket
+		 * will cover and which are left out because they are already on an
+		 * open ticket; nothing reaches Jira until OK is pressed.
+		 */
 		wp.apiFetch( {
-			path: '/vulnhub/v1/tickets',
+			path: '/vulnhub/v1/tickets/preview',
 			method: 'POST',
 			data: { finding_ids: ids }
 		} )
+			.then( function ( preview ) {
+				if ( ! preview || ! preview.ok ) {
+					toast( ( preview && preview.message ) || cfg.i18n.error, 'warn' );
+					restore();
+					return null;
+				}
+				if ( ! window.confirm( preview.message ) ) {
+					restore();
+					return null;
+				}
+				return wp.apiFetch( {
+					path: '/vulnhub/v1/tickets',
+					method: 'POST',
+					data: { finding_ids: ids }
+				} );
+			} )
 			.then( function ( result ) {
+				if ( null === result ) {
+					return;
+				}
 				toast( result.message || 'Ticket created.', 'good' );
 				window.setTimeout( function () {
 					window.location.reload();
