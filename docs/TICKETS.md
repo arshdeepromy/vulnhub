@@ -13,38 +13,61 @@ Two kinds of ticket share `vulnhub_tickets`:
 The kinds come from `Tickets::kinds()` (filter `vulnhub_ticket_kinds`). Each one
 names the test that decides whether an asset's ask has been met.
 
-## Raising a vulnerability ticket: one ticket per click
+## Raising a vulnerability ticket: review, then send
 
 A person pressing **Ticket** or **Raise ticket for selected** gets **exactly one
-Jira ticket**, whatever they selected. Grouping into several tickets (per asset,
-per vulnerability, per asset and severity) is only for automation, which calls
-`VulnHub_Jira_Ticketer::raise()` directly with its own grouping. The manual
-route (`vulnhub_create_ticket`, REST `POST /vulnhub/v1/tickets`) always passes
-`one_ticket`.
+Jira ticket**, and only after reviewing everything that will be sent. Grouping
+into several tickets (per asset, per vulnerability, per asset and severity) is
+only for automation, which calls `VulnHub_Jira_Ticketer::raise()` directly.
 
-1. **Preview.** `POST /vulnhub/v1/tickets/preview` (filter
-   `vulnhub_preview_ticket`) reads only VulnHub's tables and the cached routing
-   directory. Nothing is sent to Jira. It returns the sentence the browser
-   confirms with, for example: *Raise 1 Jira ticket in OPS covering 26 findings
-   on 9 assets? 4 findings are already on open tickets (OPS-12) and will be
-   left out.* Cancel sends nothing.
-2. **Selection rules** (`plan()`, shared by preview and raise, so the two agree):
-   - **Findings already on an open ticket are left out,** so a finding is never
-     on two open tickets.
-   - **A finding whose ticket is closed can be raised again.** That is how a
-     recurrence gets a fresh ticket.
-   - **If every selected finding is already on an open ticket,** nothing is
-     created and the message names those tickets.
-   - **More than 500 findings is refused, not trimmed.**
-3. **One manual raise at a time, site-wide.** `raise_one()` holds a single lock
-   for all manual raises. A per-group lock is not enough here, because two
-   different selections can share findings. A raise arriving while another is
-   creating is refused with *Another ticket is being raised right now*. The
-   selection is re-planned once the lock is held.
-4. The ticket is created once (see `docs/JIRA-OAUTH.md`, *Adds are sent once*).
-   Its summary names the scope, for example *[HIGH] 26 vulnerabilities to
-   remediate across 9 assets*, and its description begins *Raised from VulnHub.*
-   (*Raised automatically* is reserved for automation).
+1. **Draft.** `POST /vulnhub/v1/tickets/draft` (filter `vulnhub_draft_ticket`)
+   builds the issue once, with nothing sent to Jira:
+   - **Selection.** Either `finding_ids`, or `all` plus the findings screen's
+     `filters` when "All N matching findings" is selected. Filters are resolved
+     on the server through `VulnHub_Dash_Export::findings_scope()`, the same
+     query Export selected uses, so N means the same N. More than 500 is
+     refused, not trimmed, and a short read is refused too.
+   - **Selection rules** (`plan()`): findings already on an open ticket are left
+     out and named. A finding whose ticket is closed can be raised again. If
+     every finding is already ticketed, nothing is drafted.
+   - **The issue.** `build_issue()` produces the exact `fields`: project, issue
+     type, summary, priority, due date, labels, assignee, team and the ADF
+     description. When a CSV is attached, the description names the first 30
+     assets and points to the file.
+   - **The attachment.** `VulnHub_Dash_Export::findings_csv()` builds the
+     findings CSV in memory, with the same cells, escaping and BOM as the
+     download. Columns start from `ticket_columns()` and can be changed in the
+     review, which builds a fresh draft. A draft whose row count differs from
+     its finding count carries a warning.
+   - **Warnings** are shown for a project outside the allowlist and for a
+     description near Jira's size limit.
+   - **Storage.** The draft is stored for 30 minutes under a token
+     (`vh_jira_draft_<hmac>`), tied to the user who built it.
+2. **Review.** The dialog shows, from the draft itself:
+   - the scope: tickets, findings and assets, plus what is left out
+   - every field
+   - the description rendered from the ADF that will be sent
+     (`VulnHub_Jira_Adf::to_html()`)
+   - the file: name, rows, columns and size, the first 8 rows, and a download
+     of the exact file (`admin-post.php?action=vulnhub_ticket_draft_csv`)
+   - what else is sent: the remote link back to VulnHub
+   - the raw `fields` JSON
+
+   Cancel sends nothing.
+3. **Send.** `POST /vulnhub/v1/tickets` with `draft` (a raise without a draft
+   token is refused). `send_draft()`:
+   - Holds the site-wide manual-raise lock.
+   - **Deletes the draft before sending,** so a second press finds nothing.
+   - Re-plans the findings and **refuses if the selection changed** since the
+     review.
+   - Sends the stored fields with `exact` set, so a rejected field is reported
+     rather than silently dropped and resent.
+   - Then attaches the stored CSV (`POST /issue/{key}/attachments`) and adds the
+     remote link.
+
+   Each add is attempted once (see `docs/JIRA-OAUTH.md`). If the issue is
+   created but the upload fails, the result says so and asks for the file to be
+   attached by hand.
 
 ## Raising a scope ticket
 

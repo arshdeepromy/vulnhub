@@ -141,10 +141,10 @@ final class Rest {
 
 		register_rest_route(
 			self::NS,
-			'/tickets/preview',
+			'/tickets/draft',
 			array(
 				'methods'             => 'POST',
-				'callback'            => array( $this, 'preview_ticket' ),
+				'callback'            => array( $this, 'draft_ticket' ),
 				'permission_callback' => array( $this, 'can_raise' ),
 			)
 		);
@@ -423,7 +423,9 @@ final class Rest {
 	 */
 	public function create_ticket( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$finding_ids = array_filter( array_map( 'intval', (array) $request->get_param( 'finding_ids' ) ) );
-		if ( ! $finding_ids ) {
+
+		// A reviewed draft carries its own findings; anything else must name some.
+		if ( ! $finding_ids && '' === (string) $request->get_param( 'draft' ) ) {
 			return new WP_Error( 'vulnhub_no_findings', __( 'Select at least one finding.', 'vulnhub' ), array( 'status' => 400 ) );
 		}
 
@@ -454,19 +456,25 @@ final class Rest {
 	}
 
 	/**
-	 * What raising a ticket for these findings would do, without doing it.
+	 * Build a ticket for review: everything that would be sent, nothing sent.
 	 */
-	public function preview_ticket( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$finding_ids = array_filter( array_map( 'intval', (array) $request->get_param( 'finding_ids' ) ) );
+	public function draft_ticket( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$params = array(
+			'finding_ids' => array_filter( array_map( 'intval', (array) $request->get_param( 'finding_ids' ) ) ),
+			'all'         => (bool) $request->get_param( 'all' ),
+			'filters'     => (array) $request->get_param( 'filters' ),
+			'cols'        => array_map( 'sanitize_key', (array) $request->get_param( 'cols' ) ),
+		);
 
 		/**
-		 * Filters a ticket preview: how many tickets and findings a raise
-		 * would produce, and a sentence to confirm with. Nothing is created.
+		 * Filters a ticket draft: the exact fields, description and attachment
+		 * a raise would send, kept under a token that sending must name.
+		 * Nothing is created.
 		 *
-		 * @param array<string,mixed>|null $result      Result, null when unhandled.
-		 * @param int[]                    $finding_ids Selected findings.
+		 * @param array<string,mixed>|null $result Result, null when unhandled.
+		 * @param array<string,mixed>      $params finding_ids | all + filters; cols.
 		 */
-		$result = apply_filters( 'vulnhub_preview_ticket', null, $finding_ids );
+		$result = apply_filters( 'vulnhub_draft_ticket', null, $params );
 
 		if ( null === $result ) {
 			return new WP_Error( 'vulnhub_no_itsm', __( 'No ticketing integration is active. Enable and configure the Jira connector first.', 'vulnhub' ), array( 'status' => 409 ) );

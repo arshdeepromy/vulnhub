@@ -377,6 +377,215 @@
 		}, 5000 );
 	}
 
+	/* ---------------------------------------------------------------
+	 * Raise ticket: review everything before it is sent.
+	 *
+	 * The server builds the exact issue -- fields, description, the CSV that
+	 * will be attached -- and keeps it under a token. This dialog shows that
+	 * draft and nothing else; Send transmits the draft by its token, so what
+	 * was reviewed is what travels. Changing the attachment's columns builds
+	 * a fresh draft.
+	 * ------------------------------------------------------------- */
+	var review = null;
+
+	function el( tag, cls, text ) {
+		var node = document.createElement( tag );
+		if ( cls ) { node.className = cls; }
+		if ( null != text ) { node.textContent = String( text ); }
+		return node;
+	}
+
+	function reviewDialog() {
+		if ( review ) { return review; }
+
+		// Not `vh-modal`: that class also styles the drill-down overlays, which
+		// centre their contents and clipped this dialog's sections.
+		var d = el( 'dialog', 'vh-review' );
+		d.setAttribute( 'aria-labelledby', 'vh-review-title' );
+		d.innerHTML =
+			'<form method="dialog" class="vh-modal__x"><button aria-label="Close">&times;</button></form>' +
+			'<h2 id="vh-review-title">Review before sending to Jira</h2>' +
+			'<p class="vh-review__lede">Nothing has been sent. This is exactly what will travel to Jira when you press Send.</p>' +
+			'<div class="vh-review__body" data-vh-review-body></div>' +
+			'<div class="vh-review__foot">' +
+				'<span class="vh-review__status" data-vh-review-status role="status"></span>' +
+				'<button type="button" class="vh-btn vh-btn--ghost" data-vh-review-cancel>Cancel</button>' +
+				'<button type="button" class="vh-btn vh-btn--primary" data-vh-review-send disabled>Send to Jira</button>' +
+			'</div>';
+		document.body.appendChild( d );
+
+		d.querySelector( '[data-vh-review-cancel]' ).addEventListener( 'click', function () { d.close(); } );
+		review = d;
+		return d;
+	}
+
+	function section( title ) {
+		var s = el( 'section', 'vh-review__sec' );
+		s.appendChild( el( 'h3', null, title ) );
+		return s;
+	}
+
+	function renderDraft( d, draft, request ) {
+		var body = d.querySelector( '[data-vh-review-body]' );
+		var send = d.querySelector( '[data-vh-review-send]' );
+		var status = d.querySelector( '[data-vh-review-status]' );
+		body.innerHTML = '';
+		status.textContent = '';
+
+		if ( ! draft || ! draft.ok ) {
+			var bad = el( 'div', 'vh-notice vh-notice--warn', ( draft && draft.message ) || cfg.i18n.error );
+			body.appendChild( bad );
+			send.disabled = true;
+			return;
+		}
+
+		( draft.warnings || [] ).forEach( function ( w ) {
+			body.appendChild( el( 'div', 'vh-notice vh-notice--warn', w ) );
+		} );
+
+		// Scope.
+		var sc = draft.scope || {};
+		var scope = section( 'What this ticket covers' );
+		scope.appendChild( el( 'p', 'vh-review__big', '1 ticket · ' + sc.eligible + ' finding' + ( 1 === sc.eligible ? '' : 's' ) + ' · ' + sc.assets + ' asset' + ( 1 === sc.assets ? '' : 's' ) ) );
+		if ( sc.skipped ) {
+			scope.appendChild( el( 'p', 'vh-sub', sc.skipped + ' selected finding' + ( 1 === sc.skipped ? ' is' : 's are' ) + ' already on an open ticket (' + ( sc.on_tickets || [] ).join( ', ' ) + ') and will be left out.' ) );
+		}
+		body.appendChild( scope );
+
+		// Fields.
+		var fs = section( 'Fields sent to Jira' );
+		var dl = el( 'dl', 'vh-review__fields' );
+		( draft.fields || [] ).forEach( function ( pair ) {
+			dl.appendChild( el( 'dt', null, pair[0] ) );
+			dl.appendChild( el( 'dd', null, pair[1] ) );
+		} );
+		fs.appendChild( dl );
+		body.appendChild( fs );
+
+		// Description (server-rendered and escaped from the exact ADF sent).
+		var ds = section( 'Description' );
+		var desc = el( 'div', 'vh-review__desc' );
+		desc.innerHTML = draft.description.html;
+		ds.appendChild( desc );
+		body.appendChild( ds );
+
+		// Attachment.
+		var as = section( 'Attachment' );
+		if ( draft.attachment ) {
+			var a = draft.attachment;
+			var meta = el( 'p', 'vh-review__att' );
+			meta.appendChild( el( 'strong', null, a.name ) );
+			meta.appendChild( document.createTextNode( ' · ' + a.rows + ' rows · ' + a.columns.length + ' columns · ' + a.size + ' · ' ) );
+			var link = el( 'a', null, 'Download this exact file' );
+			link.href = a.download;
+			meta.appendChild( link );
+			as.appendChild( meta );
+
+			if ( draft.columns && draft.columns.length ) {
+				var picker = el( 'details', 'vh-review__cols' );
+				picker.appendChild( el( 'summary', null, 'Choose the columns in the file' ) );
+				var grid = el( 'div', 'vh-export__cols' );
+				var groups = {};
+				draft.columns.forEach( function ( c ) {
+					if ( ! groups[ c.group ] ) {
+						groups[ c.group ] = el( 'fieldset', 'vh-export__group' );
+						groups[ c.group ].appendChild( el( 'legend', null, c.group ) );
+						grid.appendChild( groups[ c.group ] );
+					}
+					var lab = el( 'label' );
+					var box = el( 'input' );
+					box.type = 'checkbox';
+					box.value = c.key;
+					box.checked = !! c.checked;
+					lab.appendChild( box );
+					lab.appendChild( el( 'span', null, c.label ) );
+					groups[ c.group ].appendChild( lab );
+				} );
+				picker.appendChild( grid );
+				var redo = el( 'button', 'vh-btn vh-btn--sm', 'Rebuild the file with these columns' );
+				redo.type = 'button';
+				redo.addEventListener( 'click', function () {
+					var cols = [];
+					grid.querySelectorAll( 'input:checked' ).forEach( function ( b ) { cols.push( b.value ); } );
+					request.cols = cols;
+					loadDraft( d, request, true );
+				} );
+				picker.appendChild( redo );
+				as.appendChild( picker );
+			}
+
+			var wrap = el( 'div', 'vh-review__tablewrap' );
+			var table = el( 'table', 'vh-table vh-review__table' );
+			var thead = el( 'thead' );
+			var hr = el( 'tr' );
+			( a.header || [] ).forEach( function ( h ) { hr.appendChild( el( 'th', null, h ) ); } );
+			thead.appendChild( hr );
+			table.appendChild( thead );
+			var tb = el( 'tbody' );
+			( a.preview || [] ).forEach( function ( row ) {
+				var tr = el( 'tr' );
+				row.forEach( function ( cell ) { tr.appendChild( el( 'td', null, cell ) ); } );
+				tb.appendChild( tr );
+			} );
+			table.appendChild( tb );
+			wrap.appendChild( table );
+			as.appendChild( wrap );
+			if ( a.rows > ( a.preview || [] ).length ) {
+				as.appendChild( el( 'p', 'vh-sub', 'Showing the first ' + ( a.preview || [] ).length + ' of ' + a.rows + ' rows. Download the file to see every row.' ) );
+			}
+		} else {
+			as.appendChild( el( 'p', 'vh-sub', 'No file will be attached.' ) );
+		}
+		body.appendChild( as );
+
+		// Also sent, and the raw payload.
+		var also = section( 'Also sent after the issue is created' );
+		var ul = el( 'ul' );
+		( draft.also || [] ).forEach( function ( t ) { ul.appendChild( el( 'li', null, t ) ); } );
+		also.appendChild( ul );
+		var raw = el( 'details', 'vh-review__raw' );
+		raw.appendChild( el( 'summary', null, 'Show the exact JSON sent to Jira' ) );
+		raw.appendChild( el( 'pre', null, JSON.stringify( { fields: draft.payload }, null, 2 ) ) );
+		also.appendChild( raw );
+		body.appendChild( also );
+
+		send.disabled = false;
+		send.onclick = function () {
+			send.disabled = true;
+			status.textContent = 'Sending to Jira…';
+			wp.apiFetch( { path: '/vulnhub/v1/tickets', method: 'POST', data: { draft: draft.token } } )
+				.then( function ( result ) {
+					status.textContent = '';
+					body.innerHTML = '';
+					body.appendChild( el( 'div', 'vh-notice vh-notice--good', result.message || 'Ticket created.' ) );
+					send.textContent = 'Close';
+					send.disabled = false;
+					send.onclick = function () { window.location.reload(); };
+				} )
+				.catch( function ( error ) {
+					status.textContent = '';
+					body.insertBefore( el( 'div', 'vh-notice vh-notice--warn', ( error && error.message ) || cfg.i18n.error ), body.firstChild );
+					// The draft is spent once a send is attempted; a new review is needed.
+					send.textContent = 'Send to Jira';
+					send.disabled = true;
+				} );
+		};
+	}
+
+	function loadDraft( d, request, rebuilding ) {
+		var body = d.querySelector( '[data-vh-review-body]' );
+		var send = d.querySelector( '[data-vh-review-send]' );
+		send.disabled = true;
+		send.textContent = 'Send to Jira';
+		if ( ! rebuilding ) { body.innerHTML = ''; }
+		d.querySelector( '[data-vh-review-status]' ).textContent = rebuilding ? 'Rebuilding the file…' : 'Building the ticket…';
+		if ( ! d.open ) { d.showModal(); }
+
+		return wp.apiFetch( { path: '/vulnhub/v1/tickets/draft', method: 'POST', data: request } )
+			.then( function ( draft ) { renderDraft( d, draft, request ); } )
+			.catch( function ( error ) { renderDraft( d, { ok: false, message: error && error.message }, request ); } );
+	}
+
 	document.addEventListener( 'click', function ( event ) {
 		var button = event.target.closest( '[data-vh-raise]' );
 		if ( ! button ) {
@@ -384,69 +593,33 @@
 		}
 		event.preventDefault();
 
-		var ids = [];
+		var request = { cols: [] };
+
 		if ( button.dataset.vhFinding ) {
-			ids = [ parseInt( button.dataset.vhFinding, 10 ) ];
-		} else {
-			document.querySelectorAll( '.vh-pick:checked' ).forEach( function ( box ) {
-				ids.push( parseInt( box.value, 10 ) );
-			} );
-		}
-
-		if ( ! ids.length ) {
-			toast( cfg.i18n.noSelect, 'warn' );
-			return;
-		}
-
-		var original = button.textContent;
-		button.disabled = true;
-		button.textContent = cfg.i18n.raising;
-
-		function restore() {
-			button.disabled = false;
-			button.textContent = original;
-		}
-
-		/*
-		 * Ask first. The preview says how many findings the single ticket
-		 * will cover and which are left out because they are already on an
-		 * open ticket; nothing reaches Jira until OK is pressed.
-		 */
-		wp.apiFetch( {
-			path: '/vulnhub/v1/tickets/preview',
-			method: 'POST',
-			data: { finding_ids: ids }
-		} )
-			.then( function ( preview ) {
-				if ( ! preview || ! preview.ok ) {
-					toast( ( preview && preview.message ) || cfg.i18n.error, 'warn' );
-					restore();
-					return null;
-				}
-				if ( ! window.confirm( preview.message ) ) {
-					restore();
-					return null;
-				}
-				return wp.apiFetch( {
-					path: '/vulnhub/v1/tickets',
-					method: 'POST',
-					data: { finding_ids: ids }
+			request.finding_ids = [ parseInt( button.dataset.vhFinding, 10 ) ];
+		} else if ( 'all' === selMode ) {
+			// "All N matching findings selected": send the screen's filters and
+			// let the server resolve them, exactly as Export selected does.
+			var form = document.querySelector( '.vh-export__panel' );
+			request.all = 1;
+			request.filters = {};
+			if ( form ) {
+				form.querySelectorAll( 'input[name]' ).forEach( function ( input ) {
+					if ( 'cols[]' !== input.name ) { request.filters[ input.name ] = input.value; }
 				} );
-			} )
-			.then( function ( result ) {
-				if ( null === result ) {
-					return;
-				}
-				toast( result.message || 'Ticket created.', 'good' );
-				window.setTimeout( function () {
-					window.location.reload();
-				}, 1400 );
-			} )
-			.catch( function ( error ) {
-				toast( ( error && error.message ) || cfg.i18n.error, 'bad' );
-				button.disabled = false;
-				button.textContent = original;
+			}
+		} else {
+			request.finding_ids = [];
+			document.querySelectorAll( '.vh-pick:checked' ).forEach( function ( box ) {
+				request.finding_ids.push( parseInt( box.value, 10 ) );
 			} );
+			if ( ! request.finding_ids.length ) {
+				toast( cfg.i18n.noSelect, 'warn' );
+				return;
+			}
+		}
+
+		loadDraft( reviewDialog(), request, false );
 	} );
 }() );
 

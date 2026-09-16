@@ -311,6 +311,53 @@ final class VulnHub_Jira_Adf {
 		return $out;
 	}
 
+	/**
+	 * Render a document as HTML, for showing a person what Jira will display
+	 * before the ticket is sent.
+	 *
+	 * Covers the nodes this builder emits (paragraph, heading, bullet list,
+	 * code block, rule; strong, code and link marks). Every text value is
+	 * escaped here, so the result is safe to insert into a page as-is.
+	 *
+	 * @param array<string,mixed> $node ADF document or node.
+	 */
+	public static function to_html( array $node ): string {
+		$type = (string) ( $node['type'] ?? '' );
+
+		if ( 'text' === $type ) {
+			$html = esc_html( (string) ( $node['text'] ?? '' ) );
+
+			foreach ( (array) ( $node['marks'] ?? array() ) as $mark ) {
+				$html = match ( (string) ( $mark['type'] ?? '' ) ) {
+					'strong' => '<strong>' . $html . '</strong>',
+					'code'   => '<code>' . $html . '</code>',
+					'link'   => '<a href="' . esc_url( (string) ( $mark['attrs']['href'] ?? '' ) ) . '" target="_blank" rel="noopener noreferrer">' . $html . '</a>',
+					default  => $html,
+				};
+			}
+
+			return $html;
+		}
+
+		$inner = '';
+
+		foreach ( (array) ( $node['content'] ?? array() ) as $child ) {
+			if ( is_array( $child ) ) {
+				$inner .= self::to_html( $child );
+			}
+		}
+
+		return match ( $type ) {
+			'paragraph'  => '<p>' . $inner . '</p>',
+			'heading'    => '<h4>' . $inner . '</h4>',
+			'bulletList' => '<ul>' . $inner . '</ul>',
+			'listItem'   => '<li>' . $inner . '</li>',
+			'codeBlock'  => '<pre><code>' . $inner . '</code></pre>',
+			'rule'       => '<hr>',
+			default      => $inner,
+		};
+	}
+
 	/* =================================================================
 	 * Internals
 	 * ============================================================== */

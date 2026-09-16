@@ -699,7 +699,21 @@ final class VulnHub_Dash_Export {
 		self::stream( $view, $cols );
 	}
 
+	/**
+	 * Filter values to read instead of $_GET, while building a file in memory
+	 * (a ticket attachment) rather than answering a download request.
+	 *
+	 * @var array<string,string>|null
+	 */
+	private static ?array $src = null;
+
 	private static function get( string $key, string $default = '' ): string {
+		if ( null !== self::$src ) {
+			return isset( self::$src[ $key ] ) && ! is_array( self::$src[ $key ] ) && '' !== (string) self::$src[ $key ]
+				? sanitize_text_field( (string) self::$src[ $key ] )
+				: $default;
+		}
+
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		if ( ! isset( $_GET[ $key ] ) || is_array( $_GET[ $key ] ) ) {
 			return $default;
@@ -710,6 +724,10 @@ final class VulnHub_Dash_Export {
 	}
 
 	private static function get_int( string $key ): int {
+		if ( null !== self::$src ) {
+			return isset( self::$src[ $key ] ) && ! is_array( self::$src[ $key ] ) ? (int) self::$src[ $key ] : 0;
+		}
+
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		return isset( $_GET[ $key ] ) && ! is_array( $_GET[ $key ] ) ? (int) $_GET[ $key ] : 0;
 	}
@@ -992,7 +1010,23 @@ final class VulnHub_Dash_Export {
 	 * @param array<string,array<string,mixed>> $cols Chosen columns.
 	 */
 	private static function findings( $out, array $cols ): void {
-		$base = array_filter(
+		self::each(
+			self::findings_base(),
+			static fn( array $a ): array => Repo::findings( $a ),
+			static function ( array $r ) use ( $out, $cols ): void {
+				self::emit( $out, $cols, $r );
+			}
+		);
+	}
+
+	/**
+	 * The findings query the findings screen, its export and a ticket raised
+	 * from it all share, read from $_GET or from self::$src.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private static function findings_base(): array {
+		return array_filter(
 			array(
 				'state'           => self::get( 'state', 'open_any' ),
 				'lifecycle'       => self::get( 'lifecycle' ),
@@ -1061,13 +1095,128 @@ final class VulnHub_Dash_Export {
 			),
 			static fn( $v ): bool => '' !== $v && 0 !== $v
 		);
+	}
 
-		self::each(
-			$base,
-			static fn( array $a ): array => Repo::findings( $a ),
-			static function ( array $r ) use ( $out, $cols ): void {
-				self::emit( $out, $cols, $r );
+	/* =================================================================
+	 * Building a findings file in memory (ticket attachments)
+	 * ============================================================== */
+
+	/**
+	 * The finding ids a set of findings-screen filters matches.
+	 *
+	 * "All 399 matching findings selected" on the screen has to mean the same
+	 * 399 when a ticket is raised from it, so this reads the filters through
+	 * the very query the export uses. Refuses (returns no ids) above $cap
+	 * rather than returning the first $cap of them.
+	 *
+	 * @param array<string,string> $params Filter values as the screen carries them.
+	 * @return array{total:int,ids:int[]}
+	 */
+	public static function findings_scope( array $params, int $cap ): array {
+		self::$src = $params;
+
+		try {
+			$base  = self::findings_base();
+			$total = (int) ( Repo::findings( array_merge( $base, array( 'limit' => 1, 'offset' => 0 ) ) )['total'] ?? 0 );
+			$ids   = array();
+
+			if ( $total > 0 && $total <= $cap ) {
+				for ( $offset = 0; $offset < $total; $offset += self::PAGE ) {
+					$page = (array) ( Repo::findings( array_merge( $base, array( 'limit' => self::PAGE, 'offset' => $offset ) ) )['rows'] ?? array() );
+
+					if ( ! $page ) {
+						break;
+					}
+
+					foreach ( $page as $row ) {
+						$ids[] = (int) $row['id'];
+					}
+				}
+
+				// A short read is not a smaller selection: say nothing matched
+				// rather than ticket part of what the person selected.
+				if ( count( array_unique( $ids ) ) !== $total ) {
+					$ids = array();
+				}
 			}
+
+			return array(
+				'total' => $total,
+				'ids'   => array_values( array_unique( $ids ) ),
+			);
+		} finally {
+			self::$src = null;
+		}
+	}
+
+	/**
+	 * Columns a ticket attachment starts with: what a remediation team needs
+	 * to find the machine, the owner and the fix.
+	 *
+	 * @return string[]
+	 */
+	public static function ticket_columns(): array {
+		return array( 'hostname', 'ipv4', 'owner', 'team', 'location', 'title', 'severity', 'cve', 'install_path', 'solution', 'due_at' );
+	}
+
+	/**
+	 * A findings CSV for exactly these finding ids, built in memory.
+	 *
+	 * Same columns, same cell values, same escaping and BOM as the download,
+	 * so the file on the ticket is the file Export CSV would give.
+	 *
+	 * @param int[]    $ids      Finding ids.
+	 * @param string[] $col_keys Column keys; unknown keys are dropped, none means ticket_columns().
+	 * @return array{bytes:string,rows:int,columns:array<string,string>}
+	 */
+	public static function findings_csv( array $ids, array $col_keys ): array {
+		$all  = self::columns( 'findings' );
+		$keys = array_values( array_intersect( array_keys( $all ), $col_keys ) );
+		$keys = $keys ? $keys : array_values( array_intersect( array_keys( $all ), self::ticket_columns() ) );
+		$cols = array();
+
+		foreach ( $keys as $key ) {
+			$cols[ $key ] = $all[ $key ];
+		}
+
+		$out  = fopen( 'php://temp', 'w+' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		$rows = 0;
+
+		fwrite( $out, "\xEF\xBB\xBF" ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		self::put( $out, array_map( static fn( array $c ): string => (string) $c['label'], array_values( $cols ) ) );
+
+		self::$src = array(
+			'ids'     => implode( ',', array_map( 'intval', $ids ) ),
+			'orderby' => 'risk_score',
+			'order'   => 'DESC',
+		);
+
+		try {
+			// The ids are the whole selection; no state filter may narrow it
+			// (findings_base() defaults to open findings when none is given).
+			$base = self::findings_base();
+			unset( $base['state'] );
+
+			self::each(
+				$base,
+				static fn( array $a ): array => Repo::findings( $a ),
+				static function ( array $r ) use ( $out, $cols, &$rows ): void {
+					self::emit( $out, $cols, $r );
+					++$rows;
+				}
+			);
+		} finally {
+			self::$src = null;
+		}
+
+		rewind( $out );
+		$bytes = (string) stream_get_contents( $out );
+		fclose( $out ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+		return array(
+			'bytes'   => $bytes,
+			'rows'    => $rows,
+			'columns' => array_map( static fn( array $c ): string => (string) $c['label'], $cols ),
 		);
 	}
 
@@ -1509,7 +1658,12 @@ final class VulnHub_Dash_Export {
 				$write( $row );
 			}
 
-			flush();
+			// Streaming a download: send each page as it is written. Building
+			// a file in memory inside a REST call: never -- flushing there
+			// would send headers ahead of the JSON response.
+			if ( null === self::$src ) {
+				flush();
+			}
 
 			$offset += self::PAGE;
 		} while ( $rows && $offset < min( self::MAX_ROWS, (int) ( $page['total'] ?? 0 ) ) );

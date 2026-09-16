@@ -2586,3 +2586,57 @@ html.vh-js .vh-field:has(.vh-help--q[aria-expanded="true"]) > .vh-bubble--field 
 .vh-field__head { align-items: flex-start; }
 .vh-field__head .vh-field__name { flex: 0 1 auto; }
 .vh-field__head .vh-help--q { margin-top: 1px; }
+
+/* ============================================================
+   Raise ticket: the review dialog. Everything shown is what will be sent.
+   ============================================================ */
+dialog.vh-review:not([open]) { display: none; }
+dialog.vh-review {
+  position: fixed; inset: 0; margin: auto; z-index: 100;
+  border: 1px solid var(--vh-line); border-radius: 14px;
+  background: var(--vh-surface); color: var(--vh-ink); text-align: left;
+  width: min(1040px, calc(100vw - 32px)); max-height: calc(100vh - 32px);
+  display: flex; flex-direction: column; padding: 0; overflow: hidden;
+}
+dialog.vh-review[open] { display: flex; }
+.vh-review > h2 { margin: 0; padding: 20px 56px 0 24px; font-size: 18px; }
+.vh-review__lede { margin: 4px 24px 12px; font-size: 12.5px; color: var(--vh-muted); }
+.vh-review__body { flex: 1 1 auto; overflow: auto; padding: 0 24px 16px; display: flex; flex-direction: column; gap: 14px; }
+.vh-review__foot { display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-top: 1px solid var(--vh-line); background: var(--vh-raised-solid, var(--vh-surface)); }
+.vh-review__status { flex: 1 1 auto; font-size: 12.5px; color: var(--vh-muted); }
+.vh-review__sec { border: 1px solid var(--vh-line); border-radius: 12px; padding: 14px 16px; }
+.vh-review__sec > h3 { margin: 0 0 10px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--vh-muted); }
+.vh-review__big { margin: 0; font-size: 16px; font-weight: 600; color: var(--vh-ink); }
+.vh-review__sec .vh-sub { margin: 6px 0 0; }
+.vh-review__fields { display: grid; grid-template-columns: minmax(120px, max-content) 1fr; gap: 6px 18px; margin: 0; font-size: 13px; }
+.vh-review__fields dt { color: var(--vh-muted); }
+.vh-review__fields dd { margin: 0; color: var(--vh-ink); overflow-wrap: anywhere; }
+.vh-review__desc { max-height: 340px; overflow: auto; padding: 12px 14px; border-radius: 8px; background: var(--vh-bg, rgba(0,0,0,.2)); font-size: 13px; line-height: 1.55; color: var(--vh-ink-2); }
+.vh-review__desc h4 { margin: 14px 0 6px; font-size: 13.5px; color: var(--vh-ink); }
+.vh-review__desc h4:first-child { margin-top: 0; }
+.vh-review__desc p { margin: 0 0 8px; }
+.vh-review__desc ul { margin: 0 0 8px; padding-left: 20px; }
+.vh-review__desc li p { margin: 0; }
+.vh-review__desc hr { border: 0; border-top: 1px solid var(--vh-line); margin: 12px 0; }
+.vh-review__desc code { font-size: 12px; }
+.vh-review__att { margin: 0 0 10px; font-size: 13px; }
+.vh-review__att a { color: var(--vh-link); }
+.vh-review__cols { margin: 0 0 10px; }
+.vh-review__cols > summary { cursor: pointer; font-size: 12.5px; color: var(--vh-link); margin-bottom: 8px; }
+.vh-review__cols .vh-export__cols { max-height: 220px; margin-bottom: 10px; }
+.vh-review__tablewrap { overflow: auto; max-height: 280px; border: 1px solid var(--vh-line); border-radius: 8px; }
+.vh-review__table { font-size: 12px; margin: 0; }
+.vh-review__table th, .vh-review__table td { white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; padding: 6px 10px; }
+.vh-review__sec ul { margin: 0; padding-left: 18px; font-size: 13px; }
+.vh-review__raw { margin-top: 10px; }
+.vh-review__raw > summary { cursor: pointer; font-size: 12.5px; color: var(--vh-link); }
+.vh-review__raw pre { max-height: 300px; overflow: auto; margin: 8px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--vh-bg, rgba(0,0,0,.2)); font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .vh-review__fields { grid-template-columns: 1fr; gap: 2px; }
+  .vh-review__fields dd { margin-bottom: 8px; }
+}
+.vh-review::backdrop { background: rgba(3, 8, 18, .72); }
+.vh-review .vh-modal__x { position: absolute; top: 12px; right: 14px; margin: 0; }
+.vh-review .vh-modal__x button { border: 0; background: none; color: var(--vh-muted); font-size: 22px; line-height: 1; cursor: pointer; }
+.vh-review .vh-modal__x button:hover { color: var(--vh-ink); }
+.vh-review__body > * { flex: none; min-width: 0; }
