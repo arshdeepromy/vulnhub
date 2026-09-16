@@ -520,7 +520,7 @@ final class VulnHub_Dash_Tickets {
 		$cols    = array_map( 'sanitize_key', (array) ( $params['cols'] ?? array() ) );
 		$csv     = VulnHub_Dash_Export::assets_csv( $ids, $cols );
 
-		$csv['name'] = sprintf( 'vulnhub-assets-%s-%s.csv', str_replace( '_', '-', $kind ), wp_date( 'Y-m-d-Hi' ) );
+		$csv['name'] = sprintf( 'assets-%s-%s.csv', str_replace( '_', '-', $kind ), wp_date( 'Y-m-d-Hi' ) );
 
 		// Names for the assets the description lists; the rest are in the file.
 		$described = array();

@@ -195,14 +195,14 @@ final class VulnHub_Jira_Reopener {
 
 		$doc->paragraph(
 			array(
-				VulnHub_Jira_Adf::strong( __( 'Reopened by VulnHub: the scanner still detects this vulnerability.', 'vulnhub' ) ),
+				VulnHub_Jira_Adf::strong( __( 'Reopened: the scanner still detects this vulnerability.', 'vulnhub' ) ),
 			)
 		);
 
 		$doc->paragraph(
 			sprintf(
 				/* translators: 1: issue key, 2: relative time since closure, 3: still-detected count, 4: total findings. */
-				__( '%1$s was closed %2$s. VulnHub then re-checked every finding it covered against current scan data, and %3$d of %4$d are still being reported. A closure is only accepted when the vulnerability source agrees, so this issue has been reopened.', 'vulnhub' ),
+				__( '%1$s was closed %2$s. Every finding it covered was then re-checked against current scan data, and %3$d of %4$d are still being reported. A closure is only accepted when the vulnerability source agrees, so this issue has been reopened.', 'vulnhub' ),
 				$key,
 				vh_ago( (string) ( $ticket['remote_closed_at'] ?: $ticket['updated_at'] ) ),
 				count( $still ) ?: 1,
@@ -238,7 +238,7 @@ final class VulnHub_Jira_Reopener {
 		if ( $asset_id ) {
 			$doc->paragraph(
 				array(
-					VulnHub_Jira_Adf::text( __( 'Evidence in VulnHub: ', 'vulnhub' ) ),
+					VulnHub_Jira_Adf::text( __( 'Evidence: ', 'vulnhub' ) ),
 					VulnHub_Jira_Adf::link(
 						__( 'open the asset', 'vulnhub' ),
 						vh_admin_url( 'vulnhub-assets', array( 'asset' => $asset_id ) )
@@ -421,7 +421,7 @@ final class VulnHub_Jira_Reopener {
 
 		$doc->paragraph(
 			array(
-				VulnHub_Jira_Adf::strong( __( 'Closure verified by VulnHub.', 'vulnhub' ) ),
+				VulnHub_Jira_Adf::strong( __( 'Closure verified.', 'vulnhub' ) ),
 				VulnHub_Jira_Adf::text( ' ' ),
 				VulnHub_Jira_Adf::text(
 					sprintf(

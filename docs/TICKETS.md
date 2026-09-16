@@ -92,7 +92,7 @@ only for automation, which calls `VulnHub_Jira_Ticketer::raise()` directly.
        routing, issue type and allowlist as finding tickets. The description
        gives the ask, the notes, the filters in words, the first 30 assets
        (with owner names, never emails) and how the ticket is tracked. The
-       labels are `vulnhub` and `vulnhub-<kind>`.
+       label is the request type, for example `tenable-coverage`.
 
      The same review screen and Send as finding tickets are used (see above).
      On Send, `submit_scope_issue()` creates the issue exactly, records it as
@@ -123,6 +123,31 @@ A merge moves `ticket_assets` rows to the surviving asset
 
 The link is the pasted URL if the operator pasted one. Otherwise it is the Jira
 connector's site plus `/browse/KEY`. With neither, there is no link.
+
+## Nothing sent to Jira names the product
+
+Tickets arrive in Jira without any mark of where they came from. This covers
+text, labels, file names and request metadata:
+
+- **Descriptions and comments** are written in neutral terms, for example
+  *These findings are re-checked against the vulnerability scanner after this
+  ticket is closed*. That includes the reopen and verification comments, the
+  automation note and comment, and the text added when findings are folded
+  into an open ticket.
+- **Labels** are neutral:
+  - finding tickets: severity, asset type, `exploit-available`
+  - asset tickets: the request type
+- **Attachments** are named `findings-<date>.csv` or `assets-<kind>-<date>.csv`.
+- **The optional web link** (off unless *Link tickets back* is set) is titled
+  *Remediation record*.
+- **Requests to Atlassian** carry the generic User-Agent
+  `VulnHub_Jira_Client::USER_AGENT` rather than core's default, which names the
+  product and its maintainer. The multipart boundary is neutral too.
+
+The name of the OAuth app registered in the Atlassian developer console is set
+there, not here, and shows under the connecting person's Connected apps.
+
+Internal notification emails are not sent to Jira and are unaffected.
 
 ## Outcomes
 

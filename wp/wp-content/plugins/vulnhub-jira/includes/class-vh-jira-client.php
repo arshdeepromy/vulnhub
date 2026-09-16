@@ -58,6 +58,12 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 final class VulnHub_Jira_Client {
 
+	/**
+	 * The User-Agent sent to Atlassian. Deliberately generic: core's default
+	 * names the product and its maintainer, and nothing sent to Jira should.
+	 */
+	public const USER_AGENT = 'Integration/1.0';
+
 	/** API root shared by every call. */
 	public const API = '/rest/api/3';
 
@@ -284,7 +290,7 @@ final class VulnHub_Jira_Client {
 				: 'Basic ' . base64_encode( $this->email . ':' . $this->token ),
 			'Accept'        => 'application/json',
 			'Content-Type'  => 'application/json',
-			'User-Agent'    => \VulnHub\Core\Http::default_user_agent(),
+			'User-Agent'    => self::USER_AGENT,
 			// Atlassian asks integrations not to be treated as a browser.
 			'X-Atlassian-Token' => 'no-check',
 		);
@@ -745,7 +751,7 @@ final class VulnHub_Jira_Client {
 			'globalId'     => $global_id,
 			'application'  => array(
 				'type' => 'com.example.vulnhub',
-				'name' => 'VulnHub',
+				'name' => 'Remediation tracking',
 			),
 			'relationship' => 'tracked in VulnHub',
 			'object'       => array(
@@ -754,7 +760,7 @@ final class VulnHub_Jira_Client {
 				'summary' => vh_trim( $summary, 240 ),
 				'icon'    => array(
 					'url16x16' => admin_url( 'images/wordpress-logo.svg' ),
-					'title'    => 'VulnHub',
+					'title'    => 'Remediation tracking',
 				),
 			),
 		);
@@ -1007,7 +1013,7 @@ final class VulnHub_Jira_Client {
 			);
 		}
 
-		$boundary = 'vulnhub-' . bin2hex( random_bytes( 12 ) );
+		$boundary = 'boundary-' . bin2hex( random_bytes( 12 ) );
 		$body     = '--' . $boundary . "\r\n"
 			. 'Content-Disposition: form-data; name="file"; filename="' . str_replace( '"', '', $filename ) . "\"\r\n"
 			. 'Content-Type: ' . $mime . "\r\n\r\n"

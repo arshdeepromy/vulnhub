@@ -906,7 +906,7 @@ final class VulnHub_Jira_Automation {
 								'created_by'    => 0,
 								'note'          => sprintf(
 									/* translators: %s: automation rule name. */
-									__( 'Raised by the VulnHub automation rule "%s".', 'vulnhub' ),
+									__( 'Raised by the automation rule "%s".', 'vulnhub' ),
 									(string) $rule['name']
 								),
 							)
@@ -935,7 +935,7 @@ final class VulnHub_Jira_Automation {
 									VulnHub_Jira_Adf::strong(
 										sprintf(
 											/* translators: %s: automation rule name. */
-											__( 'VulnHub automation: %s', 'vulnhub' ),
+											__( 'Automation: %s', 'vulnhub' ),
 											(string) $rule['name']
 										)
 									),

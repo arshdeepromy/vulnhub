@@ -367,7 +367,7 @@ final class VulnHub_Jira_Ticketer {
 		$csv = null;
 
 		if ( class_exists( 'VulnHub_Dash_Export' ) ) {
-			$name = sprintf( 'vulnhub-findings-%s.csv', wp_date( 'Y-m-d-Hi' ) );
+			$name = sprintf( 'findings-%s.csv', wp_date( 'Y-m-d-Hi' ) );
 			$csv  = VulnHub_Dash_Export::findings_csv( $ids, array_map( 'sanitize_key', (array) ( $params['cols'] ?? array() ) ) );
 
 			$csv['name'] = $name;
@@ -576,8 +576,7 @@ final class VulnHub_Jira_Ticketer {
 
 		$doc->paragraph(
 			array(
-				VulnHub_Jira_Adf::strong( __( 'Raised from VulnHub.', 'vulnhub' ) ),
-				VulnHub_Jira_Adf::text( ' ' . (string) $spec['kind_help'] ),
+				VulnHub_Jira_Adf::text( (string) $spec['kind_help'] ),
 			)
 		);
 
@@ -641,14 +640,14 @@ final class VulnHub_Jira_Ticketer {
 
 		$doc->rule();
 		$doc->heading( __( 'How this is tracked', 'vulnhub' ) );
-		$doc->paragraph( __( 'VulnHub checks each of these assets against its latest data and records which are done, which are still outstanding, and which no longer matter because they were retired. Please only close this ticket once the work is done.', 'vulnhub' ) );
+		$doc->paragraph( __( 'Each of these assets is re-checked against the latest inventory and scan data, and recorded as done, still outstanding, or no longer relevant because it was retired. Please only close this ticket once the work is done.', 'vulnhub' ) );
 
 		$fields = array(
 			'project'     => array( 'key' => $project ),
 			'summary'     => vh_trim( (string) $spec['summary'], 250 ),
 			'issuetype'   => $routing['issue_type_ref'],
 			'description' => $doc->to_array(),
-			'labels'      => array( 'vulnhub', 'vulnhub-' . str_replace( '_', '-', sanitize_key( (string) $spec['kind'] ) ) ),
+			'labels'      => array( str_replace( '_', '-', sanitize_key( (string) $spec['kind'] ) ) ),
 		);
 
 		if ( '' !== $routing['team_field'] && '' !== $routing['team_value'] ) {
@@ -1229,7 +1228,7 @@ final class VulnHub_Jira_Ticketer {
 			$adf = VulnHub_Jira_Adf::doc()
 				->paragraph(
 					array(
-						VulnHub_Jira_Adf::strong( __( 'VulnHub added findings to this ticket.', 'vulnhub' ) ),
+						VulnHub_Jira_Adf::strong( __( 'Further findings added to this ticket.', 'vulnhub' ) ),
 						VulnHub_Jira_Adf::text( ' ' ),
 						VulnHub_Jira_Adf::text(
 							sprintf(
@@ -1610,11 +1609,11 @@ final class VulnHub_Jira_Ticketer {
 			$url,
 			sprintf(
 				/* translators: %s: hostname. */
-				__( 'VulnHub — %s', 'vulnhub' ),
+				__( 'Remediation record — %s', 'vulnhub' ),
 				(string) $rows[0]['hostname']
 			),
 			$summary,
-			'vulnhub:ticket:' . $ticket_id
+			'remediation:ticket:' . $ticket_id
 		);
 
 		if ( ! $response->ok() ) {
@@ -1712,15 +1711,16 @@ final class VulnHub_Jira_Ticketer {
 	 * @return string[]
 	 */
 	private function labels( array $rows, string $severity ): array {
-		$labels = array(
-			'vulnhub',
-			'vulnhub-' . $severity,
-		);
+		/*
+		 * Neutral labels: useful for filtering a queue, and nothing in them
+		 * names the tool that raised the ticket.
+		 */
+		$labels = array( $severity );
 
 		$type = sanitize_key( (string) $rows[0]['asset_type'] );
 
 		if ( '' !== $type ) {
-			$labels[] = 'vulnhub-' . $type;
+			$labels[] = $type;
 		}
 
 		foreach ( $rows as $row ) {
@@ -1757,12 +1757,6 @@ final class VulnHub_Jira_Ticketer {
 
 		$doc->paragraph(
 			array(
-				VulnHub_Jira_Adf::strong(
-					'automation' === (string) ( $options['created_via'] ?? '' )
-						? __( 'Raised automatically by VulnHub.', 'vulnhub' )
-						: __( 'Raised from VulnHub.', 'vulnhub' )
-				),
-				VulnHub_Jira_Adf::text( ' ' ),
 				VulnHub_Jira_Adf::text(
 					sprintf(
 						/* translators: 1: findings, 2: severity, 3: assets, 4: vulnerabilities, 5: grouping label. */
@@ -1874,7 +1868,7 @@ final class VulnHub_Jira_Ticketer {
 				$doc->paragraph(
 					sprintf(
 						/* translators: %d: number of vulnerabilities not listed. */
-						__( '… and %d further vulnerability definition(s); see the full list in VulnHub.', 'vulnhub' ),
+						__( '… and %d further vulnerability definition(s); every finding is listed in the attachment, when one is attached.', 'vulnhub' ),
 						max( 0, count( $vulns ) - 15 )
 					)
 				);
@@ -1958,14 +1952,14 @@ final class VulnHub_Jira_Ticketer {
 		// it is built from is whatever host the raise came in on, which for a
 		// portal opened on localhost is a link nobody else can follow.
 		if ( vulnhub_jira_connector() && vulnhub_jira_connector()->links_back() ) {
-			$doc->heading( __( 'In VulnHub', 'vulnhub' ) );
+			$doc->heading( __( 'Asset record', 'vulnhub' ) );
 
 			$asset_id  = (int) $rows[0]['asset_id'];
 			$asset_url = vh_admin_url( 'vulnhub-assets', array( 'asset' => $asset_id ) );
 
 			$doc->paragraph(
 				array(
-					VulnHub_Jira_Adf::text( __( 'Open the asset in VulnHub: ', 'vulnhub' ) ),
+					VulnHub_Jira_Adf::text( __( 'Open the asset record: ', 'vulnhub' ) ),
 					VulnHub_Jira_Adf::link( (string) $rows[0]['hostname'], $asset_url ),
 				)
 			);
@@ -1986,10 +1980,10 @@ final class VulnHub_Jira_Ticketer {
 			array(
 				VulnHub_Jira_Adf::text(
 					$reopens
-						? __( 'VulnHub tracks this ticket and re-checks it against the scanner after it is closed. If the vulnerability is still detected the ticket is reopened automatically, so please only close it once the remediation is actually deployed.', 'vulnhub' )
+						? __( 'These findings are re-checked against the vulnerability scanner after this ticket is closed. If a vulnerability is still detected the ticket is reopened automatically, so please only close it once the remediation is actually deployed.', 'vulnhub' )
 						: ( $comments
-							? __( 'VulnHub re-checks this ticket against the scanner after it is closed and adds a comment with the result. Please only close it once the remediation is actually deployed.', 'vulnhub' )
-							: __( 'VulnHub re-checks these findings against the scanner after this ticket is closed and records the result in VulnHub. Please only close it once the remediation is actually deployed.', 'vulnhub' ) )
+							? __( 'These findings are re-checked against the vulnerability scanner after this ticket is closed, and the result is added as a comment. Please only close it once the remediation is actually deployed.', 'vulnhub' )
+							: __( 'These findings are re-checked against the vulnerability scanner after this ticket is closed. Please only close it once the remediation is actually deployed.', 'vulnhub' ) )
 				),
 			)
 		);

@@ -368,7 +368,7 @@ final class VulnHub_Jira_OAuth {
 	}
 
 	private function http(): \VulnHub\Core\Http {
-		return new \VulnHub\Core\Http( '', array( $this->connector, 'log' ) );
+		return new \VulnHub\Core\Http( VulnHub_Jira_Client::USER_AGENT, array( $this->connector, 'log' ) );
 	}
 
 	/* =================================================================
