@@ -506,9 +506,9 @@ final class VulnHub_Jira_Ticketer {
 				'download' => str_replace( '&amp;', '&', wp_nonce_url( add_query_arg( array( 'action' => self::DRAFT_CSV_ACTION, 'draft' => $token ), admin_url( 'admin-post.php' ) ), self::DRAFT_CSV_ACTION ) ),
 			) : null,
 			'columns'     => $picker,
-			'also'        => array(
-				__( 'A remote link on the issue back to the first asset in VulnHub.', 'vulnhub' ),
-			),
+			'also'        => $connector->links_back()
+				? array( __( 'A remote link on the issue back to the first asset in VulnHub.', 'vulnhub' ) )
+				: array(),
 			'payload'     => $fields,
 			'warnings'    => $warnings,
 		);
@@ -1261,7 +1261,9 @@ final class VulnHub_Jira_Ticketer {
 
 		\VulnHub\Core\Tickets::attach_findings( $ticket_id, array_map( static fn( array $r ): int => (int) $r['id'], $rows ) );
 
-		$this->add_remote_link( $connector, $key, $rows, $ticket_id, $summary );
+		if ( $connector->links_back() ) {
+			$this->add_remote_link( $connector, $key, $rows, $ticket_id, $summary );
+		}
 
 		$connector->log(
 			sprintf(
@@ -1684,20 +1686,28 @@ final class VulnHub_Jira_Ticketer {
 			);
 		}
 
-		/* --- 6. Back to VulnHub ------------------------------------- */
+		/* --- 6. After closing ---------------------------------------- */
 
 		$doc->rule();
-		$doc->heading( __( 'In VulnHub', 'vulnhub' ) );
 
-		$asset_id  = (int) $rows[0]['asset_id'];
-		$asset_url = vh_admin_url( 'vulnhub-assets', array( 'asset' => $asset_id ) );
+		// A link into VulnHub only where the operator wants one: the address
+		// it is built from is whatever host the raise came in on, which for a
+		// portal opened on localhost is a link nobody else can follow.
+		if ( vulnhub_jira_connector() && vulnhub_jira_connector()->links_back() ) {
+			$doc->heading( __( 'In VulnHub', 'vulnhub' ) );
 
-		$doc->paragraph(
-			array(
-				VulnHub_Jira_Adf::text( __( 'Open the asset in VulnHub: ', 'vulnhub' ) ),
-				VulnHub_Jira_Adf::link( (string) $rows[0]['hostname'], $asset_url ),
-			)
-		);
+			$asset_id  = (int) $rows[0]['asset_id'];
+			$asset_url = vh_admin_url( 'vulnhub-assets', array( 'asset' => $asset_id ) );
+
+			$doc->paragraph(
+				array(
+					VulnHub_Jira_Adf::text( __( 'Open the asset in VulnHub: ', 'vulnhub' ) ),
+					VulnHub_Jira_Adf::link( (string) $rows[0]['hostname'], $asset_url ),
+				)
+			);
+		} else {
+			$doc->heading( __( 'After this ticket is closed', 'vulnhub' ) );
+		}
 
 		$doc->paragraph(
 			array(

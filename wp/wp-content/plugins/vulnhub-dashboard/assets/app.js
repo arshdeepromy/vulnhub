@@ -542,7 +542,7 @@
 		var also = section( 'Also sent after the issue is created' );
 		var ul = el( 'ul' );
 		( draft.also || [] ).forEach( function ( t ) { ul.appendChild( el( 'li', null, t ) ); } );
-		also.appendChild( ul );
+		also.appendChild( ( draft.also || [] ).length ? ul : el( 'p', 'vh-sub', 'Nothing else: no links or other data are added after the issue and its attachment.' ) );
 		var raw = el( 'details', 'vh-review__raw' );
 		raw.appendChild( el( 'summary', null, 'Show the exact JSON sent to Jira' ) );
 		raw.appendChild( el( 'pre', null, JSON.stringify( { fields: draft.payload }, null, 2 ) ) );

@@ -315,6 +315,14 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 				'help'           => __( 'When closure verification finds the scanner still detects a vulnerability, comment on the issue explaining that and transition it back to an open status if the workflow allows it.', 'vulnhub' ),
 			),
 			array(
+				'key'            => 'link_back',
+				'label'          => __( 'Links to VulnHub', 'vulnhub' ),
+				'type'           => 'checkbox',
+				'default'        => 1,
+				'checkbox_label' => __( 'Link tickets back to VulnHub', 'vulnhub' ),
+				'help'           => __( 'Adds an "Open the asset in VulnHub" link to the description and a web link on the issue. The address comes from the host VulnHub was opened on when the ticket was raised, so turn this off if the people working tickets cannot reach VulnHub -- a link to localhost opens nothing for them.', 'vulnhub' ),
+			),
+			array(
 				'key'            => 'comment_on_verify',
 				'label'          => __( 'Verification comments', 'vulnhub' ),
 				'type'           => 'checkbox',
@@ -597,6 +605,10 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 	/**
 	 * Should we comment on verified closures?
 	 */
+	public function links_back(): bool {
+		return $this->settings->get_bool( $this->id(), 'link_back', true );
+	}
+
 	public function comments_on_verify(): bool {
 		return $this->settings->get_bool( $this->id(), 'comment_on_verify', true );
 	}
