@@ -2649,3 +2649,4 @@ dialog.vh-review[open] { display: flex; }
 :root[data-theme="light"] .vh-review__due input[type="date"] { color-scheme: light; }
 .vh-sla-day { display: inline-flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--vh-muted); text-transform: none; letter-spacing: 0; }
 .vh-sla-day input { width: 76px; }
+.vh-review__due select { padding: 4px 8px; border-radius: 8px; border: 1px solid var(--vh-line-2, var(--vh-line)); background: var(--vh-bg, transparent); color: var(--vh-ink); }

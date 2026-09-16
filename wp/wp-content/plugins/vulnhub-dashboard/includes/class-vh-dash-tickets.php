@@ -557,6 +557,7 @@ final class VulnHub_Dash_Tickets {
 				'assets'     => $described,
 				'attachment' => $csv['name'],
 				'due_date'   => $due_date,
+				'priority'   => VulnHub_Jira_Ticketer::priority_choice( $params )['value'],
 			)
 		);
 

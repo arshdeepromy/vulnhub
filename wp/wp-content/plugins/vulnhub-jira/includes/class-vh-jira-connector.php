@@ -274,6 +274,14 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 				'help'        => __( 'Leave blank to auto-detect from GET /rest/api/3/field: the Atlassian Teams field (com.atlassian.teams:rm-teams-custom-field-team) is preferred, then any custom field named Team. Set it only when your site has more than one.', 'vulnhub' ),
 			),
 			array(
+				'key'            => 'send_priority',
+				'label'          => __( 'Priority', 'vulnhub' ),
+				'type'           => 'checkbox',
+				'default'        => 1,
+				'checkbox_label' => __( 'Send a priority by default', 'vulnhub' ),
+				'help'           => __( 'On: tickets carry the Jira priority mapped from their severity below. Off: no priority is sent and Jira applies the project default. Either way the review offers the priorities the project actually allows, read from Jira, so one can be chosen per ticket. Priority names are site specific -- a service desk may use P1-P4 rather than Highest-Lowest.', 'vulnhub' ),
+			),
+			array(
 				'key'     => 'priority_critical',
 				'label'   => __( 'Jira priority for Critical', 'vulnhub' ),
 				'type'    => 'text',
@@ -605,6 +613,10 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 	/**
 	 * Should we comment on verified closures?
 	 */
+	public function sends_priority(): bool {
+		return $this->settings->get_bool( $this->id(), 'send_priority', true );
+	}
+
 	public function links_back(): bool {
 		return $this->settings->get_bool( $this->id(), 'link_back', true );
 	}

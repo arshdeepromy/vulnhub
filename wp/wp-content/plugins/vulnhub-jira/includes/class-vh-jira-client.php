@@ -437,6 +437,18 @@ final class VulnHub_Jira_Client {
 	}
 
 	/**
+	 * GET /rest/api/3/issue/createmeta/{projectIdOrKey}/issuetypes — the issue
+	 * types a project allows creating, with their ids.
+	 */
+	public function create_issue_types( string $project_key ): \VulnHub\Core\Http_Response {
+		return $this->call(
+			'GET',
+			sprintf( '%s/issue/createmeta/%s/issuetypes', self::API, rawurlencode( $project_key ) ),
+			array( 'maxResults' => 100 )
+		);
+	}
+
+	/**
 	 * GET /rest/api/3/issue/createmeta/{projectIdOrKey}/issuetypes/{issueTypeId}
 	 *
 	 * Field discovery for one project + issue type. Used to warn an operator

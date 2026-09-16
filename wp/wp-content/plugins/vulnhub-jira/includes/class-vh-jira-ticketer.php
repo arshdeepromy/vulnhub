@@ -400,7 +400,7 @@ final class VulnHub_Jira_Ticketer {
 				'created_via' => 'manual',
 				'attachment'  => $csv ? $csv['name'] : '',
 				'due_date'    => $due_date,
-			)
+			) + ( self::priority_choice( $params )['set'] ? array( 'priority' => self::priority_choice( $params )['value'] ) : array() )
 		);
 
 		if ( empty( $built['ok'] ) ) {
@@ -444,6 +444,19 @@ final class VulnHub_Jira_Ticketer {
 				__( 'This would go to project %1$s, which is outside the allowed projects (%2$s). Sending will be refused.', 'vulnhub' ),
 				(string) $built['project'],
 				implode( ', ', $allowed )
+			);
+		}
+
+		$allowed_prio = $this->allowed_priorities( $connector, (string) $built['project'], (array) ( $built['fields']['issuetype'] ?? array() ) );
+		$sent_prio    = (string) ( $built['fields']['priority']['name'] ?? '' );
+
+		if ( '' !== $sent_prio && $allowed_prio['names'] && ! in_array( $sent_prio, $allowed_prio['names'], true ) ) {
+			$warnings[] = sprintf(
+				/* translators: 1: priority name, 2: project, 3: allowed names. */
+				__( 'Priority "%1$s" does not exist in %2$s, which allows %3$s. Jira will refuse the ticket: pick one of those or leave it unset.', 'vulnhub' ),
+				$sent_prio,
+				(string) $built['project'],
+				implode( ', ', $allowed_prio['names'] )
 			);
 		}
 
@@ -531,6 +544,11 @@ final class VulnHub_Jira_Ticketer {
 			'due'         => array(
 				'value' => (string) ( $fields['duedate'] ?? '' ),
 				'min'   => wp_date( 'Y-m-d' ),
+			),
+			'priority'    => array(
+				'value'   => (string) ( $fields['priority']['name'] ?? '' ),
+				'options' => $allowed_prio['names'],
+				'default' => $allowed_prio['default'],
 			),
 			'description' => array(
 				'html'  => VulnHub_Jira_Adf::to_html( (array) $fields['description'] ),
@@ -670,13 +688,19 @@ final class VulnHub_Jira_Ticketer {
 			$fields[ $routing['team_field'] ] = $routing['team_write'];
 		}
 
+		// Asset requests have no severity, so no mapped priority: only one the
+		// reviewer picked.
+		if ( '' !== (string) ( $spec['priority'] ?? '' ) ) {
+			$fields['priority'] = array( 'name' => (string) $spec['priority'] );
+		}
+
 		return array(
 			'ok'         => true,
 			'fields'     => $fields,
 			'routing'    => $routing,
 			'project'    => $project,
 			'type'       => (string) $routing['issue_type'],
-			'priority'   => '',
+			'priority'   => (string) ( $spec['priority'] ?? '' ),
 			'summary'    => (string) $fields['summary'],
 			'due'        => $due,
 			'team'       => $team,
@@ -762,6 +786,88 @@ final class VulnHub_Jira_Ticketer {
 			),
 			'ticket'  => (array) \VulnHub\Core\Tickets::get( (int) $saved['id'] ),
 		);
+	}
+
+	/**
+	 * The priorities Jira allows on this project and issue type, and its
+	 * default, read from create metadata and cached for an hour.
+	 *
+	 * Names are site specific (Highest…Lowest on one site, P1…P4 on a service
+	 * desk), so the review offers exactly these and sending checks against
+	 * them. An empty list means "could not tell" -- mock mode, or a project
+	 * the account cannot read -- and nothing is refused on that basis.
+	 *
+	 * @param array<string,string> $type_ref `{id}` or `{name}` as sent.
+	 * @return array{names:string[],default:string}
+	 */
+	public function allowed_priorities( VulnHub_Jira_Connector $connector, string $project, array $type_ref ): array {
+		$none = array( 'names' => array(), 'default' => '' );
+
+		if ( '' === $project || $connector->is_mock() ) {
+			return $none;
+		}
+
+		$key    = 'vh_jira_prio_' . md5( $project . '|' . wp_json_encode( $type_ref ) );
+		$cached = get_transient( $key );
+
+		if ( is_array( $cached ) ) {
+			return $cached;
+		}
+
+		$client  = $connector->client();
+		$type_id = (string) ( $type_ref['id'] ?? '' );
+
+		if ( '' === $type_id && '' !== (string) ( $type_ref['name'] ?? '' ) ) {
+			$types = $client->create_issue_types( $project );
+
+			foreach ( (array) ( $types->data()['issueTypes'] ?? $types->data()['values'] ?? array() ) as $t ) {
+				if ( strcasecmp( (string) ( $t['name'] ?? '' ), (string) $type_ref['name'] ) === 0 ) {
+					$type_id = (string) $t['id'];
+					break;
+				}
+			}
+		}
+
+		if ( '' === $type_id ) {
+			return $none;
+		}
+
+		$meta = $client->create_field_meta( $project, $type_id );
+
+		if ( ! $meta->ok() ) {
+			return $none;
+		}
+
+		$out = $none;
+
+		foreach ( (array) ( $meta->data()['fields'] ?? $meta->data()['values'] ?? array() ) as $field ) {
+			if ( 'priority' !== (string) ( $field['fieldId'] ?? '' ) ) {
+				continue;
+			}
+
+			$out['names']   = array_values( array_filter( array_map( static fn( $v ): string => (string) ( $v['name'] ?? '' ), (array) ( $field['allowedValues'] ?? array() ) ) ) );
+			$out['default'] = (string) ( $field['defaultValue']['name'] ?? '' );
+		}
+
+		set_transient( $key, $out, HOUR_IN_SECONDS );
+
+		return $out;
+	}
+
+	/**
+	 * Read a reviewer's priority choice from draft params.
+	 *
+	 * @param array<string,mixed> $params Draft params.
+	 * @return array{set:bool,value:string} set=false when no choice was made.
+	 */
+	public static function priority_choice( array $params ): array {
+		if ( ! array_key_exists( 'priority', $params ) || '' === (string) $params['priority'] ) {
+			return array( 'set' => false, 'value' => '' );
+		}
+
+		$value = sanitize_text_field( (string) $params['priority'] );
+
+		return array( 'set' => true, 'value' => 'none' === $value ? '' : $value );
 	}
 
 	private static function draft_key( string $token ): string {
@@ -1355,7 +1461,11 @@ final class VulnHub_Jira_Ticketer {
 		$routing  = $this->routing( $connector, $team );
 		$project  = $routing['project'];
 		$type     = $routing['issue_type'];
-		$priority = $connector->priority_for( $severity );
+		// A reviewer's choice wins ('' = send none); otherwise the severity
+		// mapping, when the connector sends a priority at all.
+		$priority = array_key_exists( 'priority', $options )
+			? (string) $options['priority']
+			: ( $connector->sends_priority() ? $connector->priority_for( $severity ) : '' );
 		$summary  = $this->summary( $rows, $grouping, $severity );
 		// Due from the day the ticket is raised, by the organisation SLA for its
 		// severity -- or the date the reviewer set.

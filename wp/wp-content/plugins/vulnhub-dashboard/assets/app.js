@@ -480,6 +480,31 @@
 				return;
 			}
 
+			// Priority: the values the project really allows, read from Jira.
+			if ( 'Priority' === pair[0] && draft.priority ) {
+				var pd = el( 'dd', 'vh-review__due' );
+				var sel = el( 'select' );
+				sel.setAttribute( 'aria-label', 'Priority' );
+				var none = el( 'option', null, 'Not set' + ( draft.priority.default ? ' (Jira default: ' + draft.priority.default + ')' : ' (Jira default)' ) );
+				none.value = 'none';
+				sel.appendChild( none );
+				var opts = ( draft.priority.options || [] ).slice();
+				if ( draft.priority.value && opts.indexOf( draft.priority.value ) === -1 ) { opts.push( draft.priority.value ); }
+				opts.forEach( function ( name ) {
+					var o = el( 'option', null, name );
+					o.value = name;
+					sel.appendChild( o );
+				} );
+				sel.value = draft.priority.value || 'none';
+				sel.addEventListener( 'change', function () {
+					request.priority = sel.value;
+					loadDraft( d, request, true );
+				} );
+				pd.appendChild( sel );
+				dl.appendChild( pd );
+				return;
+			}
+
 			dl.appendChild( el( 'dd', null, pair[1] ) );
 		} );
 		fs.appendChild( dl );

@@ -143,6 +143,25 @@ anyone had been asked.
   date that is sent. A date before today, or one that is not a real date, is
   refused (`vh_valid_due_date()`).
 
+## Priority
+
+Priority names belong to the Jira site and project: one site uses
+Highest…Lowest, a service desk may allow only P1…P4. Sending a name the project
+does not have makes Jira refuse the whole ticket ("Specify the Priority (name)
+in the string format").
+
+- **Send a priority by default** (Jira setting `send_priority`, default on):
+  - **On:** the severity mapping (`priority_critical`…) is sent.
+  - **Off:** no priority is sent and Jira applies the project default. Asset
+    tickets have no severity, so they never get a mapped priority.
+- **The review shows Priority as a dropdown** of the values the project allows
+  for the ticket's issue type, read from create metadata
+  (`VulnHub_Jira_Ticketer::allowed_priorities()`, cached for an hour), plus
+  *Not set (Jira default: …)*. Changing it rebuilds the draft with `priority`
+  (`none` for not set).
+- **A priority the project does not allow is flagged** in the review before
+  anything is sent.
+
 ## Nothing sent to Jira names the product
 
 Tickets arrive in Jira without any mark of where they came from. This covers
