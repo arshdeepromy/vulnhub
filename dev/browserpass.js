@@ -48,10 +48,6 @@ const PAGES = [
   ['admin-settings',       '/portal-admin/?section=settings'],
   ['admin-lifecycle',      '/portal-admin/?section=screen-vulnhub-lifecycle'],
   ['admin-appearance',     '/portal-admin/?section=appearance'],
-  // Built in Elementor rather than by the portal, so they exercise a
-  // different template, a different stylesheet and the Theme Builder chrome.
-  ['el-overview',          '/vulnhub-overview/'],
-  ['el-estate',            '/vulnhub-estate/'],
 ];
 
 const only = (process.argv.find((a) => a.startsWith('--only=')) || '').slice(7);

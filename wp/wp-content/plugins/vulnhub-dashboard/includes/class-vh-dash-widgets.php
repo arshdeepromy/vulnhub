@@ -1329,7 +1329,7 @@ final class VulnHub_Dash_Widgets {
 			 * An inline <svg> with only a viewBox has no intrinsic size: with
 			 * no CSS to size it, it fills its container. These icons were
 			 * sized solely by app-redesign.css, which the portal loads and
-			 * Elementor pages do not -- so on /vulnhub-estate/ this 15px
+			 * Elementor pages do not -- so on an Elementor page this 15px
 			 * download glyph rendered at 1102x1102 and swallowed the widget.
 			 *
 			 * The attributes make the icon right with or without a

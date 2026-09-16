@@ -82,17 +82,18 @@ actually exists, and never for the portal's own views.
 
 ## Seeded content
 
-On `init` the plugin creates four documents once, then leaves them alone.
+On `init` the plugin creates two documents once, then leaves them alone.
 Seeding is versioned by the `vulnhub_elementor_seeded` option against
 `SEED_VERSION` (currently 2); created posts are marked `_vulnhub_seeded`, and
 their ids are kept in the `vulnhub_elementor_documents` option:
 
 * **VulnHub header** and **VulnHub footer** — Theme Builder templates,
   condition `include/general`.
-* **Security overview** (`/vulnhub-overview/`) and **Estate and ownership**
-  (`/vulnhub-estate/`) — Elementor pages built from VulnHub widgets, linked
-  from the portal navigation (published documents only, labelled with the post
-  title, through `vulnhub_portal_nav_extra`).
+
+It used to seed two example pages as well (*Security overview* and *Estate and
+ownership*, linked from the portal navigation). They were removed: they
+duplicated the portal's own views. The widgets remain for anyone who wants to
+build a page of their own.
 
 These are a starting point, not a managed asset. A later seed version will
 update a document **only if it is still byte-identical to what the seeder last
@@ -100,10 +101,10 @@ wrote** (`_vulnhub_seed_hash`); the moment somebody edits one in Elementor it is
 never touched again. Silently overwriting a person's header is a far worse
 failure than a missing button. A refresh also clears Elementor's generated CSS.
 
-Portal → Administration → Platform → **Appearance** (`vulnhub_manage`) lists all
-four. *Edit in Elementor* shows only with `edit_pages`; *View* only for the two
-pages. The recreate button posts `admin-post.php?action=vulnhub_seed_elementor`,
-which clears the seed option and seeds again.
+Portal → Administration → Platform → **Appearance** (`vulnhub_manage`) lists
+both. *Edit in Elementor* shows only with `edit_pages`. The recreate button
+posts `admin-post.php?action=vulnhub_seed_elementor`, which clears the seed
+option and seeds again.
 
 ## Hooks it uses
 
@@ -149,8 +150,7 @@ administration screen from another plugin.
 ## Testing
 
 ```
-node dev/elementorpass.js      # opens the real editor
-node dev/browserpass.js        # includes el-overview and el-estate
+node dev/elementorpass.js      # opens the real editor; renders widgets on a scratch page
 ```
 
 `dev/elementorpass.js` reads the document ids from the

@@ -38,8 +38,6 @@ const PAGES = [
   ['admin-audit', '/portal-admin/?section=audit'],
   ['admin-settings', '/portal-admin/?section=settings'],
   ['admin-appearance', '/portal-admin/?section=appearance'],
-  ['el-overview', '/vulnhub-overview/'],
-  ['el-estate', '/vulnhub-estate/'],
 ];
 
 const only = (process.argv.find((a) => a.startsWith('--only=')) || '').slice(7);

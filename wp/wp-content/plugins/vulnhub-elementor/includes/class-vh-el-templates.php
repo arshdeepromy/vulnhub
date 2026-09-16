@@ -1,7 +1,6 @@
 <?php
 /**
- * Builds the starting Elementor content: a Theme Builder header and footer,
- * and two Elementor-native pages made of VulnHub widgets.
+ * Builds the starting Elementor content: a Theme Builder header and footer.
  *
  * @package VulnHub\Elementor
  */
@@ -31,43 +30,6 @@ final class VulnHub_El_Templates {
 		add_action( 'init', array( __CLASS__, 'maybe_seed' ), 20 );
 		add_filter( 'vulnhub_portal_sections', array( __CLASS__, 'section' ) );
 		add_action( 'vulnhub_render_portal_section', array( __CLASS__, 'render_section' ) );
-		add_filter( 'vulnhub_portal_nav_extra', array( __CLASS__, 'nav_links' ) );
-	}
-
-	/**
-	 * Put the two seeded Elementor pages in the portal's navigation.
-	 *
-	 * A page nobody can find is a page nobody edits, and the point of these
-	 * two is that they are the editable examples.
-	 *
-	 * @param array<int,array<string,mixed>> $links Existing extra links.
-	 * @return array<int,array<string,mixed>>
-	 */
-	public static function nav_links( array $links ): array {
-		$docs    = (array) get_option( 'vulnhub_elementor_documents', array() );
-		$current = get_queried_object_id();
-
-		$icons = array(
-			'overview' => 'M12 3l7 3v5c0 4.4-3 8.4-7 9-4-.6-7-4.6-7-9V6zM9 12l2 2 4-4',
-			'estate'   => 'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8M22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75',
-		);
-
-		foreach ( array( 'overview', 'estate' ) as $key ) {
-			$id = (int) ( $docs[ $key ] ?? 0 );
-
-			if ( ! $id || 'publish' !== get_post_status( $id ) ) {
-				continue;
-			}
-
-			$links[] = array(
-				'label'  => get_the_title( $id ),
-				'url'    => (string) get_permalink( $id ),
-				'icon'   => $icons[ $key ],
-				'active' => $current === $id,
-			);
-		}
-
-		return $links;
 	}
 
 	/**
@@ -85,7 +47,7 @@ final class VulnHub_El_Templates {
 			'cap'     => \VulnHub\Core\Caps::MANAGE,
 			'group'   => 'platform',
 			'order'   => 65,
-			'summary' => __( 'The header, the footer and the Elementor pages built on VulnHub data.', 'vulnhub' ),
+			'summary' => __( 'The header and footer, built with Elementor.', 'vulnhub' ),
 		);
 
 		return $sections;
@@ -104,8 +66,6 @@ final class VulnHub_El_Templates {
 		$labels    = array(
 			'header'   => __( 'Site header', 'vulnhub' ),
 			'footer'   => __( 'Site footer', 'vulnhub' ),
-			'overview' => __( 'Security overview page', 'vulnhub' ),
-			'estate'   => __( 'Estate and ownership page', 'vulnhub' ),
 		);
 
 		echo '<div class="vh-card">';
@@ -138,16 +98,6 @@ final class VulnHub_El_Templates {
 					'<a class="vh-btn vh-btn--ghost" href="%s">%s</a> ',
 					esc_url( admin_url( 'post.php?post=' . $id . '&action=elementor' ) ),
 					esc_html__( 'Edit in Elementor', 'vulnhub' )
-				);
-			}
-
-			$permalink = 'page' === $post->post_type ? get_permalink( $post ) : '';
-
-			if ( $permalink ) {
-				printf(
-					'<a class="vh-btn vh-btn--ghost" href="%s">%s</a>',
-					esc_url( $permalink ),
-					esc_html__( 'View', 'vulnhub' )
 				);
 			}
 
@@ -206,18 +156,6 @@ final class VulnHub_El_Templates {
 			__( 'VulnHub footer', 'vulnhub' ),
 			self::footer_data(),
 			array( 'include/general' )
-		);
-
-		$made['overview'] = self::page(
-			'vulnhub-overview',
-			__( 'Security overview', 'vulnhub' ),
-			self::overview_data()
-		);
-
-		$made['estate'] = self::page(
-			'vulnhub-estate',
-			__( 'Estate and ownership', 'vulnhub' ),
-			self::estate_data()
 		);
 
 		update_option( self::OPTION, self::SEED_VERSION, false );
@@ -301,37 +239,6 @@ final class VulnHub_El_Templates {
 		wp_set_object_terms( $id, $type, 'elementor_library_type' );
 		self::write_elementor_meta( $id, $data, $type );
 		update_post_meta( $id, '_elementor_conditions', $conditions );
-		update_post_meta( $id, '_vulnhub_seeded', '1' );
-
-		return $id;
-	}
-
-	/**
-	 * @param array<int,mixed> $data Elementor element tree.
-	 */
-	private static function page( string $slug, string $title, array $data ): int {
-		$existing = get_page_by_path( $slug );
-
-		if ( $existing ) {
-			self::refresh_if_untouched( (int) $existing->ID, $data );
-			return (int) $existing->ID;
-		}
-
-		$id = wp_insert_post(
-			array(
-				'post_type'   => 'page',
-				'post_status' => 'publish',
-				'post_title'  => $title,
-				'post_name'   => $slug,
-			)
-		);
-
-		if ( ! $id || is_wp_error( $id ) ) {
-			return 0;
-		}
-
-		$id = (int) $id;
-		self::write_elementor_meta( $id, $data, 'wp-page' );
 		update_post_meta( $id, '_vulnhub_seeded', '1' );
 
 		return $id;
@@ -484,139 +391,4 @@ final class VulnHub_El_Templates {
 			),
 		);
 	}
-
-	/** @return array<int,mixed> */
-	private static function overview_data(): array {
-		return array(
-			self::container(
-				'vhovr01',
-				array(
-					self::widget(
-						'vhovr02',
-						'vulnhub-kpi',
-						array(
-							'vh_heading' => __( 'Where we stand today', 'vulnhub' ),
-							'vh_tiles'   => array(
-								array( '_id' => 'vhkpi1', 'metric' => 'critical' ),
-								array( '_id' => 'vhkpi2', 'metric' => 'overdue' ),
-								array( '_id' => 'vhkpi3', 'metric' => 'coverage_percent' ),
-								array( '_id' => 'vhkpi4', 'metric' => 'coverage_gaps' ),
-								array( '_id' => 'vhkpi5', 'metric' => 'users_missing' ),
-								array( '_id' => 'vhkpi6', 'metric' => 'verify_failed' ),
-							),
-						)
-					),
-				)
-			),
-			self::container(
-				'vhovr03',
-				array(
-					self::widget(
-						'vhovr04',
-						'vulnhub-coverage',
-						array(
-							'vh_heading'      => __( 'Tenable coverage by device type', 'vulnhub' ),
-							'vh_dimension'    => 'asset_type',
-							'vh_view'         => 'bars',
-							'vh_limit'        => 10,
-							'vh_show_summary' => 'yes',
-						)
-					),
-					self::widget(
-						'vhovr05',
-						'vulnhub-coverage',
-						array(
-							'vh_heading'      => __( 'Coverage states', 'vulnhub' ),
-							'vh_view'         => 'donut',
-							'vh_show_summary' => '',
-						)
-					),
-				),
-				array(
-					'flex_direction' => 'row',
-					'flex_gap'       => array(
-						'size' => 20,
-						'unit' => 'px',
-					),
-				)
-			),
-			self::container(
-				'vhovr06',
-				array(
-					self::widget(
-						'vhovr07',
-						'vulnhub-findings',
-						array(
-							'vh_heading'  => __( 'Critical findings past their SLA', 'vulnhub' ),
-							'vh_severity' => 'critical',
-							'vh_overdue'  => 'yes',
-							'vh_limit'    => 10,
-						)
-					),
-				)
-			),
-			self::container(
-				'vhovr08',
-				array(
-					self::widget(
-						'vhovr09',
-						'vulnhub-coverage-gaps',
-						array(
-							'vh_heading' => __( 'Assets Tenable is not scanning', 'vulnhub' ),
-							'vh_limit'   => 15,
-						)
-					),
-				)
-			),
-		);
-	}
-
-	/** @return array<int,mixed> */
-	private static function estate_data(): array {
-		return array(
-			self::container(
-				'vhest01',
-				array(
-					self::widget(
-						'vhest02',
-						'vulnhub-devices',
-						array(
-							'vh_heading'     => __( 'Device information', 'vulnhub' ),
-							'vh_orderby'     => 'risk_score',
-							'vh_limit'       => 25,
-							'vh_identifiers' => 'yes',
-						)
-					),
-				)
-			),
-			self::container(
-				'vhest03',
-				array(
-					self::widget(
-						'vhest04',
-						'vulnhub-teams',
-						array(
-							'vh_heading'    => __( 'Who owns what', 'vulnhub' ),
-							'vh_columns'    => '3',
-							'vh_hide_empty' => 'yes',
-						)
-					),
-				)
-			),
-			self::container(
-				'vhest05',
-				array(
-					self::widget(
-						'vhest06',
-						'vulnhub-panel',
-						array(
-							'vh_panel' => 'ownership_gaps',
-							'vh_width' => '12',
-						)
-					),
-				)
-			),
-		);
-	}
 }
-

@@ -4,8 +4,9 @@ const VH_ROOT = process.env.VULNHUB_ROOT || require('path').resolve(__dirname, '
  *
  * The front end can be perfect while the editor is broken -- a widget whose
  * controls throw, a category that never registers, a panel that renders
- * nothing. This opens the real Elementor editor on the seeded header and on a
- * seeded page and checks the things somebody laying out a page depends on.
+ * nothing. This opens the real Elementor editor on the seeded header and
+ * footer, then renders the device explorer on a throwaway page, and checks the
+ * things somebody laying out a page depends on.
  *
  * Run without sudo: Playwright's browsers live in ~/.cache/ms-playwright.
  */
@@ -165,9 +166,29 @@ function bad(label, detail) {
    * while the body wrote it at 4, so CMDB/Intune/Tenable sat under "Coverage"
    * and "Covered" sat under "Identifiers". Both columns were full of real
    * data, which is exactly why nobody caught it by looking.
+   *
+   * There is no seeded page to look at any more, so build a private one
+   * holding just the device explorer, and delete it again afterwards.
    * ------------------------------------------------------------------ */
+  const wp = (args) => require('child_process')
+    .execSync(`${VH_ROOT}/wp.sh ${args} 2>/dev/null`).toString().trim();
+  let scratch = 0;
+
   try {
-    await page.goto(BASE + '/vulnhub-estate/', { waitUntil: 'networkidle', timeout: 90000 });
+    const tree = JSON.stringify([{ id: 'vhtst01', elType: 'container', settings: {}, elements: [
+      { id: 'vhtst02', elType: 'widget', widgetType: 'vulnhub-devices', elements: [],
+        settings: { vh_orderby: 'risk_score', vh_limit: 25, vh_identifiers: 'yes' } }
+    ] }]);
+    scratch = parseInt(wp(`eval '
+      $id = wp_insert_post( array( "post_type" => "page", "post_status" => "private", "post_title" => "elementorpass scratch" ) );
+      update_post_meta( $id, "_elementor_edit_mode", "builder" );
+      update_post_meta( $id, "_elementor_template_type", "wp-page" );
+      update_post_meta( $id, "_elementor_version", ELEMENTOR_VERSION );
+      update_post_meta( $id, "_elementor_data", wp_slash( base64_decode( "${Buffer.from(tree).toString('base64')}" ) ) );
+      echo $id;'`).split('\n').pop(), 10);
+    if (!scratch) throw new Error('could not create the scratch page');
+
+    await page.goto(BASE + '/?page_id=' + scratch, { waitUntil: 'networkidle', timeout: 90000 });
 
     const t = await page.evaluate(() => {
       const tbl = document.querySelector('.vh-table--estate');
@@ -209,7 +230,7 @@ function bad(label, detail) {
         ? ok('the OS name is readable, not folded into an icon chip', `${t.osLines} line(s) @ ${t.osFont}`)
         : bad('OS name is readable', `${t.osLines} line(s) @ ${t.osFont}`);
 
-      (t.overflow === 0) ? ok('the estate page does not overflow sideways') : bad('no horizontal overflow', t.overflow + 'px');
+      (t.overflow === 0) ? ok('the device explorer does not overflow sideways') : bad('no horizontal overflow', t.overflow + 'px');
 
       /* No icon may render at a size nobody asked for.
        *
@@ -263,6 +284,8 @@ function bad(label, detail) {
     }
   } catch (e) {
     bad('estate table checks', e.message);
+  } finally {
+    if (scratch) wp('post delete ' + scratch + ' --force');
   }
 
   console.log('\n' + passed + ' passed, ' + failed + ' failed');

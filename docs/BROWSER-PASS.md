@@ -80,11 +80,10 @@ Host header, so a cookie minted for one host is not recognised on another.
 
 ### Screens `browserpass.js` covers
 
-24 screens: 12 portal views (dashboard; vulnerabilities plus critical, search,
+22 screens: 12 portal views (dashboard; vulnerabilities plus critical, search,
 overdue and no-patch filters; assets plus needs-user, EOL and no-EDR filters;
-tickets; exceptions), 10 administration sections (overview, integrations,
-imports, rules, teams, activity, audit, settings, lifecycle, appearance) and 2
-Elementor pages (`/vulnhub-overview/`, `/vulnhub-estate/`).
+tickets; exceptions) and 10 administration sections (overview, integrations,
+imports, rules, teams, activity, audit, settings, lifecycle, appearance).
 
 **Not covered** — check these by hand or extend `PAGES`: `/products/`,
 `/vendors/`, `/alerts/`, `/docs/`, `/departments/`, a vulnerability detail page
