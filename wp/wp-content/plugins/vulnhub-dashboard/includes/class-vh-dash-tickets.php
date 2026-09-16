@@ -489,6 +489,12 @@ final class VulnHub_Dash_Tickets {
 			return $fail( __( 'Choose a request type.', 'vulnhub' ) );
 		}
 
+		$due_date = vh_valid_due_date( (string) ( $params['due_date'] ?? '' ) );
+
+		if ( '' !== (string) ( $params['due_date'] ?? '' ) && '' === $due_date ) {
+			return $fail( __( 'The due date must be a real date, today or later.', 'vulnhub' ) );
+		}
+
 		$clean = static function ( $raw, array $allow = array() ): array {
 			$out = array();
 
@@ -550,6 +556,7 @@ final class VulnHub_Dash_Tickets {
 				'total'      => $total,
 				'assets'     => $described,
 				'attachment' => $csv['name'],
+				'due_date'   => $due_date,
 			)
 		);
 

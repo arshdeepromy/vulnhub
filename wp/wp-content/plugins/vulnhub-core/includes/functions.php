@@ -1104,3 +1104,52 @@ function vh_integration_brand( string $id ): array {
 		'links'  => array_values( (array) ( $brand['links'] ?? array() ) ),
 	);
 }
+
+/**
+ * The organisation-wide SLA, in days, for a severity.
+ *
+ * Set under Settings → Ownership. A ticket raised today is due this many days
+ * from today -- not from when the finding was first detected, which for an
+ * old finding put the due date in the past before anyone had been asked.
+ */
+function vh_sla_days( string $severity ): int {
+	$defaults = array(
+		'critical' => 7,
+		'high'     => 30,
+		'medium'   => 90,
+		'low'      => 180,
+	);
+
+	$severity = 'info' === $severity ? 'low' : $severity;
+	$severity = isset( $defaults[ $severity ] ) ? $severity : 'medium';
+	$days     = (int) vulnhub()->settings->platform( 'sla_' . $severity . '_days', $defaults[ $severity ] );
+
+	return max( 1, $days );
+}
+
+/**
+ * Days until an asset request (Tenable coverage, CMDB gap, clean-up…) is due.
+ */
+function vh_asset_request_due_days(): int {
+	return max( 1, (int) vulnhub()->settings->platform( 'asset_request_due_days', 30 ) );
+}
+
+/**
+ * A due date this many days from today, in the site's timezone (Y-m-d).
+ */
+function vh_due_in_days( int $days ): string {
+	return wp_date( 'Y-m-d', time() + max( 0, $days ) * DAY_IN_SECONDS );
+}
+
+/**
+ * A reviewer's due date, or '' when it is not a real date from today on.
+ */
+function vh_valid_due_date( string $date ): string {
+	$date = trim( $date );
+
+	if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $date ) || ! checkdate( (int) substr( $date, 5, 2 ), (int) substr( $date, 8, 2 ), (int) substr( $date, 0, 4 ) ) ) {
+		return '';
+	}
+
+	return $date >= wp_date( 'Y-m-d' ) ? $date : '';
+}

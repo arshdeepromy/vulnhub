@@ -537,6 +537,11 @@ final class Admin {
 			'auto_verify_hours'  => isset( $_POST['auto_verify_hours'] ) ? max( 1, (int) $_POST['auto_verify_hours'] ) : 24,
 			'require_user_on_workstation' => isset( $_POST['require_user_on_workstation'] ) ? 1 : 0,
 			'sla_source'         => isset( $_POST['sla_source'] ) ? sanitize_key( wp_unslash( $_POST['sla_source'] ) ) : 'team',
+			'sla_critical_days'  => isset( $_POST['sla_critical_days'] ) ? max( 1, (int) $_POST['sla_critical_days'] ) : 7,
+			'sla_high_days'      => isset( $_POST['sla_high_days'] ) ? max( 1, (int) $_POST['sla_high_days'] ) : 30,
+			'sla_medium_days'    => isset( $_POST['sla_medium_days'] ) ? max( 1, (int) $_POST['sla_medium_days'] ) : 90,
+			'sla_low_days'       => isset( $_POST['sla_low_days'] ) ? max( 1, (int) $_POST['sla_low_days'] ) : 180,
+			'asset_request_due_days' => isset( $_POST['asset_request_due_days'] ) ? max( 1, (int) $_POST['asset_request_due_days'] ) : 30,
 			'import_date_order'  => isset( $_POST['import_date_order'] ) && in_array( $_POST['import_date_order'], array( 'auto', 'dmy', 'mdy' ), true )
 				? sanitize_key( wp_unslash( $_POST['import_date_order'] ) )
 				: 'auto',

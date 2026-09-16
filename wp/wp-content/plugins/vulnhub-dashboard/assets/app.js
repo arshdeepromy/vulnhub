@@ -459,6 +459,27 @@
 		var dl = el( 'dl', 'vh-review__fields' );
 		( draft.fields || [] ).forEach( function ( pair ) {
 			dl.appendChild( el( 'dt', null, pair[0] ) );
+
+			// The due date can be changed here. A change builds a fresh draft,
+			// so the description's SLA line always matches the date sent.
+			if ( 'Due date' === pair[0] && draft.due ) {
+				var dd = el( 'dd', 'vh-review__due' );
+				var date = el( 'input' );
+				date.type = 'date';
+				date.value = draft.due.value || '';
+				date.min = draft.due.min || '';
+				date.setAttribute( 'aria-label', 'Due date' );
+				date.addEventListener( 'change', function () {
+					if ( ! date.value ) { return; }
+					request.due_date = date.value;
+					loadDraft( d, request, true );
+				} );
+				dd.appendChild( date );
+				dd.appendChild( el( 'span', 'vh-sub', request.due_date ? ' set by you' : ' from the SLA; change it to set your own' ) );
+				dl.appendChild( dd );
+				return;
+			}
+
 			dl.appendChild( el( 'dd', null, pair[1] ) );
 		} );
 		fs.appendChild( dl );
@@ -582,7 +603,7 @@
 		send.disabled = true;
 		send.textContent = 'Send to Jira';
 		if ( ! rebuilding ) { body.innerHTML = ''; }
-		d.querySelector( '[data-vh-review-status]' ).textContent = rebuilding ? 'Rebuilding the file…' : 'Building the ticket…';
+		d.querySelector( '[data-vh-review-status]' ).textContent = rebuilding ? 'Rebuilding the ticket…' : 'Building the ticket…';
 		if ( ! d.open ) { d.showModal(); }
 
 		return wp.apiFetch( { path: '/vulnhub/v1/tickets/draft', method: 'POST', data: request } )

@@ -471,6 +471,7 @@ final class Rest {
 			'query'       => (array) $request->get_param( 'query' ),
 			'summary'     => (string) $request->get_param( 'summary' ),
 			'notes'       => (string) $request->get_param( 'notes' ),
+			'due_date'    => (string) $request->get_param( 'due_date' ),
 		);
 
 		/**

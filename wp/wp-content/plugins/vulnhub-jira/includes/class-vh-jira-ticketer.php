@@ -385,6 +385,12 @@ final class VulnHub_Jira_Ticketer {
 		}
 
 		/* ---- the issue ---- */
+		$due_date = vh_valid_due_date( (string) ( $params['due_date'] ?? '' ) );
+
+		if ( '' !== (string) ( $params['due_date'] ?? '' ) && '' === $due_date ) {
+			return $fail( __( 'The due date must be a real date, today or later.', 'vulnhub' ), array( 'scope' => $scope_out ) );
+		}
+
 		$built = $this->build_issue(
 			$connector,
 			'selection:' . md5( implode( ',', $ids ) ),
@@ -393,6 +399,7 @@ final class VulnHub_Jira_Ticketer {
 			array(
 				'created_via' => 'manual',
 				'attachment'  => $csv ? $csv['name'] : '',
+				'due_date'    => $due_date,
 			)
 		);
 
@@ -521,6 +528,10 @@ final class VulnHub_Jira_Ticketer {
 			'expires_in'  => self::DRAFT_TTL,
 			'scope'       => $scope_out,
 			'fields'      => $shown,
+			'due'         => array(
+				'value' => (string) ( $fields['duedate'] ?? '' ),
+				'min'   => wp_date( 'Y-m-d' ),
+			),
 			'description' => array(
 				'html'  => VulnHub_Jira_Adf::to_html( (array) $fields['description'] ),
 				'bytes' => $description_bytes,
@@ -572,6 +583,7 @@ final class VulnHub_Jira_Ticketer {
 
 		$assets = (array) $spec['assets'];
 		$total  = (int) $spec['total'];
+		$due    = '' !== (string) ( $spec['due_date'] ?? '' ) ? (string) $spec['due_date'] : vh_due_in_days( vh_asset_request_due_days() );
 		$doc    = VulnHub_Jira_Adf::doc();
 
 		$doc->paragraph(
@@ -638,11 +650,15 @@ final class VulnHub_Jira_Ticketer {
 			$doc->paragraph( sprintf( __( 'Every asset is listed in the attached %s.', 'vulnhub' ), (string) $spec['attachment'] ) );
 		}
 
+		/* translators: %s: due date. */
+		$doc->paragraph( sprintf( __( 'Please complete this by %s.', 'vulnhub' ), $due ) );
+
 		$doc->rule();
 		$doc->heading( __( 'How this is tracked', 'vulnhub' ) );
 		$doc->paragraph( __( 'Each of these assets is re-checked against the latest inventory and scan data, and recorded as done, still outstanding, or no longer relevant because it was retired. Please only close this ticket once the work is done.', 'vulnhub' ) );
 
 		$fields = array(
+			'duedate'     => $due,
 			'project'     => array( 'key' => $project ),
 			'summary'     => vh_trim( (string) $spec['summary'], 250 ),
 			'issuetype'   => $routing['issue_type_ref'],
@@ -662,7 +678,7 @@ final class VulnHub_Jira_Ticketer {
 			'type'       => (string) $routing['issue_type'],
 			'priority'   => '',
 			'summary'    => (string) $fields['summary'],
-			'due'        => '',
+			'due'        => $due,
 			'team'       => $team,
 			'severity'   => '',
 			'account_id' => '',
@@ -1341,7 +1357,9 @@ final class VulnHub_Jira_Ticketer {
 		$type     = $routing['issue_type'];
 		$priority = $connector->priority_for( $severity );
 		$summary  = $this->summary( $rows, $grouping, $severity );
-		$due      = $this->due_date( $rows );
+		// Due from the day the ticket is raised, by the organisation SLA for its
+		// severity -- or the date the reviewer set.
+		$due      = '' !== (string) ( $options['due_date'] ?? '' ) ? (string) $options['due_date'] : vh_due_in_days( vh_sla_days( $severity ) );
 
 		if ( '' === $project ) {
 			return array(
@@ -1750,8 +1768,8 @@ final class VulnHub_Jira_Ticketer {
 		$doc      = VulnHub_Jira_Adf::doc();
 		$assets   = $this->distinct( $rows, 'asset_id' );
 		$vulns    = $this->distinct( $rows, 'vuln_id' );
-		$due      = $this->due_date( $rows );
-		$overdue  = '' !== $due && strtotime( $due . ' 23:59:59 UTC' ) < time();
+		$custom   = '' !== (string) ( $options['due_date'] ?? '' );
+		$due      = $custom ? (string) $options['due_date'] : vh_due_in_days( vh_sla_days( $severity ) );
 
 		/* --- 1. What this is and why -------------------------------- */
 
@@ -1831,7 +1849,7 @@ final class VulnHub_Jira_Ticketer {
 					__( 'Remediation owner: %1$s (SLA for %2$s severity: %3$d days).', 'vulnhub' ),
 					(string) $team['name'],
 					strtolower( vh_severity_label( $severity ) ),
-					$this->team_sla_days( $team, $severity )
+					vh_sla_days( $severity )
 				)
 			);
 		}
@@ -1915,34 +1933,18 @@ final class VulnHub_Jira_Ticketer {
 		/* --- 5. SLA -------------------------------------------------- */
 
 		$doc->heading( __( 'Remediation SLA', 'vulnhub' ) );
-
-		if ( '' === $due ) {
-			$doc->paragraph( __( 'No SLA due date has been calculated for these findings yet — that happens on the next vulnerability sync once ownership is resolved.', 'vulnhub' ) );
-		} elseif ( $overdue ) {
-			$doc->paragraph(
-				array(
-					VulnHub_Jira_Adf::strong( __( 'Past SLA.', 'vulnhub' ) ),
-					VulnHub_Jira_Adf::text( ' ' ),
-					VulnHub_Jira_Adf::text(
-						sprintf(
-							/* translators: 1: due date, 2: relative time. */
-							__( 'Remediation was due %1$s (%2$s).', 'vulnhub' ),
-							$due,
-							vh_ago( $due . ' 00:00:00' )
-						)
-					),
-				)
-			);
-		} else {
-			$doc->paragraph(
-				sprintf(
-					/* translators: 1: due date, 2: relative time. */
-					__( 'Remediation is due by %1$s (%2$s).', 'vulnhub' ),
+		$doc->paragraph(
+			$custom
+				/* translators: %s: due date. */
+				? sprintf( __( 'Remediation is due by %s.', 'vulnhub' ), $due )
+				: sprintf(
+					/* translators: 1: due date, 2: number of days, 3: severity. */
+					__( 'Remediation is due by %1$s: %2$d days for %3$s severity.', 'vulnhub' ),
 					$due,
-					vh_ago( $due . ' 00:00:00' )
+					vh_sla_days( $severity ),
+					strtolower( vh_severity_label( $severity ) )
 				)
-			);
-		}
+		);
 
 		/* --- 6. After closing ---------------------------------------- */
 
@@ -2488,54 +2490,6 @@ final class VulnHub_Jira_Ticketer {
 		$ids = $this->distinct( $rows, 'asset_id' );
 
 		return 1 === count( $ids ) ? (int) $ids[0] : 0;
-	}
-
-	/**
-	 * Earliest SLA due date in the group, as Y-m-d (Jira's `duedate` format).
-	 *
-	 * @param array<int,array<string,mixed>> $rows Rows.
-	 */
-	private function due_date( array $rows ): string {
-		$earliest = null;
-
-		foreach ( $rows as $row ) {
-			$due = (string) ( $row['due_at'] ?? '' );
-
-			if ( '' === $due || '0000-00-00 00:00:00' === $due ) {
-				continue;
-			}
-
-			$ts = strtotime( $due . ' UTC' );
-
-			if ( false === $ts ) {
-				continue;
-			}
-			if ( null === $earliest || $ts < $earliest ) {
-				$earliest = $ts;
-			}
-		}
-
-		return null === $earliest ? '' : gmdate( 'Y-m-d', $earliest );
-	}
-
-	/**
-	 * The team's SLA in days for a severity.
-	 *
-	 * @param array<string,mixed> $team     Team row.
-	 * @param string              $severity Severity slug.
-	 */
-	private function team_sla_days( array $team, string $severity ): int {
-		$defaults = array(
-			'critical' => 7,
-			'high'     => 30,
-			'medium'   => 90,
-			'low'      => 180,
-			'info'     => 180,
-		);
-
-		$key = 'sla_' . ( 'info' === $severity ? 'low' : $severity ) . '_days';
-
-		return (int) ( $team[ $key ] ?? $defaults[ $severity ] ?? 30 );
 	}
 
 	/**

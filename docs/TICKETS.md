@@ -124,6 +124,25 @@ A merge moves `ticket_assets` rows to the surviving asset
 The link is the pasted URL if the operator pasted one. Otherwise it is the Jira
 connector's site plus `/browse/KEY`. With neither, there is no link.
 
+## Due dates
+
+A ticket's Jira due date is counted **from the day it is raised**. It used to be
+the earliest SLA due date of its findings, which is counted from first
+detection, so any old finding put the ticket's due date in the past before
+anyone had been asked.
+
+- **Finding tickets:** today plus the **Organisation SLA** days for the
+  ticket's highest severity (`vh_sla_days()`; defaults 7 / 30 / 90 / 180).
+- **Asset tickets:** today plus **Asset request due in** days
+  (`vh_asset_request_due_days()`, default 30).
+- Both are set under Settings → Ownership (platform options `sla_*_days` and
+  `asset_request_due_days`) and computed in the site's timezone
+  (`vh_due_in_days()`).
+- **The review shows the date as an editable field.** Changing it builds a fresh
+  draft with `due_date`, so the description's SLA sentence always states the
+  date that is sent. A date before today, or one that is not a real date, is
+  refused (`vh_valid_due_date()`).
+
 ## Nothing sent to Jira names the product
 
 Tickets arrive in Jira without any mark of where they came from. This covers

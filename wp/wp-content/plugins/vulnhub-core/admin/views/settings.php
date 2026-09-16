@@ -208,6 +208,50 @@ $vh_help = static function ( string $id, string $text, bool $scope = false ): vo
 					</div>
 				</div>
 
+				<div class="vh-field" data-vh-field="<?php esc_attr_e( 'Organisation SLA', 'vulnhub' ); ?>">
+					<span class="vh-field__edge" aria-hidden="true"></span>
+					<div class="vh-field__label">
+						<span class="vh-field__name"><?php esc_html_e( 'Organisation SLA', 'vulnhub' ); ?></span>
+						<span class="vh-field__slug">sla_*_days</span>
+					</div>
+					<div class="vh-field__body">
+						<div class="vh-field__row">
+							<?php
+							foreach (
+								array(
+									'critical' => __( 'Critical', 'vulnhub' ),
+									'high'     => __( 'High', 'vulnhub' ),
+									'medium'   => __( 'Medium', 'vulnhub' ),
+									'low'      => __( 'Low', 'vulnhub' ),
+								) as $vh_sev => $vh_sev_label
+							) :
+								?>
+								<label class="vh-sla-day">
+									<span><?php echo esc_html( $vh_sev_label ); ?></span>
+									<input type="number" min="1" max="3650" name="sla_<?php echo esc_attr( $vh_sev ); ?>_days" class="vh-numfield"
+										value="<?php echo esc_attr( (string) vh_sla_days( $vh_sev ) ); ?>">
+								</label>
+							<?php endforeach; ?>
+							<span class="vh-unit"><?php esc_html_e( 'days', 'vulnhub' ); ?></span>
+						</div>
+						<?php $vh_help( 'vh-help-orgsla', __( 'How long a ticket gets, by its highest severity. A ticket raised today is due that many days from today, and the date is shown and can be changed in the review before anything is sent to Jira.', 'vulnhub' ) ); ?>
+					</div>
+				</div>
+				<div class="vh-field" data-vh-field="<?php esc_attr_e( 'Asset request due in', 'vulnhub' ); ?>">
+					<span class="vh-field__edge" aria-hidden="true"></span>
+					<div class="vh-field__label">
+						<label class="vh-field__name" for="vh-asset-due"><?php esc_html_e( 'Asset request due in', 'vulnhub' ); ?></label>
+						<span class="vh-field__slug">asset_request_due_days</span>
+					</div>
+					<div class="vh-field__body">
+						<div class="vh-field__row">
+							<input type="number" min="1" max="3650" id="vh-asset-due" name="asset_request_due_days" class="vh-numfield"
+								value="<?php echo esc_attr( (string) vh_asset_request_due_days() ); ?>">
+							<span class="vh-unit"><?php esc_html_e( 'days', 'vulnhub' ); ?></span>
+						</div>
+						<?php $vh_help( 'vh-help-assetdue', __( 'Due date for tickets raised from an asset list (Tenable coverage, Defender onboarding, CMDB and Intune gaps, clean-up), which have no severity. Editable in the review before sending.', 'vulnhub' ) ); ?>
+					</div>
+				</div>
 				<div class="vh-field" data-vh-field="<?php esc_attr_e( 'Closure verification delay', 'vulnhub' ); ?>">
 					<span class="vh-field__edge" aria-hidden="true"></span>
 					<div class="vh-field__label">
