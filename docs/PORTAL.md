@@ -125,7 +125,7 @@ The assets list understands, beyond the obvious `search` / `type` / `team` /
 | `known=<src>`, `only:<src>`, `not:<src>` | one system at a time: known by, *solely* known by, or not known by |
 | `has=<a,b>` | known by **all** of these systems |
 | `missing=<a,b>` | known by **none** of these systems |
-| `hosting=<env>` | `aws`, `azure`, `gcp`, `cloud`, `onprem`, `unknown` — the same vocabulary the findings list uses |
+| `hosting=<env>` | `aws`, `azure`, `gcp`, `cloud`, `onprem`, `enduser`, `unknown` — the same vocabulary the findings list uses |
 | `coverage`, `endpoint`, `primary_source`, `operating_system`, `patch_group`, `eol` | scan/EDR state and the dashboard's drill-downs |
 
 `has` and `missing` are what make *"in Tenable, but missing from the CMDB"*
@@ -141,6 +141,26 @@ widget cannot disagree with each other. It classifies **every** asset, while
 the widget counts only servers: every row now carries an environment icon, and
 filtering by an icon only to watch rows vanish would be the wrong surprise. The
 widget's exact set is one Type filter away.
+
+### `enduser`, and why it is classified first
+
+A laptop has an office in the location register, is made by Dell or HP, and
+picks up an RFC1918 address wherever it happens to be — so all three of the
+on-prem signals fire on it. Every one of the estate's ~640 workstations was
+therefore drawing the data-centre rack icon and counting as on-prem, which is
+not a claim the data supports for a machine that is remote by design.
+
+So an asset whose type is in `vh_user_bound_asset_types()` (`workstation`,
+`mobile`) classifies as `enduser` before any on-prem signal is consulted, and
+draws a laptop rather than a rack. It is deliberately placed *after* the cloud
+instance-id branch, which stays the most decisive signal: a Windows 365 or AVD
+desktop still reads as cloud.
+
+`enduser` never appears on the *Servers by hosting environment* widget, because
+that widget counts `asset_type IN ('server','cloud')` and drops environments
+with no servers. That is the right split: the widget is about where servers
+run, and `enduser` exists for the assets list, where it is the icon beside ~640
+hostnames and a filter value of its own.
 
 The vulnerabilities list has its own vocabulary, beyond `search` / `severity` /
 `team` / `department` / `age` / `life`:

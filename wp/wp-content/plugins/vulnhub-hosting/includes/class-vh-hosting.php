@@ -149,11 +149,32 @@ final class VulnHub_Hosting {
 	 * The CASE that maps one server row to an environment key.
 	 *
 	 * Signals, most decisive first: a cloud instance id / cloud location, then
-	 * AWS by EC2 hostname or Amazon/Xen hardware; then on-prem by a named
-	 * location, by server/appliance hardware (VMware, HP, Dell, CLARiiON,
-	 * Mellanox, Check Point, Hyper-V…), or by a private (RFC1918) address.
+	 * end-user devices, then AWS by EC2 hostname or Amazon/Xen hardware; then
+	 * on-prem by a named location, by server/appliance hardware (VMware, HP,
+	 * Dell, CLARiiON, Mellanox, Check Point, Hyper-V…), or by a private
+	 * (RFC1918) address.
+	 *
+	 * End-user devices are classified before any of the on-prem signals and
+	 * cannot fall through to them. A laptop has an office in the location
+	 * register, is made by Dell or HP, and picks up an RFC1918 address on
+	 * whatever network it is on -- so all three on-prem rules fire on it, and
+	 * every one of the estate's ~640 workstations was drawing the data-centre
+	 * icon. They are remote machines; "on-prem" is not a claim this data can
+	 * support for them, and a rack glyph beside a laptop is simply wrong.
+	 *
+	 * A device that genuinely lives in a cloud -- Windows 365, AVD -- still
+	 * reads as cloud, because the cloud instance id above is the more decisive
+	 * signal and keeps its place.
 	 */
 	private static function placement_case(): string {
+		$enduser = implode(
+			',',
+			array_map(
+				static fn( string $t ): string => "'" . esc_sql( $t ) . "'",
+				array_map( 'strval', vh_user_bound_asset_types() )
+			)
+		);
+
 		return "CASE
 			WHEN a.cloud_provider <> '' OR a.aws_instance_id <> '' OR a.azure_vm_id <> '' OR a.gcp_instance_id <> '' OR l.name IN ('AWS Cloud','Azure Cloud','GCP Cloud')
 				THEN CASE
@@ -162,6 +183,8 @@ final class VulnHub_Hosting {
 					WHEN a.cloud_provider = 'aws' OR a.aws_instance_id <> '' OR l.name = 'AWS Cloud'  THEN 'aws'
 					ELSE 'cloud'
 				END
+			WHEN a.asset_type IN ({$enduser})
+				THEN 'enduser'
 			WHEN a.hostname LIKE 'ec2amaz%' OR a.manufacturer LIKE 'Amazon%' OR a.manufacturer LIKE '%EC2%' OR a.manufacturer = 'Xen'
 				THEN 'aws'
 			WHEN l.name IS NOT NULL AND l.name <> ''
@@ -196,6 +219,14 @@ final class VulnHub_Hosting {
 			'gcp'     => array( 'label' => __( 'Cloud — GCP', 'vulnhub' ),   'kind' => 'cloud' ),
 			'cloud'   => array( 'label' => __( 'Cloud — other', 'vulnhub' ), 'kind' => 'cloud' ),
 			'onprem'  => array( 'label' => __( 'On-prem', 'vulnhub' ),       'kind' => 'onprem' ),
+			/*
+			 * Never has servers, so the widget's "drop environments with no
+			 * servers" filter keeps it off that card -- which is right: the
+			 * widget is about where servers run. It exists for the assets
+			 * list, where it is the icon beside ~640 hostnames and a filter
+			 * value of its own.
+			 */
+			'enduser' => array( 'label' => __( 'End-user device', 'vulnhub' ), 'kind' => 'enduser' ),
 			'unknown' => array( 'label' => __( 'Unclassified', 'vulnhub' ),  'kind' => 'unknown' ),
 		);
 	}
@@ -426,6 +457,12 @@ final class VulnHub_Hosting {
 				break;
 			case 'azure':
 				$svg = '<path fill="#0089D6" d="M10.6 4 4.2 20h4.2L13 7.2z"/><path fill="#0089D6" d="M11.3 12.2 8.6 20H20z"/>';
+				break;
+			case 'enduser':
+				// A laptop: lid, screen, and the base it opens from.
+				$svg = '<g fill="none" stroke="#a78bfa" stroke-width="1.6" stroke-linejoin="round">'
+					. '<rect x="5" y="5.5" width="14" height="9" rx="1.5"/>'
+					. '<path d="M2.5 18.5h19" stroke-linecap="round"/></g>';
 				break;
 			case 'onprem':
 				$svg = '<g fill="none" stroke="#4ade80" stroke-width="1.6"><rect x="4.5" y="5" width="15" height="6" rx="1.5"/><rect x="4.5" y="13" width="15" height="6" rx="1.5"/></g>'
