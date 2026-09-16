@@ -105,6 +105,36 @@ operating systems. The two filters are paired deliberately: anything that
 recolours the bands must relabel the key in the same breath, or the key
 describes colours that are no longer on the chart.
 
+### The whole numbers are clickable too
+
+The bands answer "show me the covered half". The numbers beside and above them
+answer "show me all of it", and they link as well:
+
+| Clicked | Opens |
+|---|---|
+| A bar's total (60) | `/eol-plan/?key=<release>&life=reportable` — both halves of that release |
+| Tile *Past end of life* | `/eol-plan/?eol=past&life=reportable` |
+| Tile *Ends within 6 months* | `/eol-plan/?eol=soon&life=reportable` |
+| Tiles *Supported*, *Release unknown* | nothing; the programme has nothing to say about them |
+
+A tile reading zero does not link either: an empty list is a worse answer than
+the zero already on the screen.
+
+The tiles could not simply open the unfiltered plan screen, because the two
+count different populations. The tile counts assets in the inventory whose
+release is past end of life — 83. The screen's own universe is 136: the 127
+programme rows (33 of which match no asset at all) plus the 9 end-of-life
+machines the programme never assessed. Hence the `eol` filter below, which
+restricts the screen to the tile's population, so the number you click and the
+list you land on are the same number.
+
+Two more filters carry the links, guarded by `$context` like the pair above:
+
+```php
+apply_filters( 'vulnhub_eol_bar_total_href', string $href, array $row, string $context );
+apply_filters( 'vulnhub_eol_headline_href',  string $href, string $key, array $counts, string $context );
+```
+
 **With the plugin inactive, or with no data imported, the widget renders
 exactly as it did before.** `VH_EOS_Widget` checks both the class and
 `VH_EOS_Repo::has_data()` before touching anything.
@@ -137,9 +167,24 @@ release key, shown as a removable chip). Alongside them, the portal's own
 vocabulary: `search`, `team`, `site`, `life`. Filters survive Apply and
 sorting, exactly as the assets list does.
 
+`eol` (`past` / `soon`) restricts the screen to assets in the inventory whose
+release is in that state — it is what the widget's headline tiles link through,
+and it composes with every filter above rather than replacing them. `past`
+delegates to `Eol::eol_os_asset_ids()` rather than recomputing the set, so the
+tile and the screen cannot drift apart. In the repository the argument is
+called `eol_status`; `eol` is the querystring name.
+
 **Export CSV** covers the whole filtered set, not the visible page, through
 `admin-post.php?action=vulnhub_eos_export_csv`. The filename names the filter,
 and the button carries the count so you know what you are about to download.
+
+**A bug worth remembering**, found by exporting rather than by reading the
+code: the export carries an **allow-list** of filter names from the screen to
+the download, and `eol` was not on it. The page showed 83 servers, the button
+said 83, and the file held all 136 — silently, because a dropped filter looks
+like a wider export rather than a wrong one. Any new filter on this screen has
+to be added to that list (`VH_EOS_Export::carried()`) and to the filename
+builder, or the CSV quietly stops matching the screen.
 
 ---
 

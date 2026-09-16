@@ -120,7 +120,7 @@ without touching the rest. They all build against the contract in
 | **vulnhub-cmdb** | ServiceNow / Confluence / CSV → business service, team and site for non-user assets |
 | **vulnhub-jira** | Ticket creation with real ADF, status sync, the automation engine, reopen-on-failed-verification |
 | **vulnhub-auth** | TOTP MFA + recovery codes, Okta OIDC, Entra ID OIDC, generic OIDC, LDAP/AD |
-| **vulnhub-dashboard** | The front-end application served at your own domain — every portal view, the dashboard board, and the portal **Administration** area (`/portal-admin/`), which mirrors core's wp-admin screens so nobody needs wp-admin |
+| **vulnhub-dashboard** | The front-end application served at your own domain — every portal view (including **Inventory sources**, which compares the registers against each other), the dashboard board, and the portal **Administration** area (`/portal-admin/`), which mirrors core's wp-admin screens so nobody needs wp-admin |
 | **vulnhub-threat** | CVE ids out of the scanner's own text, enriched from NVD, CISA KEV and FIRST EPSS, and turned into the route an attacker would have to take. Owns the attack-path widget |
 
 The rest extend the platform the same way:
@@ -134,7 +134,7 @@ The rest extend the platform the same way:
 | **vulnhub-docs** | The built-in handbook and developer wiki, as the portal's **Docs** view |
 | **vulnhub-elementor** | VulnHub data as 14 Elementor widgets, and the portal header/footer handed to the Elementor Pro Theme Builder (`docs/ELEMENTOR.md`) |
 | **vulnhub-eos** | The end-of-support remediation programme: which end-of-life machines have a funded project and a date, and which do not. Splits the *Platforms past end of life* widget green/red and adds the **EOL plan** view (`docs/EOS.md`) |
-| **vulnhub-hosting** | Classifies servers as cloud (AWS / Azure / GCP) or on-prem; adds the hosting filter and widget |
+| **vulnhub-hosting** | Classifies servers as cloud (AWS / Azure / GCP) or on-prem. One classification, three places: the *Servers by hosting environment* widget, the `hosting` filter on the assets and findings lists, and the environment icon beside every hostname |
 | **vulnhub-import** | Streaming, resumable, de-duplicating CSV import (chunked browser upload, byte-offset checkpoints). Powers **Administration → Imports** |
 | **vulnhub-mcp** | A machine-facing surface so an agent can read the estate, correct the CMDB and work the coverage-gap list. Adds **Administration → AI access** |
 | **vulnhub-rules** | Ordered, testable rules that classify assets (environment, criticality, type, service, priority weight) before ownership mapping. Adds **Administration → Rules** |
@@ -285,6 +285,33 @@ page from its "View all" link.
 A **Lifecycle support** (EOL / in-support) filter runs across the tabs. It means the OS or the
 software *itself* is discontinued by the vendor (finding-level), not that an
 asset happens to carry one unsupported component — see `docs/LIFECYCLE.md`.
+
+---
+
+## Comparing the registers
+
+Four systems each hold part of the truth about the estate, and none of them
+holds all of it. **Inventory sources** (`/inventory-sources/`) puts them side by
+side: what each register knows, what only it knows, when it last claimed
+anything, and — the point of the screen — a matrix of what each one is missing
+that another has. Read a row across: *Tenable knows 42 machines the CMDB has no
+record of.* Every cell links to exactly those assets, so a number becomes a
+worklist rather than a talking point.
+
+Above the matrix the largest gaps are written out as sentences, ranked by gaps
+*into* a register that is supposed to be complete — the CMDB as the asset
+register, Defender as the agent that should be on every endpoint — rather than
+by raw size. Sorting by size alone leads with whichever system simply knows the
+most, which is true and is nobody's next action.
+
+The same comparison is available as filters on the assets list (`has` and
+`missing`), so "in Tenable, missing from the CMDB" is a link you can keep, sort
+and export.
+
+**What it cannot tell you:** VulnHub holds an asset only once some source has
+claimed it. A machine that none of these systems has ever seen appears nowhere
+here — and nowhere else in the platform either. This compares registers against
+each other, not against reality.
 
 ---
 

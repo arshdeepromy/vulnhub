@@ -38,6 +38,10 @@
   <div><span class="k">vulnhub_widget_connector_sources</span><span class="v">Map a new connector to the widget cache sources it should bust.</span></div>
   <div><span class="k">vulnhub_widget_cache_ttl / vulnhub_widget_stale_ttl</span><span class="v">Tune the freshness (15 min) and serve-stale (6 h) horizons.</span></div>
   <div><span class="k">vulnhub_eol_bar_segments</span><span class="v">Replace the bands on one <em>Platforms past end of life</em> bar — <code>( array $segments, array $row, string $context )</code>. <code>$row</code> carries the release key, label, status and asset count. <code>$context</code> is <code>platforms</code> for the platform bars and empty for the software bars, so a consumer that only understands operating systems cannot restyle the wrong chart. This is how the remediation programme paints the green/red split.</span></div>
+  <div><span class="k">vulnhub_eol_bar_total_href</span><span class="v">Link the total printed beside one bar — <code>( string $href, array $row, string $context )</code>. Empty by default, because the row label already links to that release; it earns its keep once a consumer splits the bar, when the total is the only way back to both halves at once.</span></div>
+  <div><span class="k">vulnhub_eol_headline_href</span><span class="v">Link one of the widget's headline tiles — <code>( string $href, string $key, array $counts, string $context )</code>, where <code>$key</code> is <code>past</code>, <code>soon</code>, <code>supported</code> or <code>unknown</code>. Return nothing for a tile your screen cannot answer for; a link to a list that does not match the number on the tile is worse than no link.</span></div>
+  <div><span class="k">vulnhub_asset_hostname_mark</span><span class="v">Put a small mark before a hostname on the assets list — <code>( string $html, array $asset )</code>, returning escaped markup. The hosting plugin draws the environment icon here. Keep it small and keep it decorative: this is the densest cell on the busiest screen, and the hostname beside it already names the row.</span></div>
+  <div><span class="k">vulnhub_sources_registers_of_record</span><span class="v">Which registers <em>Inventory sources</em> treats as meant-to-be-complete when ranking gaps — default <code>cmdb</code> and <code>defender</code>. Say so here if your source of truth is something else.</span></div>
   <div><span class="k">vulnhub_eol_bar_legend</span><span class="v">Relabel the key to match — <code>( array $legend, string $context )</code>. Paired with the filter above on purpose: recolour the bands without relabelling the key and the key describes colours that are no longer on the chart.</span></div>
 </div>
 
@@ -50,6 +54,7 @@
     return $ext;
 }, 10, 2 );</pre>
 <p>Add the corresponding request key to the findings screen's arg builder so a URL parameter reaches your filter.</p>
+<p><code>vulnhub_assets_query</code> is the same idea for <code>Repo::assets()</code>, and it is how the hosting plugin teaches the assets list about <code>hosting</code>. It takes <code>where</code> and <code>params</code> — and <strong>no joins</strong>. That query is a flat select over the assets table with unaliased columns, and core's own clauses say things like <code>id IN (…)</code>; join a second table carrying its own <code>id</code> and those clauses stop being unambiguous, so the query fails rather than returning the wrong rows. Contribute a self-contained subquery instead. Anything added here reaches the list, its infinite scroll and the CSV export together, which is the reason to put it in the query rather than in a screen.</p>
 
 <h3>Classification, scoring &amp; reachability</h3>
 <div class="vh-defs">

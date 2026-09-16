@@ -75,6 +75,7 @@ viewBox) and optionally `hidden`.
 | products | `/products/` | hidden; reached from "View all" on the Exposure by product widget |
 | vendors | `/vendors/` | yes |
 | eol_plan | `/eol-plan/` | yes; contributed by vulnhub-eos |
+| sources | `/inventory-sources/` | yes; which register knows what, and what each is missing |
 | admin | `/portal-admin/` | hidden; reached from the gear at the foot of the rail |
 | login | `/sign-in/` | hidden |
 
@@ -94,7 +95,68 @@ view. Each entry takes `label`, `url`, an `icon` SVG path and `active`. This is
 how the Elementor pages (*Security overview*, *Estate and ownership*) appear.
 
 **Primary nav order today:** Dashboard, Vulnerabilities, Alerts, Assets,
-EOL plan, Tickets, Exceptions, Vendors, Docs, then the nav-extra links.
+EOL plan, Inventory sources, Tickets, Exceptions, Vendors, Docs, then the
+nav-extra links.
+
+`sources` is not a contributed view: it lives in vulnhub-dashboard
+(`class-vh-dash-sources.php`) and registers itself through the same
+`vulnhub_dash_views` filter anyway, inserting after `assets` so it sits beside
+the register it compares. It creates its own page for the same reason a
+contributed view must — activation ran long before the class existed.
+
+---
+
+## Filters live in the URL
+
+Every list screen keeps its state in the querystring, which is what makes a
+number on a widget able to open the list behind it. Two conventions hold
+across the portal:
+
+- **A control the form owns** round-trips through Apply as a form field.
+- **A filter that only arrives from a link** is rendered as a **removable
+  chip** saying what it means in words. A URL-only filter with no visible
+  explanation is how a screen ends up lying about what it is showing.
+
+The assets list understands, beyond the obvious `search` / `type` / `team` /
+`site` / `life`:
+
+| Parameter | Means |
+|---|---|
+| `known=<src>`, `only:<src>`, `not:<src>` | one system at a time: known by, *solely* known by, or not known by |
+| `has=<a,b>` | known by **all** of these systems |
+| `missing=<a,b>` | known by **none** of these systems |
+| `hosting=<env>` | `aws`, `azure`, `gcp`, `cloud`, `onprem`, `unknown` — the same vocabulary the findings list uses |
+| `coverage`, `endpoint`, `primary_source`, `operating_system`, `patch_group`, `eol` | scan/EDR state and the dashboard's drill-downs |
+
+`has` and `missing` are what make *"in Tenable, but missing from the CMDB"*
+expressible — one chip, two parameters, so removing the chip removes both
+rather than half a sentence. They are implemented in `Repo::assets()` (see
+`docs/CORE-API.md`), so they reach the list, its infinite-scroll endpoint and
+the CSV export alike.
+
+`hosting` is contributed by vulnhub-hosting through `vulnhub_assets_query`,
+using the same classification the *Servers by hosting environment* widget
+counts with and the row icons draw — so a filtered list, the icons and the
+widget cannot disagree with each other. It classifies **every** asset, while
+the widget counts only servers: every row now carries an environment icon, and
+filtering by an icon only to watch rows vanish would be the wrong surprise. The
+widget's exact set is one Type filter away.
+
+### Marks on a row
+
+`vulnhub_asset_hostname_mark` puts a small mark before a hostname —
+`( string $html, array $asset )`, returning escaped markup. vulnhub-hosting
+answers it with the environment icon, the visual partner of the `hosting`
+filter above. Two rules, because this is the densest cell on the busiest
+screen: the mark is decorative (`alt=""`, aria-hidden — the hostname beside it
+already says what the row is), and an asset the rules cannot classify draws
+**nothing**. A shrug-shaped icon on hundreds of rows reads as a finding about
+the estate rather than an absence of information.
+
+The environment for every asset resolves in **one memoised query** for the
+estate, not one per row. Rows render individually and the infinite-scroll
+endpoint renders a fresh batch per request, so there is no moment when a page's
+ids are all known at once.
 
 ---
 
@@ -349,6 +411,8 @@ Every route requires a logged-in user with `vulnhub_view`.
 | `vulnhub_widget_csv` | view | one widget's rows as CSV (nonce `vulnhub_widget_csv_<id>`) |
 | `vulnhub_export_csv` | view | list exports with the column picker |
 | `vulnhub_set_lifecycle` | **triage** | decommission or return to service; returns to the filtered list it came from |
+| `vulnhub_sources_csv` | view | the Inventory sources matrix and per-register figures as CSV |
+| `vulnhub_eos_export_csv` | view | the EOL plan screen's filtered rows |
 | `vulnhub_seed_elementor` | manage | recreate missing seeded Elementor documents |
 
 ---

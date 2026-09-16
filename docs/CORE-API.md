@@ -376,6 +376,25 @@ Repo::findings( array( 'state'=>'open_any', 'severity'=>['critical','high'], 'as
 Repo::summary(); Repo::breakdown( 'team' ); Repo::top_vulns( 10 );
 ```
 
+**Comparing one register against another.** `Repo::assets()` also takes `has`
+and `missing` — comma-separated source slugs (or arrays), ANDed:
+
+```php
+Repo::assets( array( 'has' => 'tenable', 'missing' => 'cmdb' ) );   // scanned, but not on the register
+```
+
+`source` / `without_source` / `sole_source` each answer about one system at a
+time, which cannot express the question an asset register actually needs
+asking: *Tenable scans it, so what is it doing missing from the CMDB?* That is
+two conditions at once.
+
+Slugs are matched as **quoted JSON keys** against the `sources_json` column, so
+`cmdb` cannot match a longer slug like `cmdb_extra`, and no slug can collide
+with a stored date. An unknown slug is neither an error nor dropped: it matches
+nothing in `has` (nothing is known by a system that does not exist) and excludes
+nothing in `missing` — truthful either way, and no whitelist to drift out of
+date. `Repo::source_slugs()` does the parsing if you need the same vocabulary.
+
 ---
 
 ## 5. Shared mock fixtures — use these, do not invent your own
@@ -578,6 +597,41 @@ add_filter( 'vulnhub_portal_nav_extra', static function ( array $links ): array 
 } );
 ```
 
+### Teaching the central queries a new filter
+
+`Repo::findings()` and `Repo::assets()` each take a filter so a plugin can add
+a condition without core learning what the plugin is about.
+
+```php
+add_filter( 'vulnhub_assets_query', function ( array $ext, array $args ): array {
+    if ( empty( $args['hosting'] ) ) {
+        return $ext;                       // not our filter; leave it alone
+    }
+
+    $ext['where'][]  = 'id IN ( SELECT a.id FROM … WHERE … = %s )';
+    $ext['params'][] = sanitize_key( (string) $args['hosting'] );
+
+    return $ext;
+}, 10, 2 );
+```
+
+Both hooks take `where` (clauses, ANDed) and `params` (their bound values,
+appended in the same order — a clause whose placeholders and values drift apart
+corrupts every filter after it, not just yours). The findings hook also takes
+`need_asset` / `need_vuln` to request its joins.
+
+**The assets hook has no join slot, on purpose.** That query is a flat
+`SELECT … FROM {assets}` with unaliased columns, and core's own clauses say
+things like `id IN (…)`. Join a second table carrying its own `id` and those
+clauses become ambiguous — the query does not return the wrong rows, it stops
+running. A consumer that needs another table contributes a self-contained
+subquery instead, which is what vulnhub-hosting does for `hosting` and what
+core already does for owner search.
+
+Filters contributed this way reach everything that calls the repository: the
+list, its infinite-scroll endpoint, and the CSV export — which is the point of
+putting them here rather than in a screen.
+
 ### The dashboard board
 
 Widgets are laid out on a 12-column grid the operator arranges. Two things are
@@ -653,6 +707,10 @@ All defined by `vulnhub-dashboard`; none needs a change to it.
 | `vulnhub_portal_login_wordmark`, `vulnhub_portal_login_host`, `vulnhub_portal_request_access_url`, `vulnhub_portal_privacy_url`, `vulnhub_portal_terms_url`, `vulnhub_portal_status_url` | filters | The sign-in screen's wordmark, host line and footer links. |
 | `vulnhub_portal_login_top`, `vulnhub_portal_login_bottom` | actions | Extra markup on the sign-in card. |
 | `vulnhub_admin_screen_url` | filter (core) | Answered by the dashboard to keep admin-post redirects in the portal. |
+| `vulnhub_asset_hostname_mark` | filter | A small mark before a hostname on the assets list: `( string $html, array $asset )`. Return escaped markup, and keep it small — that is the densest cell on the busiest screen. vulnhub-hosting answers it with the environment icon. |
+| `vulnhub_eol_bar_total_href` | filter | Link the total printed beside one *Platforms past end of life* bar: `( string $href, array $row, string $context )`. Empty by default, and only consulted when `$context` is non-empty, so the software bars cannot be rewired by a consumer that only understands operating systems. |
+| `vulnhub_eol_headline_href` | filter | Link one of that widget's headline tiles: `( string $href, string $key, array $counts, string $context )`. `$key` is `past`, `soon`, `supported` or `unknown`. |
+| `vulnhub_sources_registers_of_record` | filter | Which registers the *Inventory sources* screen treats as meant-to-be-complete when it ranks gaps. Defaults to `[ 'cmdb', 'defender' ]`. |
 | `vulnhub_dashboard_widgets`, `vulnhub_dashboard_default_layout` | filters | Register a dashboard widget and place it on the default board. |
 | `vulnhub_widget_connector_sources` | filter | Which widget data sources a connector's sync invalidates. |
 | `vulnhub_widget_cache_ttl`, `vulnhub_widget_stale_ttl` | filters | Widget cache fresh window (15 min) and serve-stale window (6 h). |
@@ -666,6 +724,7 @@ All defined by `vulnhub-dashboard`; none needs a change to it.
 | `admin-post: vulnhub_widget_csv` | form | One widget's rows as CSV (`vulnhub_view`, nonce `vulnhub_widget_csv_<id>`). |
 | `admin-post: vulnhub_set_lifecycle` | form | Decommission / return to service (`vulnhub_triage`; `lifecycle` or `lifecycle_other`, `assets[]`, `back`). |
 | `admin-post: vulnhub_export_csv` | form | List CSV export with column picker (`VulnHub_Dash_Export`). |
+| `admin-post: vulnhub_sources_csv` | form | The *Inventory sources* matrix and per-register figures (`vulnhub_view`, nonce). |
 
 Every `vulnhub-dashboard/v1` route requires a signed-in user with `vulnhub_view`.
 
