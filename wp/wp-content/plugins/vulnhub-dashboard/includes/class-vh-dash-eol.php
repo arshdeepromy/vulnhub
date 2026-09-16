@@ -82,11 +82,24 @@ final class VulnHub_Dash_Eol {
 		} else {
 			$drawn = array_values( array_unique( array_column( $expired, 'status' ) ) );
 
+			/**
+			 * Filters the key beneath the platform bars.
+			 *
+			 * Paired with `vulnhub_eol_bar_segments`: anything that recolours
+			 * the bands has to relabel the key in the same breath, or the key
+			 * describes colours that are no longer on the chart -- which is
+			 * worse than no key at all.
+			 *
+			 * @param array<int,array{label:string,colour:string}> $legend  Swatch and label per band.
+			 * @param string                                       $context Which set of bars is being drawn.
+			 */
+			$vh_legend = (array) apply_filters( 'vulnhub_eol_bar_legend', self::legend( $drawn ), 'platforms' );
+
 			echo VulnHub_Dash_Charts::segment_bars( // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-				self::bars( array_slice( $expired, 0, self::SHOWN ) ),
+				self::bars( array_slice( $expired, 0, self::SHOWN ), true, 'platforms' ),
 				array(
 					'unit'   => __( 'assets', 'vulnhub' ),
-					'legend' => self::legend( $drawn ),
+					'legend' => $vh_legend,
 				)
 			);
 		}
@@ -358,10 +371,25 @@ final class VulnHub_Dash_Eol {
 	 * the point here: the whole population of a release is in one state, and
 	 * the bar's colour is the answer.
 	 *
-	 * @param array<int,array<string,mixed>> $rows Estate rows.
+	 * Unless somebody knows better. A release's population is one state only
+	 * as far as *this* table can see: it knows the machines are past end of
+	 * life, not whether anybody has a project to do something about them. A
+	 * plugin holding remediation plans does know, and `$context` lets it say
+	 * so -- splitting the bar into what is covered and what is not, which is
+	 * the difference between a number and a piece of work.
+	 *
+	 * Opt-in per caller on purpose: platforms pass a context, software does
+	 * not, so a consumer that only understands operating systems can never
+	 * quietly restyle the software bars. Hardware builds its segments inline
+	 * and never comes through here at all.
+	 *
+	 * @param array<int,array<string,mixed>> $rows    Estate rows.
+	 * @param bool                           $link    Whether bars link to the assets list.
+	 * @param string                         $context Bar set being drawn ('platforms'), or
+	 *                                                '' to draw without consulting anyone.
 	 * @return array<int,array<string,mixed>>
 	 */
-	private static function bars( array $rows, bool $link = true ): array {
+	private static function bars( array $rows, bool $link = true, string $context = '' ): array {
 		$out = array();
 
 		foreach ( $rows as $row ) {
@@ -390,26 +418,47 @@ final class VulnHub_Dash_Eol {
 				$sub = trim( $sub . ' · ' . __( 'no supported release', 'vulnhub' ) );
 			}
 
+			$segments = array(
+				array(
+					'label'  => (string) $row['status_label'],
+					'value'  => (int) $row['assets'],
+					'colour' => self::tone_colour( (string) $row['status'] ),
+					'href'   => $link ? self::url( (string) $row['key'] ) : '',
+					'title'  => sprintf(
+						/* translators: 1: count, 2: product, 3: release, 4: status. */
+						_n( '%1$s asset on %2$s %3$s — %4$s', '%1$s assets on %2$s %3$s — %4$s', (int) $row['assets'], 'vulnhub' ),
+						number_format_i18n( (int) $row['assets'] ),
+						(string) $row['label'],
+						(string) $row['release'],
+						strtolower( (string) $row['status_label'] )
+					),
+				),
+			);
+
+			if ( '' !== $context ) {
+				/**
+				 * Filters the segments drawn for one end-of-life bar.
+				 *
+				 * Return the segments unchanged to keep the default single
+				 * band. A consumer that splits the bar owns the whole row:
+				 * the values it returns must still add up to the release's
+				 * asset count, or the bar will disagree with the total
+				 * printed beside it.
+				 *
+				 * @param array<int,array<string,mixed>> $segments Segments: label, value, colour, href, title.
+				 * @param array<string,mixed>            $row      Estate row: key, label, release, status,
+				 *                                                 status_label, assets, eol, days, and the
+				 *                                                 upgrade target where there is one.
+				 * @param string                         $context  Which set of bars is being drawn.
+				 */
+				$segments = (array) apply_filters( 'vulnhub_eol_bar_segments', $segments, $row, $context );
+			}
+
 			$out[] = array(
 				'label'    => (string) $row['label'],
 				'sub'      => $sub,
 				'href'     => $link ? self::url( (string) $row['key'] ) : '',
-				'segments' => array(
-					array(
-						'label'  => (string) $row['status_label'],
-						'value'  => (int) $row['assets'],
-						'colour' => self::tone_colour( (string) $row['status'] ),
-						'href'   => $link ? self::url( (string) $row['key'] ) : '',
-						'title'  => sprintf(
-							/* translators: 1: count, 2: product, 3: release, 4: status. */
-							_n( '%1$s asset on %2$s %3$s — %4$s', '%1$s assets on %2$s %3$s — %4$s', (int) $row['assets'], 'vulnhub' ),
-							number_format_i18n( (int) $row['assets'] ),
-							(string) $row['label'],
-							(string) $row['release'],
-							strtolower( (string) $row['status_label'] )
-						),
-					),
-				),
+				'segments' => $segments,
 			);
 		}
 
