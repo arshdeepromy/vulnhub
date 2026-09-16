@@ -1313,11 +1313,27 @@ final class VulnHub_Dash_App {
 			 * servers threw the libcurl part away.
 			 */
 			self::hidden_filters(
-				array( 'search', 'patch_available', 'support', 'severity', 'asset_type', 'team_id', 'department', 'age', 'overdue', 'life' )
+				array( 'search', 'fix', 'excepted', 'patch_available', 'support', 'severity', 'asset_type', 'team_id', 'department', 'age', 'overdue', 'life' )
 			);
 			?>
 			<label><?php esc_html_e( 'Search', 'vulnhub' ); ?>
 				<input type="search" name="search" value="<?php echo esc_attr( self::q( 'search' ) ); ?>" placeholder="<?php esc_attr_e( 'CVE, host, owner, plugin…', 'vulnhub' ); ?>">
+			</label>
+			<label><?php esc_html_e( 'Action', 'vulnhub' ); ?>
+				<select name="fix">
+					<option value=""><?php esc_html_e( 'Any action', 'vulnhub' ); ?></option>
+					<?php foreach ( VH_Action::classes() as $vh_ac => $vh_al ) : ?>
+						<option value="<?php echo esc_attr( $vh_ac ); ?>" <?php selected( self::q( 'fix' ), $vh_ac ); ?>
+							title="<?php echo esc_attr( VH_Action::description( $vh_ac ) ); ?>"><?php echo esc_html( $vh_al ); ?></option>
+					<?php endforeach; ?>
+				</select>
+			</label>
+			<label><?php esc_html_e( 'Exceptions', 'vulnhub' ); ?>
+				<select name="excepted">
+					<option value=""><?php esc_html_e( 'Include accepted risk', 'vulnhub' ); ?></option>
+					<option value="exclude" <?php selected( self::q( 'excepted' ), 'exclude' ); ?>><?php esc_html_e( 'Exclude accepted risk', 'vulnhub' ); ?></option>
+					<option value="only" <?php selected( self::q( 'excepted' ), 'only' ); ?>><?php esc_html_e( 'Only accepted risk', 'vulnhub' ); ?></option>
+				</select>
 			</label>
 			<label><?php esc_html_e( 'Patch', 'vulnhub' ); ?>
 				<select name="patch_available">
@@ -2176,6 +2192,16 @@ final class VulnHub_Dash_App {
 			'search'     => self::q( 'search' ),
 			'overdue'    => self::q( 'overdue' ),
 			'patch_available' => self::q( 'patch_available' ),
+			/*
+			 * `fix` on the wire, `action` in the repository. `action` is
+			 * WordPress's own parameter on admin-post.php, and the export
+			 * form posts there: a second `action` field overwrote
+			 * `vulnhub_export_csv` with the filter's value, so the download
+			 * button led nowhere. The screen and the widget links use `fix`;
+			 * only the argument passed to Repo keeps the old name.
+			 */
+			'action'     => self::q( 'fix' ),
+			'excepted'   => self::q( 'excepted' ),
 			'support'    => self::q( 'support' ),
 			'path_zone'  => self::q( 'zone' ),
 			'os_platform' => self::q( 'platform' ),

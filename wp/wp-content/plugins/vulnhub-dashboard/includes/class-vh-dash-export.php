@@ -488,6 +488,18 @@ final class VulnHub_Dash_Export {
 		// filtered list" is not a thing anybody wants in a file.
 		unset( $args['limit'], $args['offset'], $args['vp'], $args['ap'] );
 
+		/*
+		 * The screen calls this filter `action`; the wire cannot. This form
+		 * posts to admin-post.php, where `action` names the handler -- a
+		 * second field of that name overwrote `vulnhub_export_csv` and the
+		 * download went nowhere. It travels as `fix`, which is what the
+		 * findings screen and the widget links use too.
+		 */
+		if ( isset( $args['action'] ) ) {
+			$args['fix'] = $args['action'];
+			unset( $args['action'] );
+		}
+
 		return array_map( 'strval', $args );
 	}
 
@@ -999,6 +1011,13 @@ final class VulnHub_Dash_Export {
 				 */
 				'ids'             => self::get( 'ids' ),
 				'patch_available' => self::get( 'patch_available' ),
+				// The action class and the exception scope, for the same
+				// reason as every other filter here: read them back or the
+				// file quietly holds more rows than the screen counted.
+				// `fix` on the wire: `action` belongs to admin-post.php, which
+				// this very request is addressed to.
+				'action'          => self::get( 'fix' ),
+				'excepted'        => self::get( 'excepted' ),
 				/*
 				 * The lifecycle-support scope (EOL / in-support) and the
 				 * severity-exclusion the download-zone view carries are on
@@ -1063,6 +1082,13 @@ final class VulnHub_Dash_Export {
 				'route'           => self::get( 'route' ),
 				'poc'             => self::get( 'poc' ),
 				'patch_available' => self::get( 'patch_available' ),
+				// The action class and the exception scope, for the same
+				// reason as every other filter here: read them back or the
+				// file quietly holds more rows than the screen counted.
+				// `fix` on the wire: `action` belongs to admin-post.php, which
+				// this very request is addressed to.
+				'action'          => self::get( 'fix' ),
+				'excepted'        => self::get( 'excepted' ),
 				'support'         => self::get( 'support' ),
 				'path_zone'       => self::get( 'path_zone' ),
 				'os_platform'     => self::get( 'os_platform' ),

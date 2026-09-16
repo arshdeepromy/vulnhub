@@ -3649,10 +3649,41 @@ final class Repo {
 		if ( isset( $args['has_ticket'] ) && '' !== $args['has_ticket'] ) {
 			$where[] = $args['has_ticket'] ? 'f.ticket_id > 0' : 'f.ticket_id = 0';
 		}
-		if ( ! empty( $args['excepted'] ) ) {
+		/*
+		 * Exceptions, three ways. The words came later than the booleans:
+		 * callers already passed true for "only excepted" and '0' for
+		 * "exclude them", and the Elementor widget and the MCP tool still do,
+		 * so both spellings have to keep meaning what they meant. Anything
+		 * else -- absent, empty, 'include' -- leaves them in, which is what
+		 * the screen has always done (excepted findings are listed, dimmed).
+		 */
+		$vh_exc = isset( $args['excepted'] ) && ! is_array( $args['excepted'] )
+			? strtolower( trim( (string) $args['excepted'] ) )
+			: '';
+
+		if ( 'exclude' === $vh_exc ) {
+			$where[] = 'f.exception_id = 0';
+		} elseif ( 'only' === $vh_exc ) {
+			$where[] = 'f.exception_id > 0';
+		} elseif ( ! empty( $args['excepted'] ) ) {
 			$where[] = 'f.exception_id > 0';
 		} elseif ( isset( $args['excepted'] ) && '0' === (string) $args['excepted'] ) {
 			$where[] = 'f.exception_id = 0';
+		}
+
+		/*
+		 * What somebody can actually do about it. One class at a time, and
+		 * the clause is VH_Action's own CASE compared to the slug, so a
+		 * widget segment and the list it opens are counting the same rows by
+		 * construction rather than by agreement.
+		 */
+		// Leading backslash, both times: this file is in namespace VulnHub\Core,
+		// so a bare `VH_Action::` resolves to VulnHub\Core\VH_Action and fatals.
+		// class_exists() took a string and so passed, which is what made the
+		// guard look like it was working.
+		if ( ! empty( $args['action'] ) && class_exists( '\VH_Action' ) && \VH_Action::is_class( (string) $args['action'] ) ) {
+			$where[] = \VH_Action::sql_for( (string) $args['action'], 'f', 'v' );
+			$need_v  = true;
 		}
 		if ( ! empty( $args['overdue'] ) ) {
 			$where[]  = 'f.due_at IS NOT NULL AND f.due_at < %s';

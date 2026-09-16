@@ -168,6 +168,26 @@ final class VulnHub_Dash_Widgets {
 			'data'    => array( 'VulnHub_Dash_Patching', 'data' ),
 		);
 
+		$w['action_by_environment'] = array(
+			'label'   => __( 'What we can act on, by environment', 'vulnhub' ),
+			'summary' => __( 'Open findings on servers and cloud instances, split by what the fix actually is: a patch, an uninstall, a setting, a platform replacement, or nothing published yet. Select any part for the list, then export it.', 'vulnhub' ),
+			'group'   => 'exposure',
+			'depends' => array( 'findings', 'assets' ),
+			'width'   => 12,
+			'render'  => array( 'VulnHub_Dash_Action', 'render_environment' ),
+			'data'    => array( 'VulnHub_Dash_Action', 'data_environment' ),
+		);
+
+		$w['action_by_os'] = array(
+			'label'   => __( 'What we can act on, by platform', 'vulnhub' ),
+			'summary' => __( 'The same split by operating system platform. Most of what is open on Linux is waiting on a distribution fix, which is why the actionable part is worth separating.', 'vulnhub' ),
+			'group'   => 'exposure',
+			'depends' => array( 'findings', 'assets' ),
+			'width'   => 12,
+			'render'  => array( 'VulnHub_Dash_Action', 'render_platform' ),
+			'data'    => array( 'VulnHub_Dash_Action', 'data_platform' ),
+		);
+
 		/* ----------------------------------------------------- lifecycle. */
 
 		$w['eol_platforms'] = array(
@@ -494,6 +514,16 @@ final class VulnHub_Dash_Widgets {
 			 * actually do something about?
 			 */
 			array( 'id' => 'patch_availability', 'width' => 6 ),
+			/*
+			 * Beside patch availability, which answers the same question one
+			 * step earlier: that one says how much is fixable, these two say
+			 * where it is and what the fix actually is. On the default board
+			 * because a saved board only ever gains widgets that are on it
+			 * (with_new_widgets()), and a reader who never opens Customise
+			 * would otherwise never see them.
+			 */
+			array( 'id' => 'action_by_environment', 'width' => 12 ),
+			array( 'id' => 'action_by_os', 'width' => 12 ),
 			/*
 			 * Next to patch availability, because it is the same question from
 			 * the other end: software in a download folder has no patch route

@@ -2334,3 +2334,12 @@ ul.vh-prodlist--full > .vh-prodrow[hidden] { display: none; }
   }
   .vh-src__wrap > table.vh-table > tbody > tr > td { text-align: left; }
 }
+
+/* ------------------------------------------- actionability widget legend.
+   Six classes is more than the two-colour bars elsewhere, so the legend wraps
+   rather than scrolling off, and each entry keeps its swatch next to its words
+   -- the split is only readable if the names are. */
+.vh-w[data-vh-widget^="action_by_"] .vh-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 16px;
+}
+.vh-w[data-vh-widget^="action_by_"] .vh-segbars__sub { color: var(--vh-good); }

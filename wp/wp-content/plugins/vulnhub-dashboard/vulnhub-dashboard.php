@@ -27,6 +27,7 @@ require_once VULNHUB_DASH_DIR . 'includes/class-vh-dash-charts.php';
 require_once VULNHUB_DASH_DIR . 'includes/class-vh-dash-app.php';
 require_once VULNHUB_DASH_DIR . 'includes/class-vh-dash-portal.php';
 require_once VULNHUB_DASH_DIR . 'includes/class-vh-dash-patching.php';
+require_once VULNHUB_DASH_DIR . 'includes/class-vh-dash-action.php';
 require_once VULNHUB_DASH_DIR . 'includes/class-vh-dash-eol.php';
 require_once VULNHUB_DASH_DIR . 'includes/class-vh-dash-widgets.php';
 require_once VULNHUB_DASH_DIR . 'includes/class-vh-product-icons.php';

@@ -50,6 +50,7 @@ spl_autoload_register(
 );
 
 require_once VULNHUB_DIR . 'includes/functions.php';
+require_once VULNHUB_DIR . 'includes/class-vh-action.php';
 require_once VULNHUB_DIR . 'includes/class-vh-product.php';
 require_once VULNHUB_DIR . 'includes/class-vh-vendor.php';
 
