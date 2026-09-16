@@ -138,6 +138,24 @@ add returns its error for a person to repeat.
 - **One retry kept for adds:** the OAuth refresh after a `401`, because a 401
   means Jira did nothing.
 
+## One raise per group at a time
+
+The ticketer checks for an open ticket covering the group (for example, the
+same asset and severity) and then either extends that ticket or creates one.
+Those are two separate steps. Without a guard, two raises for the same group
+arriving together would both find nothing open and both create an issue.
+
+`VulnHub_Jira_Ticketer::handle_group()` therefore holds a lock for the group
+(the option `vulnhub_jira_raise_<md5 of grouping key>`, taken with
+`add_option()`, which only one caller can win) around the check and the create.
+
+- **A second raise for the same group arriving meanwhile is refused** with "A
+  ticket for this asset and severity is being raised right now. Try again in a
+  moment." Retrying after that joins the ticket the first raise saved.
+- **Different groups never block each other.**
+- **A lock older than 120 seconds belongs to a raise that died,** so it is taken
+  over rather than blocking for ever.
+
 ## Client methods added
 
 | Method | Endpoint |

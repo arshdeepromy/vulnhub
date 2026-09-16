@@ -310,13 +310,72 @@ final class VulnHub_Jira_Ticketer {
 		string $grouping,
 		array $options
 	): array {
-		$existing = $this->open_ticket_for( $group_key );
+		/*
+		 * One raise per group at a time.
+		 *
+		 * The open-ticket check and the create are separate steps, so two
+		 * raises for the same asset and severity arriving together would both
+		 * find nothing open and both create an issue. The first to arrive holds
+		 * a lock for the group; a second one arriving meanwhile is refused and
+		 * told to try again, rather than waiting -- by then the first has saved
+		 * its ticket and the retry joins it.
+		 */
+		if ( ! $this->lock_group( $group_key ) ) {
+			$connector->log( sprintf( 'Refused a second raise for %s while another was still creating its ticket.', $group_key ) );
 
-		if ( $existing ) {
-			return $this->extend_ticket( $connector, $existing, $rows, $grouping );
+			return array(
+				'ok'      => false,
+				'message' => __( 'A ticket for this asset and severity is being raised right now. Try again in a moment.', 'vulnhub' ),
+			);
 		}
 
-		return $this->create_group_ticket( $connector, $group_key, $rows, $grouping, $options );
+		try {
+			$existing = $this->open_ticket_for( $group_key );
+
+			if ( $existing ) {
+				return $this->extend_ticket( $connector, $existing, $rows, $grouping );
+			}
+
+			return $this->create_group_ticket( $connector, $group_key, $rows, $grouping, $options );
+		} finally {
+			$this->unlock_group( $group_key );
+		}
+	}
+
+	/**
+	 * A lock older than this belongs to a raise that died mid-way. Long enough
+	 * to cover the create call's own 45-second timeout plus the remote link.
+	 */
+	private const GROUP_LOCK_TTL = 120;
+
+	private function group_lock_name( string $group_key ): string {
+		return 'vulnhub_jira_raise_' . md5( $group_key );
+	}
+
+	/**
+	 * Take the group's lock. add_option() is an INSERT on a unique key, so
+	 * exactly one concurrent caller succeeds.
+	 */
+	private function lock_group( string $group_key ): bool {
+		$name = $this->group_lock_name( $group_key );
+
+		if ( add_option( $name, (string) time(), '', false ) ) {
+			return true;
+		}
+
+		wp_cache_delete( $name, 'options' );
+
+		if ( (int) get_option( $name, 0 ) < time() - self::GROUP_LOCK_TTL ) {
+			delete_option( $name );
+
+			return add_option( $name, (string) time(), '', false );
+		}
+
+		return false;
+	}
+
+	private function unlock_group( string $group_key ): void {
+		delete_option( $this->group_lock_name( $group_key ) );
 	}
 
 	/**
