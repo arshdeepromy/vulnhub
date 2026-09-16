@@ -689,6 +689,7 @@ vh_severity_color( 'high' );   vh_severity_pill( 'high' );
 vh_asset_types();              vh_user_bound_asset_types();  vh_finding_states();
 vh_risk_score( $sev, $crit, $exploitable, $vpr );
 vh_json( $maybe_json );        vh_date( $mysql );         vh_ago( $mysql );
+vh_date_only( $date );         // a DATE column, never shifted by a timezone
 vh_fingerprint( ...$parts );   vh_trim( $text, 90 );      vh_admin_url( 'vulnhub-assets', [] );
 vh_can_manage();
 ```
@@ -707,6 +708,17 @@ vh_can_manage();
 - Never `error_log()` a credential. Never echo a secret back into a form field —
   render the mask from `Settings::secret_hint()` as a placeholder instead.
 - Translatable strings use the `vulnhub` text domain.
+- **Times: store UTC, display local.** `vh_now()` is `gmdate()`, every stored
+  timestamp is UTC, and MySQL `NOW()` is UTC in these containers — so
+  comparisons are UTC against UTC and need no conversion. Anything a person
+  reads goes through `vh_date()`, `vh_ago()` or `wp_date()`, which render in
+  the site's timezone. A bare `gmdate()`/`date()` printed to screen is a bug:
+  it was 12 hours wrong here for months, on every sync log line, because the
+  site timezone had never been set.
+- **A date is not an instant.** An end-of-life date, a plan deadline, a due
+  date — a DATE column with no time in it — uses `vh_date_only()`, which
+  formats in UTC so 31 Dec cannot render as 30 Dec somewhere west of UTC.
+  Using `vh_date()` on one also prints a meaningless "00:00".
 - Lint before you finish: `./lint.sh`
 - Smoke-test pages: `./check-pages.sh "/wp-admin/admin.php?page=…"`
 

@@ -205,6 +205,69 @@ final class VH_EOS_Repo {
 	}
 
 	/* =================================================================
+	 * End-of-life populations
+	 * ============================================================== */
+
+	/**
+	 * The assets whose operating-system release is past end of life, or ends
+	 * within six months -- the two populations the widget's headline tiles
+	 * count, so that clicking a tile lands on exactly that many rows.
+	 *
+	 * `past` is core's own list, used rather than recomputed: if the two ever
+	 * disagreed, the tile and this screen would disagree, which is the whole
+	 * thing this method exists to prevent. There is no core equivalent for
+	 * `soon`, so it is derived here with the same two calls core uses
+	 * (match the release, read its status) in a single pass.
+	 *
+	 * Memoised per status: the tiles, the chart and the table all ask within
+	 * one request, and the answer cannot change between them.
+	 *
+	 * @param string $status past|soon.
+	 * @return array<int,int> Asset ids.
+	 */
+	private static function eol_status_ids( string $status ): array {
+		static $cache = array();
+
+		if ( isset( $cache[ $status ] ) ) {
+			return $cache[ $status ];
+		}
+
+		if ( 'past' === $status ) {
+			$cache[ $status ] = array_map( 'intval', Eol::eol_os_asset_ids() );
+
+			return $cache[ $status ];
+		}
+
+		if ( 'soon' !== $status ) {
+			$cache[ $status ] = array();
+
+			return $cache[ $status ];
+		}
+
+		global $wpdb;
+
+		$assets = (array) $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			'SELECT id, operating_system, os_version, asset_type FROM ' . vh_table( 'assets' )
+			. ' WHERE lifecycle_status IN (' . vh_reportable_sql() . ')', // phpcs:ignore WordPress.DB.PreparedSQL
+			ARRAY_A
+		);
+
+		$out = array();
+
+		foreach ( $assets as $asset ) {
+			$matched = Eol::match_os( $asset );
+
+			if ( $matched && 'soon' === Eol::status( (string) $matched['eol'] )['status'] ) {
+				$out[] = (int) $asset['id'];
+			}
+		}
+
+		$cache[ $status ] = $out;
+
+		return $out;
+	}
+
+	/* =================================================================
 	 * Coverage
 	 * ============================================================== */
 
@@ -384,6 +447,7 @@ final class VH_EOS_Repo {
 				'rag'               => '',
 				'project'           => '',
 				'release_key'       => '',
+				'eol_status'        => '',
 				'search'            => '',
 				'team_id'           => 0,
 				'location_id'       => 0,
@@ -453,7 +517,28 @@ final class VH_EOS_Repo {
 
 		if ( '' !== (string) $args['release_key'] ) {
 			$release_ids = array_map( 'intval', Eol::asset_ids( (string) $args['release_key'] ) );
+		}
 
+		/*
+		 * `eol_status` restricts the screen to assets whose RELEASE is past
+		 * end of life (or ends within six months), which is what the widget's
+		 * headline tiles count. It intersects with a release key rather than
+		 * replacing it, so the two compose, and it is what makes the tile's
+		 * number and this screen's row count the same number.
+		 *
+		 * Note what it excludes: a programme host with no asset in the
+		 * inventory has no release to be past the end of, so it drops out.
+		 * That is the point -- the tile counts machines VulnHub can see.
+		 */
+		if ( '' !== (string) $args['eol_status'] ) {
+			$eol_ids = self::eol_status_ids( (string) $args['eol_status'] );
+
+			$release_ids = null === $release_ids
+				? $eol_ids
+				: array_values( array_intersect( $release_ids, $eol_ids ) );
+		}
+
+		if ( null !== $release_ids ) {
 			$where[] = $release_ids
 				? 'p.asset_id IN ( ' . implode( ',', $release_ids ) . ' )'
 				: '1=0';
@@ -546,7 +631,9 @@ final class VH_EOS_Repo {
 	 *
 	 * @param array<string,mixed>  $args        Normalised args.
 	 * @param array<string,bool>   $seen        Hostnames/ids already returned.
-	 * @param array<int,int>|null  $release_ids Assets behind one release, if filtered.
+	 * @param array<int,int>|null  $release_ids The assets the screen is limited to: one release, one
+	 *                                          end-of-life population, or the intersection of both.
+	 *                                          Null when neither filter is set.
 	 * @return array<int,array<string,mixed>>
 	 */
 	private static function unplanned_rows( array $args, array $seen, ?array $release_ids ): array {

@@ -62,3 +62,31 @@
 <p>Each night, approved exceptions past their expiry date flip to <code>expired</code> and their findings return to the open counts (only <em>approved</em> exceptions are honoured). <strong>Revoking</strong> an exception explicitly clears the stamp from its findings straight away. Reference numbers are auto-assigned (<code>EXC-0001</code>, …) so every decision is citable.</p>
 
 <p>See <a href="?doc=tickets-exceptions">Tickets &amp; exceptions</a> for the day-to-day workflow, and <a href="?doc=vulnerabilities">The Vulnerabilities list</a> for how to filter to (or away from) excepted findings.</p>
+
+<h2>End of support — the EOL plan screen</h2>
+
+<p>A finding's lifecycle is one thing; a <em>machine's</em> support lifecycle is another. The lifecycle table tells you a server runs a release its vendor stopped patching. It cannot tell you whether anyone is dealing with that — which project owns it, and by when. That answer comes from the end-of-support retirement programme, imported from its reconciliation workbook under <strong>Administration → Data → EOS remediation plan</strong>, and shown on the <strong>EOL plan</strong> screen.</p>
+
+<div class="vh-note"><p>This is <strong>imported</strong> data, not live scanner data. Every screen states the date it was last uploaded, because a plan is only as current as the last upload, and a security screen that hides its own age is worse than one that admits it.</p></div>
+
+<h3>Covered, or not</h3>
+
+<p>Everything on that screen — and the green and red bands on the dashboard's <em>Platforms past end of life</em> widget — reduces to one question:</p>
+
+<div class="vh-defs">
+  <div><span class="k">Covered</span><span class="v">Remediated already, or a named project whose date is still ahead of it. Drawn green.</span></div>
+  <div><span class="k">Overdue</span><span class="v">A project exists, but its quarter has been and gone without the server being remediated. Counted with the red, and labelled so you can tell it apart from work nobody has scheduled.</span></div>
+  <div><span class="k">Not covered</span><span class="v">No plan, no date (blank or TBD), a visibility gap the scanners cannot verify, or a machine past end of life the programme has never assessed at all. Drawn red.</span></div>
+</div>
+
+<p>Coverage is worked out <em>when the screen is read</em>, never stored. A plan whose quarter ends tonight reads overdue tomorrow morning without anybody re-importing anything — which is the point of tracking it here rather than in the spreadsheet.</p>
+
+<div class="vh-tip"><p>Quarters follow a financial year starting 1&nbsp;April, so FY26 runs 1 April 2025 to 31 March 2026 and "overdue" is measured against the last day of the quarter named. If your fiscal calendar differs, that is a one-line change — ask whoever maintains the platform.</p></div>
+
+<h3>What the screen gives you</h3>
+
+<p>Tiles for in-the-programme / covered / overdue / not covered (each one a filter), a <strong>forward workload</strong> chart of what still needs action by quarter, and the server table: treatment plan, timeframe with its due date, programme state, RAG, owner team, site, open critical and high findings, and last scan. Filter by coverage, state, timeframe, environment tier, RAG or project alongside the portal's own search, team and site, then <strong>Export CSV</strong> — which exports everything matching the filter, not just the page you can see.</p>
+
+<p>Machines the programme has never assessed are included deliberately. They are past end of life and written down nowhere else, which makes them the most interesting rows on the screen. Programme rows with no matching asset are kept too, marked <em>not in inventory</em>: the programme knowing about a server the inventory does not is itself worth seeing.</p>
+
+<p>See <a href="?doc=dashboard">The dashboard, widget by widget</a> for the widget the bands live on.</p>

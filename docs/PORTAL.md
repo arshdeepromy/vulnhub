@@ -74,6 +74,7 @@ viewBox) and optionally `hidden`.
 | exceptions | `/exceptions/` | yes |
 | products | `/products/` | hidden; reached from "View all" on the Exposure by product widget |
 | vendors | `/vendors/` | yes |
+| eol_plan | `/eol-plan/` | yes; contributed by vulnhub-eos |
 | admin | `/portal-admin/` | hidden; reached from the gear at the foot of the rail |
 | login | `/sign-in/` | hidden |
 
@@ -86,13 +87,14 @@ nav. Current users:
 - vulnhub-alerts (`alerts`, inserted after Vulnerabilities)
 - vulnhub-docs (`docs`)
 - vulnhub-departments (`departments`, hidden)
+- vulnhub-eos (`eol_plan`) — the EOL remediation plan; see `docs/EOS.md`
 
 **Navigation-only links.** `vulnhub_portal_nav_extra` only adds a link, not a
 view. Each entry takes `label`, `url`, an `icon` SVG path and `active`. This is
 how the Elementor pages (*Security overview*, *Estate and ownership*) appear.
 
 **Primary nav order today:** Dashboard, Vulnerabilities, Alerts, Assets,
-Tickets, Exceptions, Vendors, Docs, then the nav-extra links.
+EOL plan, Tickets, Exceptions, Vendors, Docs, then the nav-extra links.
 
 ---
 
@@ -348,6 +350,20 @@ Every route requires a logged-in user with `vulnhub_view`.
 | `vulnhub_export_csv` | view | list exports with the column picker |
 | `vulnhub_set_lifecycle` | **triage** | decommission or return to service; returns to the filtered list it came from |
 | `vulnhub_seed_elementor` | manage | recreate missing seeded Elementor documents |
+
+---
+
+## Times on screen
+
+Every timestamp in the database is UTC; every timestamp on screen is the site's
+timezone. Portal views get there through `vh_date()` and `vh_ago()`, and
+date-only values (an EOL date, a plan deadline, a due date) through
+`vh_date_only()`, which does not convert — so 31 Dec stays 31 Dec.
+
+This only works if the site has a timezone. It did not: `timezone_string` was
+empty, WordPress treated "local" as UTC, and every screen read twelve hours
+behind on a New Zealand install. Settings now shows the timezone and says so
+when it is unset. The rules for writing new code are in `docs/CORE-API.md`.
 
 ---
 

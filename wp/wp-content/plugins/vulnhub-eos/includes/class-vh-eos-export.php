@@ -100,7 +100,7 @@ final class VH_EOS_Export {
 	 * @return array<string,string>
 	 */
 	private static function carried( array $args ): array {
-		$keep = array( 'coverage', 'state', 'timeframe', 'tier', 'rag', 'project', 'key', 'search', 'team', 'site', 'life', 'orderby', 'order' );
+		$keep = array( 'coverage', 'state', 'timeframe', 'tier', 'rag', 'project', 'key', 'eol', 'search', 'team', 'site', 'life', 'orderby', 'order' );
 		$out  = array();
 
 		foreach ( $keep as $name ) {
@@ -371,7 +371,7 @@ final class VH_EOS_Export {
 	private static function filename( array $args ): string {
 		$parts = array( 'vulnhub', 'eol-plan' );
 
-		foreach ( array( 'coverage', 'state', 'env_tier', 'rag', 'timeframe' ) as $key ) {
+		foreach ( array( 'coverage', 'state', 'env_tier', 'rag', 'timeframe', 'eol_status' ) as $key ) {
 			$value = (string) ( $args[ $key ] ?? '' );
 
 			if ( '' === $value ) {

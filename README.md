@@ -23,7 +23,20 @@ docker compose ps             # confirm every service is running
 
 The first boot installs WordPress and activates every VulnHub plugin. Open the
 site at the port you set (default **8093**) and log in with the admin account
-created on install. Out of the box the platform runs on a deterministic mock
+created on install.
+
+**Set the site timezone before anyone reads a screen.** WordPress ships with it
+empty, which makes "local time" mean UTC — every timestamp in the platform then
+reads hours behind, on a tool whose whole job is telling you when something was
+last seen:
+
+```bash
+docker compose run --rm --entrypoint wp wpcli option update timezone_string Pacific/Auckland
+```
+
+Stored data is always UTC and never needs migrating, so this is safe to set (or
+change) at any time; it only affects display. Settings → System shows the
+current timezone and warns when it is unset. Out of the box the platform runs on a deterministic mock
 fleet, so every screen is populated before you connect a single real system —
 see **Going live** below to switch a connector over to live data.
 
@@ -116,10 +129,11 @@ The rest extend the platform the same way:
 |---|---|
 | **vulnhub-alerts** | Watches advisory and zero-day feeds (EUVD, MSRC, CISA, GitHub, Red Hat, Ubuntu, any RSS/JSON source) and matches them to software and OS actually in the estate. Adds the **Alerts** view |
 | **vulnhub-aws** | Reads network exposure straight from AWS accounts — which instances the internet can reach, and on which ports |
-| **vulnhub-backup** | Batched, resumable database and `wp-content` backup and restore, with optional S3 push and retention |
+| **vulnhub-backup** | Batched, resumable backup and restore as **one `.tar.gz`** (manifest, database, `wp-content`), with optional S3 push and retention (`docs/BACKUP.md`) |
 | **vulnhub-departments** | Enriches existing people with their Entra department; adds a department filter, widget, page and export. Never creates people |
 | **vulnhub-docs** | The built-in handbook and developer wiki, as the portal's **Docs** view |
 | **vulnhub-elementor** | VulnHub data as 14 Elementor widgets, and the portal header/footer handed to the Elementor Pro Theme Builder (`docs/ELEMENTOR.md`) |
+| **vulnhub-eos** | The end-of-support remediation programme: which end-of-life machines have a funded project and a date, and which do not. Splits the *Platforms past end of life* widget green/red and adds the **EOL plan** view (`docs/EOS.md`) |
 | **vulnhub-hosting** | Classifies servers as cloud (AWS / Azure / GCP) or on-prem; adds the hosting filter and widget |
 | **vulnhub-import** | Streaming, resumable, de-duplicating CSV import (chunked browser upload, byte-offset checkpoints). Powers **Administration → Imports** |
 | **vulnhub-mcp** | A machine-facing surface so an agent can read the estate, correct the CMDB and work the coverage-gap list. Adds **Administration → AI access** |
@@ -335,6 +349,16 @@ stylesheet in the browser's network tab before re-reading the CSS.
   a feed, and why Windows is matched on build number rather than on what the
   inventory calls it (21 machines here are labelled Windows 11 and are running
   Windows 10).
+- **End-of-support remediation** — `docs/EOS.md` covers how the retirement
+  programme's workbook becomes the green/red split on the end-of-life widget:
+  what counts as covered (remediated, or a project with a date still ahead),
+  why an overdue plan is red rather than green, why coverage is computed when
+  read rather than stored, and why an end-of-life machine the programme has
+  never assessed appears in the list at all.
+- **Backup** — `docs/BACKUP.md` covers why a backup is one `.tar.gz` rather
+  than three files, why it is written with hand-rolled tar headers instead of
+  PharData or `tar(1)`, and the three separate reasons the old backup screen
+  made the whole app feel slow — none of which were the backup.
 - **Coverage** — `docs/COVERAGE.md` covers what the Intune CSV import was
   losing (last check-in on all 848 devices, compliance, enrolment, join type,
   office), the CMDB's dropped `Last Scan Date` column, why every imported
