@@ -379,6 +379,13 @@ Tickets::mark_closed( $ticket_id, 'Done' );      // queues closure verification
 Tickets::record_verification( $ticket_id, Tickets::VERIFY_CONFIRMED, 'note', $detail );
 Tickets::awaiting_verification( 50 );            // tickets to re-check
 Tickets::findings_for( $ticket_id );
+
+// Scope tickets: raised about a list of assets rather than findings.
+// provider 'jsm', kind one of Tickets::kinds(). See docs/TICKETS.md.
+Tickets::attach_assets( $ticket_id, $asset_rows );   // snapshots state at raise
+Tickets::asset_outcomes( $ticket );                  // open|resolved|retired|removed counts
+Tickets::assets_for( $ticket, array( 'outcome' => 'open' ) );
+Tickets::set_manual_status( $ticket_id, 'done', $notes );   // jsm rows only
 ```
 
 Verification constants: `VERIFY_NOT_REQUIRED`, `VERIFY_PENDING`, `VERIFY_CONFIRMED`,
@@ -580,6 +587,9 @@ do_action( 'vulnhub_verify_closures' );    // hourly: re-check closed tickets
 do_action( 'vulnhub_run_automations' );    // every 15 min
 apply_filters( 'vulnhub_create_ticket', null, $finding_ids, $request );   // ITSM plugin answers
 apply_filters( 'vulnhub_refresh_ticket', null, $ticket );
+apply_filters( 'vulnhub_ticket_kinds', $kinds );            // add a scope-ticket request type
+apply_filters( 'vulnhub_integration_brand', $brand, $id );  // vendor, colour, logo URL, card links for a connector
+do_action( 'vulnhub_scope_ticket_recorded', $ticket_id );   // a JSM ticket was recorded by hand
 apply_filters( 'vulnhub_admin_pages', $pages );            // add an admin screen
 do_action( 'vulnhub_render_admin_page', $slug );           // render it
 apply_filters( 'vulnhub_user_bound_asset_types', array( 'workstation', 'mobile' ) );

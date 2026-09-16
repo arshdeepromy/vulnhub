@@ -228,31 +228,26 @@ $vh_tabs   = array(
 	$vh_roles    = \VulnHub\Core\Caps::roles();
 	?>
 
-	<div class="vh-grid vh-grid--3">
-		<?php foreach ( VulnHub_Auth_SSO::provider_ids() as $vh_p ) : ?>
-			<?php
-			$vh_conn   = vulnhub()->connectors->get( $vh_p );
-			$vh_active = VulnHub_Auth_SSO::is_active( $vh_p );
-			?>
-			<div class="vh-card">
-				<h2><?php echo esc_html( $vh_conn ? $vh_conn->label() : strtoupper( $vh_p ) ); ?></h2>
-				<p>
-					<span class="vh-health vh-health--<?php echo $vh_active ? 'ok' : 'off'; ?>">
-						<?php echo $vh_active ? esc_html__( 'Live', 'vulnhub' ) : esc_html__( 'Not configured', 'vulnhub' ); ?>
-					</span>
-				</p>
-				<p class="vh-card__meta" style="line-height:1.6">
-					<?php esc_html_e( 'Redirect URI to register with this provider:', 'vulnhub' ); ?>
-				</p>
-				<div class="vh-log" style="max-height:none;font-size:11px"><?php echo esc_html( VulnHub_Auth_SSO::redirect_uri( $vh_p ) ); ?></div>
-				<p style="margin:12px 0 0">
-					<a class="button" href="<?php echo esc_url( vh_admin_url( 'vulnhub-integrations', array( 'connector' => $vh_p ) ) ); ?>">
-						<?php esc_html_e( 'Configure', 'vulnhub' ); ?>
-					</a>
-				</p>
-			</div>
-		<?php endforeach; ?>
-	</div>
+	<?php
+	/*
+	 * The providers themselves -- credentials, the redirect URI to register,
+	 * whether each is live -- are set up from their cards on Integrations.
+	 * This screen used to repeat a card per provider with a Configure button
+	 * that went there anyway; it keeps only the policy that spans them.
+	 */
+	$vh_live = array_filter( VulnHub_Auth_SSO::provider_ids(), array( 'VulnHub_Auth_SSO', 'is_active' ) );
+	?>
+	<p class="vh-card__meta" style="margin:0 0 16px">
+		<?php
+		echo esc_html(
+			$vh_live
+				/* translators: %s: comma-separated provider names. */
+				? sprintf( __( 'Single sign-on is live through %s.', 'vulnhub' ), implode( ', ', array_map( static fn( string $p ): string => vulnhub()->connectors->get( $p ) ? vulnhub()->connectors->get( $p )->label() : $p, $vh_live ) ) )
+				: __( 'No single sign-on provider is live yet.', 'vulnhub' )
+		);
+		?>
+		<a href="<?php echo esc_url( ! is_admin() && class_exists( 'VulnHub_Dash_Portal' ) ? VulnHub_Dash_Portal::portal_url( VulnHub_Dash_Portal::ADMIN_VIEW, array( 'section' => 'integrations' ) ) : vh_admin_url( 'vulnhub-integrations' ) ); ?>"><?php esc_html_e( 'Set providers up on Integrations', 'vulnhub' ); ?> &rarr;</a>
+	</p>
 
 	<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="vh-form" style="margin-bottom:20px">
 		<?php wp_nonce_field( 'vulnhub_auth_save_ssoonly' ); ?>

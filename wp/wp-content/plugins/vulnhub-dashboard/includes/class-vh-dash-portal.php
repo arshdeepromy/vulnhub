@@ -601,7 +601,7 @@ final class VulnHub_Dash_Portal {
 				'cap'     => Caps::MANAGE,
 				'group'   => 'integrations',
 				'order'   => 10,
-				'summary' => __( 'Tenable, Intune, Jira, CMDB and single sign-on.', 'vulnhub' ),
+				'summary' => __( 'Every connected system, with its settings, health and screens.', 'vulnhub' ),
 			),
 			'imports'      => array(
 				'label'   => __( 'Imports', 'vulnhub' ),
@@ -666,6 +666,41 @@ final class VulnHub_Dash_Portal {
 		);
 
 		return $sections;
+	}
+
+	/**
+	 * Sections an integration card links to, and so kept out of the nav.
+	 *
+	 * Tenable's dashboard, Jira routing, AWS accounts and the rest belong to
+	 * one product each, and each product has a card on Integrations that
+	 * links to them. Listing them again in the navigation put the same
+	 * destination in two places and pushed Integrations itself off screen.
+	 * Platform sections are never hidden: Authentication is linked from the
+	 * sign-in providers' cards but is policy for the whole install.
+	 *
+	 * @param array<string,array<string,mixed>> $sections All sections.
+	 * @return string[] Section slugs.
+	 */
+	public static function card_sections( array $sections ): array {
+		if ( ! function_exists( 'vh_integration_brand' ) || ! function_exists( 'vulnhub' ) || ! isset( vulnhub()->connectors ) ) {
+			return array();
+		}
+
+		$out = array();
+
+		foreach ( array_keys( (array) vulnhub()->connectors->all() ) as $id ) {
+			foreach ( vh_integration_brand( (string) $id )['links'] as $link ) {
+				$slug = ! empty( $link['page'] )
+					? self::section_for_admin_page( (string) $link['page'] )
+					: (string) ( $link['section'] ?? '' );
+
+				if ( '' !== $slug && isset( $sections[ $slug ] ) && 'platform' !== ( $sections[ $slug ]['group'] ?? 'platform' ) ) {
+					$out[] = $slug;
+				}
+			}
+		}
+
+		return array_values( array_unique( $out ) );
 	}
 
 	public static function current_section(): string {
@@ -778,13 +813,19 @@ final class VulnHub_Dash_Portal {
 		}
 
 		$group_label = (string) ( $groups[ $def['group'] ?? 'platform' ] ?? '' );
+		$from_card   = self::card_sections( $sections );
+		$nav_current = in_array( $section, $from_card, true ) ? 'integrations' : $section;
 		$mock        = function_exists( 'vulnhub' ) && vulnhub()->settings->mock_mode();
 		?>
 		<div class="vh-adm">
 			<div class="vh-adm__context">
 				<nav class="vh-adm__crumbs" aria-label="<?php esc_attr_e( 'Breadcrumb', 'vulnhub' ); ?>">
 					<span><?php esc_html_e( 'Administration', 'vulnhub' ); ?></span>
-					<span class="sep">/</span><span><?php echo esc_html( $group_label ); ?></span>
+					<?php if ( 'integrations' !== $nav_current || 'integrations' === $section ) : ?>
+						<span class="sep">/</span><span><?php echo esc_html( $group_label ); ?></span>
+					<?php else : ?>
+						<span class="sep">/</span><a href="<?php echo esc_url( self::portal_url( self::ADMIN_VIEW, array( 'section' => 'integrations' ) ) ); ?>"><?php esc_html_e( 'Integrations', 'vulnhub' ); ?></a>
+					<?php endif; ?>
 					<span class="sep">/</span><span class="cur" aria-current="page"><?php echo esc_html( (string) $def['label'] ); ?></span>
 				</nav>
 				<span class="vh-adm__spacer"></span>
@@ -819,7 +860,8 @@ final class VulnHub_Dash_Portal {
 						);
 						$in_group = array_filter(
 							$in_group,
-							static fn( array $s ): bool => current_user_can( (string) $s['cap'] )
+							static fn( array $s, string $slug ): bool => current_user_can( (string) $s['cap'] ) && ! in_array( $slug, $from_card, true ),
+							ARRAY_FILTER_USE_BOTH
 						);
 						if ( ! $in_group ) {
 							continue;
@@ -830,10 +872,10 @@ final class VulnHub_Dash_Portal {
 							<?php foreach ( $in_group as $slug => $s ) : ?>
 								<?php $is_wp = str_starts_with( (string) $slug, self::MIRROR_PREFIX ); ?>
 								<li>
-									<a class="vh-adm__item<?php echo $slug === $section ? ' is-active' : ''; ?>"
+									<a class="vh-adm__item<?php echo $slug === $nav_current ? ' is-active' : ''; ?>"
 										href="<?php echo esc_url( self::portal_url( self::ADMIN_VIEW, array( 'section' => $slug ) ) ); ?>"
 										data-vh-adm-item="<?php echo esc_attr( $slug ); ?>"
-										<?php echo $slug === $section ? ' aria-current="page"' : ''; ?>>
+										<?php echo $slug === $nav_current ? ' aria-current="page"' : ''; ?>>
 										<span class="vh-adm__label"><?php echo esc_html( (string) $s['label'] ); ?></span>
 										<?php if ( 'integrations' === $slug && $conn_bad > 0 ) : ?>
 											<span class="vh-adm__dot" title="<?php esc_attr_e( 'A connector is failing', 'vulnhub' ); ?>"></span>

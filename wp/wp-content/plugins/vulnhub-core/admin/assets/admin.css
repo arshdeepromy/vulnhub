@@ -175,3 +175,101 @@
 /* Staged sync: labelled two-bar layout (download, then process). */
 .vh-sync-progress__row { display: grid; grid-template-columns: 70px 1fr; align-items: center; gap: 10px; margin-top: 8px; }
 .vh-sync-progress__lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; opacity: .7; }
+
+/* ============================================================
+   Integrations: one small branded card per connected system.
+   --vh-brand is set per card from vh_integration_brand().
+   Logos sit on a white tile so every vendor's own colours read
+   the same in both themes.
+   ============================================================ */
+.vh-intg__summary { display: flex; flex-wrap: wrap; gap: 14px; margin: 0 0 16px; font-size: 12.5px; color: #646970; }
+.vh-intg__summary strong { color: #1d2327; font-variant-numeric: tabular-nums; }
+.vh-intg__summary .is-bad strong { color: var(--vh-bad-ink, #ff8c94); }
+
+.vh-intg {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+.vh-intg__card {
+  --vh-brand: #64748b;
+  position: relative;
+  display: flex; flex-direction: column; gap: 10px;
+  min-width: 0;
+  padding: 16px 16px 14px;
+  border: 1px solid #dcdcde;
+  border-radius: 16px;
+  background-color: #fff;
+  background-image:
+    radial-gradient(120% 70% at 0% 0%, color-mix(in srgb, var(--vh-brand) 16%, transparent), transparent 60%);
+  overflow: hidden;
+  transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease;
+}
+.vh-intg__card::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
+  background: var(--vh-brand);
+}
+.vh-intg__card:hover {
+  border-color: color-mix(in srgb, var(--vh-brand) 55%, #dcdcde);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .28);
+  transform: translateY(-2px);
+}
+.vh-intg__card.is-off { background-image: none; }
+.vh-intg__card.is-off::before { background: #dcdcde; }
+.vh-intg__card.is-off .vh-intg__logo { filter: grayscale(.85); opacity: .75; }
+.vh-intg__card--error { border-color: color-mix(in srgb, var(--vh-bad, #ff5a66) 45%, #dcdcde); }
+
+.vh-intg__head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: start; }
+.vh-intg__logo {
+  display: grid; place-items: center; flex: 0 0 auto;
+  width: 44px; height: 44px; border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, .08), 0 4px 12px color-mix(in srgb, var(--vh-brand) 30%, transparent);
+}
+.vh-intg__logo img { width: 28px; height: 28px; object-fit: contain; display: block; }
+.vh-intg__logo--lg { width: 56px; height: 56px; border-radius: 14px; }
+.vh-intg__logo--lg img { width: 36px; height: 36px; }
+.vh-intg__mono { font-weight: 700; font-size: 15px; color: var(--vh-brand); }
+
+.vh-intg__title { min-width: 0; }
+.vh-intg__title h3 { margin: 0; font-size: 14.5px; line-height: 1.3; text-transform: none; letter-spacing: 0; }
+.vh-intg__title h3 a { color: #1d2327; text-decoration: none; }
+.vh-intg__title h3 a:hover { color: var(--vh-link, #1d2327); }
+.vh-intg__title p { margin: 2px 0 0; font-size: 11.5px; color: #646970; }
+.vh-intg__head .vh-health { font-size: 11px; white-space: nowrap; margin-top: 2px; }
+
+.vh-intg__desc {
+  margin: 0; font-size: 12.5px; line-height: 1.5; color: #3c434a;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.vh-intg__meta { display: flex; flex-direction: column; gap: 2px; margin: 0; font-size: 11.5px; color: #646970; }
+.vh-intg__detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vh-intg__card--error .vh-intg__detail { color: var(--vh-bad-ink, #ff8c94); white-space: normal; }
+
+.vh-intg__links { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; }
+.vh-intg__links a { color: var(--vh-link, #3c434a); text-decoration: none; }
+.vh-intg__links a:hover { text-decoration: underline; }
+
+.vh-intg__foot {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin-top: auto; padding-top: 12px; border-top: 1px solid #dcdcde;
+}
+.vh-intg__card .vh-sync-progress:not([hidden]) { margin-top: 2px; font-size: 12px; }
+
+.vh-intg__hero { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin: 0 0 18px; }
+.vh-intg__hero h2 { margin: 0; font-size: 20px; }
+.vh-intg__hero p { margin: 2px 0 0; }
+.vh-intg__hero .vh-intg__links { margin-left: auto; }
+
+@media (max-width: 640px) {
+  .vh-intg { grid-template-columns: 1fr; }
+  .vh-intg__head { grid-template-columns: auto minmax(0, 1fr); }
+  .vh-intg__head .vh-health { grid-column: 2; }
+  .vh-intg__hero .vh-intg__links { margin-left: 0; }
+}
+
+/* On load every progress box reports its last result, which on a card repeats
+   the status above it. Shown while a run is live, or after Sync now is pressed. */
+.vh-intg__card:not(.is-syncing) .vh-sync-progress:not(:has(.vh-sync-progress__bar)) { display: none; }

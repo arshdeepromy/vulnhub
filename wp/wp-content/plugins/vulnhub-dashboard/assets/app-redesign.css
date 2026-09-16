@@ -2343,3 +2343,246 @@ ul.vh-prodlist--full > .vh-prodrow[hidden] { display: none; }
   display: flex; flex-wrap: wrap; gap: 6px 16px;
 }
 .vh-w[data-vh-widget^="action_by_"] .vh-segbars__sub { color: var(--vh-good); }
+
+/* ============================================================
+   Raise Jira ticket (Assets & owners) and the ticket page.
+   The dialog reuses dialog.vh-modal and the export column picker;
+   only the layout that is new lives here.
+   ============================================================ */
+.vh-raise { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 12px; }
+.vh-raise .vh-btn svg { margin-right: 6px; vertical-align: -2px; }
+
+/*
+ * dialog.vh-modal declares display:block, which beats the browser's own
+ * "closed dialogs are hidden" rule -- so without this the dialog sat on the
+ * page, open, before anybody pressed the button.
+ */
+dialog.vh-raise__dialog:not([open]) { display: none; }
+dialog.vh-raise__dialog {
+  position: fixed; inset: 0; margin: auto; height: fit-content; z-index: 100;
+  width: min(760px, calc(100vw - 32px));
+}
+dialog.vh-raise__dialog > h2 { margin: 0 32px 16px 0; }
+.vh-raise__form { display: flex; flex-direction: column; gap: 18px; }
+.vh-raise__step { display: flex; flex-direction: column; gap: 10px; }
+.vh-raise__step + .vh-raise__step { border-top: 1px solid var(--vh-line); padding-top: 16px; }
+.vh-raise__step h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; }
+.vh-raise__n {
+  display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+  border: 1px solid var(--vh-line-2, var(--vh-line)); font-size: 11px; color: var(--vh-muted);
+}
+.vh-raise__step p { margin: 0; }
+.vh-raise__dialog .vh-export__cols { max-height: min(30vh, 260px); }
+
+.vh-raise__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.vh-raise__grid label, .vh-raise__status label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--vh-muted); }
+.vh-raise__wide { grid-column: 1 / -1; }
+.vh-raise__grid input, .vh-raise__grid select, .vh-raise__grid textarea,
+.vh-raise__status select, .vh-raise__status textarea { width: 100%; box-sizing: border-box; }
+.vh-raise__grid input:invalid:not(:placeholder-shown) { border-color: var(--vh-sev-critical-ink, #ff8c94); }
+
+.vh-raise__status { display: grid; grid-template-columns: minmax(0, 200px) minmax(0, 1fr); gap: 10px; align-items: end; margin-top: 14px; border-top: 1px solid var(--vh-line); padding-top: 12px; }
+.vh-raise__status button { grid-column: 1 / -1; justify-self: start; }
+.vh-raise__filters { margin: 8px 0; padding-left: 18px; font-size: 13px; color: var(--vh-ink-2); }
+.vh-raise__links { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.vh-prewrap { white-space: pre-wrap; }
+.vh-chip.is-active { border-color: var(--vh-link, currentColor); color: var(--vh-ink); }
+.vh-table--ticket-assets td .vh-meta { display: block; margin-top: 3px; }
+
+@media (max-width: 640px) {
+  .vh-raise__grid, .vh-raise__status { grid-template-columns: 1fr; }
+}
+
+/* ============================================================
+   Integrations: one small branded card per connected system.
+   --vh-brand is set per card from vh_integration_brand().
+   Logos sit on a white tile so every vendor's own colours read
+   the same in both themes.
+   ============================================================ */
+.vh-intg__summary { display: flex; flex-wrap: wrap; gap: 14px; margin: 0 0 16px; font-size: 12.5px; color: var(--vh-muted); }
+.vh-intg__summary strong { color: var(--vh-ink); font-variant-numeric: tabular-nums; }
+.vh-intg__summary .is-bad strong { color: var(--vh-bad-ink, #ff8c94); }
+
+.vh-intg {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+.vh-intg__card {
+  --vh-brand: #64748b;
+  position: relative;
+  display: flex; flex-direction: column; gap: 10px;
+  min-width: 0;
+  padding: 16px 16px 14px;
+  border: 1px solid var(--vh-line);
+  border-radius: 16px;
+  background-color: var(--vh-raised-solid, var(--vh-surface));
+  background-image:
+    radial-gradient(120% 70% at 0% 0%, color-mix(in srgb, var(--vh-brand) 16%, transparent), transparent 60%);
+  overflow: hidden;
+  transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease;
+}
+.vh-intg__card::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
+  background: var(--vh-brand);
+}
+.vh-intg__card:hover {
+  border-color: color-mix(in srgb, var(--vh-brand) 55%, var(--vh-line));
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .28);
+  transform: translateY(-2px);
+}
+.vh-intg__card.is-off { background-image: none; }
+.vh-intg__card.is-off::before { background: var(--vh-line); }
+.vh-intg__card.is-off .vh-intg__logo { filter: grayscale(.85); opacity: .75; }
+.vh-intg__card--error { border-color: color-mix(in srgb, var(--vh-bad, #ff5a66) 45%, var(--vh-line)); }
+
+.vh-intg__head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: start; }
+.vh-intg__logo {
+  display: grid; place-items: center; flex: 0 0 auto;
+  width: 44px; height: 44px; border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, .08), 0 4px 12px color-mix(in srgb, var(--vh-brand) 30%, transparent);
+}
+.vh-intg__logo img { width: 28px; height: 28px; object-fit: contain; display: block; }
+.vh-intg__logo--lg { width: 56px; height: 56px; border-radius: 14px; }
+.vh-intg__logo--lg img { width: 36px; height: 36px; }
+.vh-intg__mono { font-weight: 700; font-size: 15px; color: var(--vh-brand); }
+
+.vh-intg__title { min-width: 0; }
+.vh-intg__title h3 { margin: 0; font-size: 14.5px; line-height: 1.3; text-transform: none; letter-spacing: 0; }
+.vh-intg__title h3 a { color: var(--vh-ink); text-decoration: none; }
+.vh-intg__title h3 a:hover { color: var(--vh-link, var(--vh-ink)); }
+.vh-intg__title p { margin: 2px 0 0; font-size: 11.5px; color: var(--vh-muted); }
+.vh-intg__head .vh-health { font-size: 11px; white-space: nowrap; margin-top: 2px; }
+
+.vh-intg__desc {
+  margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--vh-ink-2);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.vh-intg__meta { display: flex; flex-direction: column; gap: 2px; margin: 0; font-size: 11.5px; color: var(--vh-muted); }
+.vh-intg__detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vh-intg__card--error .vh-intg__detail { color: var(--vh-bad-ink, #ff8c94); white-space: normal; }
+
+.vh-intg__links { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; }
+.vh-intg__links a { color: var(--vh-link, var(--vh-ink-2)); text-decoration: none; }
+.vh-intg__links a:hover { text-decoration: underline; }
+
+.vh-intg__foot {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin-top: auto; padding-top: 12px; border-top: 1px solid var(--vh-line);
+}
+.vh-intg__card .vh-sync-progress:not([hidden]) { margin-top: 2px; font-size: 12px; }
+
+.vh-intg__hero { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin: 0 0 18px; }
+.vh-intg__hero h2 { margin: 0; font-size: 20px; }
+.vh-intg__hero p { margin: 2px 0 0; }
+.vh-intg__hero .vh-intg__links { margin-left: auto; }
+
+@media (max-width: 640px) {
+  .vh-intg { grid-template-columns: 1fr; }
+  .vh-intg__head { grid-template-columns: auto minmax(0, 1fr); }
+  .vh-intg__head .vh-health { grid-column: 2; }
+  .vh-intg__hero .vh-intg__links { margin-left: 0; }
+}
+
+/* On load every progress box reports its last result, which on a card repeats
+   the status above it. Shown while a run is live, or after Sync now is pressed. */
+.vh-intg__card:not(.is-syncing) .vh-sync-progress:not(:has(.vh-sync-progress__bar)) { display: none; }
+
+/* ============================================================
+   Integration configure screen (core admin/views/integrations.php).
+   Reuses the Settings screen's vh-set / vh-scard / vh-field / vh-savebar;
+   only what is new lives here: the tiny "?" help, the side Guide card,
+   switches, notes and the Last run list.
+   ============================================================ */
+.vh-cfg { margin-top: 4px; }
+.vh-field[hidden], .vh-cfg__note[hidden] { display: none !important; }
+
+.vh-field__head { display: flex; align-items: center; gap: 8px; min-height: 20px; }
+.vh-field__req { color: var(--vh-bad-ink, #ff8c94); font-weight: 700; }
+.vh-field__state { font-size: 12px; color: var(--vh-muted); }
+.vh-cfg .vh-field__body > select, .vh-cfg .vh-field__body > .vh-field__text { width: 100%; max-width: 460px; box-sizing: border-box; }
+.vh-cfg .vh-field__row .vh-field__text { max-width: 360px; }
+.vh-cfg textarea.vh-field__text { max-width: 100%; font-family: var(--vh-mono); font-size: 12px; }
+
+/* the tiny question mark */
+.vh-help.vh-help--q {
+  align-self: center; flex: none; width: 18px; height: 18px; padding: 0; gap: 0; justify-content: center;
+  border-radius: 50%; border-width: 1.5px; font: 700 10.5px/1 var(--vh-font); letter-spacing: 0; text-transform: none;
+}
+.vh-help.vh-help--q.is-guiding { border-color: var(--vh-accent); background: var(--vh-accent); color: var(--vh-accent-ink, #04121f); }
+.vh-bubble--field { flex: 1 0 100%; max-width: none; margin: 2px 0 0; }
+.vh-bubble__body p { margin: 0; font-size: 12.5px; line-height: 1.65; color: var(--vh-ink-2); }
+.vh-bubble__body p + p { margin-top: 8px; }
+.vh-field.is-guided { background: rgba(var(--vh-accent-rgb), .06); }
+.vh-field.is-guided .vh-field__edge { opacity: .55; }
+
+/* switches: a checkbox that reads as on/off */
+.vh-switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-size: 12.5px; color: var(--vh-ink-2); text-transform: none; letter-spacing: 0; }
+.vh-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.vh-switch__track {
+  position: relative; flex: none; width: 34px; height: 20px; border-radius: 999px;
+  background: var(--vh-neutral-bg, rgba(120,140,170,.25)); border: 1px solid var(--vh-line-2, var(--vh-line));
+  transition: background .15s, border-color .15s;
+}
+.vh-switch__track::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--vh-ink-2); transition: transform .15s, background .15s;
+}
+.vh-switch input:checked + .vh-switch__track { background: var(--vh-accent); border-color: var(--vh-accent); }
+.vh-switch input:checked + .vh-switch__track::after { transform: translateX(14px); background: var(--vh-accent-ink, #04121f); }
+.vh-switch input:focus-visible + .vh-switch__track { outline: 2px solid var(--vh-accent); outline-offset: 2px; }
+.vh-check--inline { font-size: 12px; }
+
+/* notes: status and instructions that stay visible */
+.vh-cfg__note {
+  margin: 0; padding: 14px 20px; border-top: 1px solid var(--vh-line);
+  font-size: 12.5px; line-height: 1.6; color: var(--vh-ink-2);
+  background: rgba(var(--vh-accent-rgb), .04);
+}
+.vh-cfg__note strong { color: var(--vh-ink); }
+.vh-cfg__note .vh-btn, .vh-cfg__note .button { margin: 8px 8px 0 0; vertical-align: middle; }
+.vh-cfg__note em { display: block; margin-top: 8px; font-style: normal; font-size: 12px; }
+.vh-cfg__note .vh-bad { color: var(--vh-bad-ink, #ff8c94); }
+
+/* rail */
+.vh-cfg__actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 8px !important; }
+.vh-cfg__uri { max-height: none; font-size: 11px; word-break: break-all; }
+.vh-cfg__guide { position: sticky; top: 64px; transition: border-color .3s; }
+.vh-cfg__guide.is-fresh { animation: vhGuidePulse .6s ease; }
+@keyframes vhGuidePulse { from { border-color: var(--vh-accent); } to { border-color: var(--vh-line); } }
+.vh-cfg__guide .vh-rail-card__body p { color: var(--vh-ink-2); font-size: 12.5px; line-height: 1.65; }
+.vh-cfg__guide .vh-rail-card__body a { color: var(--vh-link); }
+.vh-cfg__guide .vh-rail-card__body code { font-size: 11.5px; }
+.vh-cfg__dl { display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; margin: 0 0 10px; font-size: 12.5px; }
+.vh-cfg__dl dt { color: var(--vh-muted); }
+.vh-cfg__dl dd { margin: 0; color: var(--vh-ink); font-variant-numeric: tabular-nums; }
+
+@media (max-width: 1099px) {
+  .vh-cfg__guide { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vh-cfg__guide.is-fresh { animation: none; }
+  .vh-switch__track, .vh-switch__track::after { transition: none; }
+}
+/* The field bubble sits after the input, not beside its button, so the
+   Settings screen's "button + bubble" rule never matches it. */
+html.vh-js .vh-field:has(.vh-help--q[aria-expanded="true"]) > .vh-bubble--field { display: block; }
+/* .vh-field__text grows along its row on the Settings screen (flex: 1 1 240px).
+   Here the field body is a column, so that basis became a 240px-tall input. */
+.vh-cfg .vh-field__body > .vh-field__text,
+.vh-cfg .vh-field__body > select { flex: none; }
+.vh-cfg .vh-field__row .vh-field__text { flex: 1 1 200px; }
+/* The rail runs the full height of the form, so the Guide -- its last card --
+   can stay in view while the form scrolls. Solid, so nothing shows through. */
+.vh-cfg { align-items: stretch; }
+.vh-cfg .vh-cfg__rail { align-self: stretch; }
+.vh-cfg__guide { background-color: var(--vh-raised-solid, var(--vh-surface)); z-index: 2; }
+.vh-cfg__clear { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--vh-muted); cursor: pointer; text-transform: none; letter-spacing: 0; }
+.vh-cfg__clear input { width: 14px; height: 14px; margin: 0; accent-color: var(--vh-bad, #ff5a66); }
+/* Keep the "?" beside the words on a label that wraps, not at the column edge. */
+.vh-field__head { align-items: flex-start; }
+.vh-field__head .vh-field__name { flex: 0 1 auto; }
+.vh-field__head .vh-help--q { margin-top: 1px; }

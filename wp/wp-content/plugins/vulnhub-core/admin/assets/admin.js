@@ -398,6 +398,10 @@
 	document.addEventListener( 'click', function ( e ) {
 		var b = e.target.closest( '[data-vh-action="sync"]' );
 		if ( b && b.dataset.vhConnector ) {
+			// An integration card shows its progress line only once somebody
+			// asks for a sync; on load the card's own status already says it.
+			var card = b.closest( '.vh-intg__card' );
+			if ( card ) { card.classList.add( 'is-syncing' ); }
 			window.setTimeout( function () { poll( b.dataset.vhConnector ); }, 600 );
 		}
 	} );

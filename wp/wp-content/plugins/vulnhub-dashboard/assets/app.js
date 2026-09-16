@@ -2002,11 +2002,58 @@ document.addEventListener( 'click', function ( e ) {
 
 	function settingsHelp( form ) {
 		var toggles = [].slice.call( form.querySelectorAll( '.vh-help' ) );
+
+		/*
+		 * The side guide (integration configure screen). On a wide screen a
+		 * "?" shows its setting's guidance in the rail's Guide card instead
+		 * of a bubble under the field, so the form stays still while reading.
+		 * Narrow screens -- where the rail sits below the form, out of sight
+		 * -- keep the inline bubble.
+		 */
+		var panel = form.hasAttribute( 'data-vh-guide-form' ) ? document.querySelector( '[data-vh-guide-panel]' ) : null;
+		var panelHead = panel ? panel.querySelector( '[data-vh-guide-heading]' ) : null;
+		var panelBody = panel ? panel.querySelector( '[data-vh-guide-body]' ) : null;
+		var wide = window.matchMedia ? window.matchMedia( '(min-width: 1100px)' ) : null;
+
+		function sideMode() { return !! ( panel && panelBody && wide && wide.matches ); }
+
+		function clearGuided() {
+			toggles.forEach( function ( t ) { t.classList.remove( 'is-guiding' ); } );
+			form.querySelectorAll( '.vh-field.is-guided' ).forEach( function ( f ) { f.classList.remove( 'is-guided' ); } );
+		}
+
+		function guide( t ) {
+			var bubble = document.getElementById( t.getAttribute( 'aria-controls' ) );
+			var body = bubble ? bubble.querySelector( '.vh-bubble__body' ) : null;
+			var field = t.closest( '.vh-field' );
+
+			clearGuided();
+			t.classList.add( 'is-guiding' );
+			if ( field ) { field.classList.add( 'is-guided' ); }
+			if ( panelHead ) { panelHead.textContent = t.getAttribute( 'data-vh-guide-title' ) || panelHead.textContent; }
+			panelBody.innerHTML = body ? body.innerHTML : '';
+			panel.classList.remove( 'is-fresh' );
+			void panel.offsetWidth; // restart the highlight animation
+			panel.classList.add( 'is-fresh' );
+
+			// A rail pushed below the fold by a tall Connection card: bring the
+			// guide into view rather than update something nobody can see.
+			var r = panel.getBoundingClientRect();
+			if ( r.top > window.innerHeight - 80 || r.bottom < 0 ) {
+				panel.scrollIntoView( { behavior: 'smooth', block: 'nearest' } );
+			}
+		}
+
 		function closeAll( except ) {
 			toggles.forEach( function ( t ) { if ( t !== except ) { t.setAttribute( 'aria-expanded', 'false' ); } } );
 		}
 		toggles.forEach( function ( t ) {
 			t.addEventListener( 'click', function () {
+				if ( sideMode() ) {
+					closeAll( null );
+					guide( t );
+					return;
+				}
 				var open = 'true' === t.getAttribute( 'aria-expanded' );
 				closeAll( t );
 				t.setAttribute( 'aria-expanded', open ? 'false' : 'true' );
@@ -2071,7 +2118,9 @@ document.addEventListener( 'click', function ( e ) {
 				var tab = form.querySelector( '[data-vh-tab="' + panel.getAttribute( 'data-vh-tabpanel' ) + '"]' );
 				if ( tab ) { tab.classList.toggle( 'is-dirty', !! panel.querySelector( '.is-dirty' ) ); }
 			} );
-			var navItem = document.querySelector( '[data-vh-adm-item="settings"]' );
+			// The nav row to badge: Settings by default, or whichever section
+			// the form names (the integration configure screen says so).
+			var navItem = document.querySelector( '[data-vh-adm-item="' + ( form.getAttribute( 'data-vh-nav' ) || 'settings' ) + '"]' );
 			if ( navItem ) {
 				var pill = navItem.querySelector( '.vh-adm__count' );
 				if ( changed.length && ! pill ) {

@@ -1001,3 +1001,106 @@ function vh_trim( ?string $text, int $len = 90 ): string {
 	return mb_substr( $text, 0, $len ) . '…';
 }
 
+
+/**
+ * How an integration presents itself on the Integrations screen: the vendor,
+ * a brand colour for the card's accent, a bundled logo, and the other screens
+ * that belong to it.
+ *
+ * Logos live in admin/assets/brands and are served from this install, never
+ * hot-linked, so the screen renders the same offline and under a strict CSP.
+ * A connector with no entry gets a monogram on a neutral tile.
+ *
+ * `links` are the product's own screens (Tenable's dashboard, Jira routing,
+ * AWS accounts). They are reached from the card, which is why the portal keeps
+ * them out of the admin navigation -- see VulnHub_Dash_Portal::card_sections().
+ * Each is either `page` (a registered admin screen) or `section` (a portal-only
+ * admin section).
+ *
+ * @return array{vendor:string,color:string,logo:string,links:array<int,array{label:string,page?:string,section?:string}>}
+ */
+function vh_integration_brand( string $id ): array {
+	$logo = static fn( string $file ): string => VULNHUB_URL . 'admin/assets/brands/' . $file;
+
+	$brands = array(
+		'tenable' => array(
+			'vendor' => 'Tenable',
+			'color'  => '#00a5b5',
+			'logo'   => $logo( 'tenable.png' ),
+			'links'  => array( array( 'label' => __( 'Scan data', 'vulnhub' ), 'page' => 'vulnhub-tenable' ) ),
+		),
+		'aws'     => array(
+			'vendor' => 'Amazon Web Services',
+			'color'  => '#ff9900',
+			'logo'   => $logo( 'aws.svg' ),
+			'links'  => array( array( 'label' => __( 'Accounts', 'vulnhub' ), 'section' => 'aws-accounts' ) ),
+		),
+		'cmdb'    => array(
+			'vendor' => __( 'Asset register', 'vulnhub' ),
+			'color'  => '#5b6cf0',
+			'logo'   => $logo( 'database.svg' ),
+			'links'  => array( array( 'label' => __( 'Import, mapping & coverage', 'vulnhub' ), 'page' => 'vulnhub-cmdb' ) ),
+		),
+		'intune'  => array(
+			'vendor' => 'Microsoft',
+			'color'  => '#0078d4',
+			'logo'   => $logo( 'microsoft.svg' ),
+			'links'  => array( array( 'label' => __( 'Devices & people', 'vulnhub' ), 'page' => 'vulnhub-intune' ) ),
+		),
+		'jira'    => array(
+			'vendor' => 'Atlassian',
+			'color'  => '#2684ff',
+			'logo'   => $logo( 'jira.svg' ),
+			'links'  => array(
+				array( 'label' => __( 'Tickets', 'vulnhub' ), 'page' => 'vulnhub-jira' ),
+				array( 'label' => __( 'Routing', 'vulnhub' ), 'section' => 'jira-routing' ),
+				array( 'label' => __( 'Automation', 'vulnhub' ), 'page' => 'vulnhub-automation' ),
+			),
+		),
+		'okta'    => array(
+			'vendor' => 'Okta',
+			'color'  => '#007dc1',
+			'logo'   => $logo( 'okta.svg' ),
+			'links'  => array( array( 'label' => __( 'Sign-in policy', 'vulnhub' ), 'page' => 'vulnhub-auth' ) ),
+		),
+		'entra'   => array(
+			'vendor' => 'Microsoft',
+			'color'  => '#0078d4',
+			'logo'   => $logo( 'microsoft.svg' ),
+			'links'  => array( array( 'label' => __( 'Sign-in policy', 'vulnhub' ), 'page' => 'vulnhub-auth' ) ),
+		),
+		'oidc'    => array(
+			'vendor' => 'OpenID Foundation',
+			'color'  => '#f78c40',
+			'logo'   => $logo( 'openid.svg' ),
+			'links'  => array( array( 'label' => __( 'Sign-in policy', 'vulnhub' ), 'page' => 'vulnhub-auth' ) ),
+		),
+		'ldap'    => array(
+			'vendor' => 'Microsoft',
+			'color'  => '#0078d4',
+			'logo'   => $logo( 'windows.svg' ),
+			'links'  => array( array( 'label' => __( 'Sign-in policy', 'vulnhub' ), 'page' => 'vulnhub-auth' ) ),
+		),
+		'mail'    => array(
+			'vendor' => 'SMTP',
+			'color'  => '#0f6cbd',
+			'logo'   => $logo( 'mail.svg' ),
+			'links'  => array(),
+		),
+	);
+
+	/**
+	 * Filters an integration's branding.
+	 *
+	 * @param array<string,mixed> $brand Brand, or an empty array when unknown.
+	 * @param string              $id    Connector id.
+	 */
+	$brand = (array) apply_filters( 'vulnhub_integration_brand', $brands[ $id ] ?? array(), $id );
+
+	return array(
+		'vendor' => (string) ( $brand['vendor'] ?? '' ),
+		'color'  => (string) ( $brand['color'] ?? '#64748b' ),
+		'logo'   => (string) ( $brand['logo'] ?? '' ),
+		'links'  => array_values( (array) ( $brand['links'] ?? array() ) ),
+	);
+}

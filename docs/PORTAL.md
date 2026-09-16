@@ -70,7 +70,7 @@ viewBox) and optionally `hidden`.
 | dashboard | `/vulnhub/` (also the front page) | yes |
 | vulnerabilities | `/vulnerabilities/` | yes |
 | assets | `/assets/` | yes |
-| tickets | `/tickets/` | yes |
+| tickets | `/tickets/` (`?ticket=ID` for one ticket; see `docs/TICKETS.md`) | yes |
 | exceptions | `/exceptions/` | yes |
 | products | `/products/` | hidden; reached from "View all" on the Exposure by product widget |
 | vendors | `/vendors/` | yes |
@@ -91,8 +91,8 @@ nav. Current users:
 - vulnhub-eos (`eol_plan`) — the EOL remediation plan; see `docs/EOS.md`
 
 **Navigation-only links.** `vulnhub_portal_nav_extra` only adds a link, not a
-view. Each entry takes `label`, `url`, an `icon` SVG path and `active`. This is
-how the Elementor pages (*Security overview*, *Estate and ownership*) appear.
+view. Each entry takes `label`, `url`, an `icon` SVG path and `active`. Nothing
+in the product uses it today; it is there for pages built outside the portal.
 
 **Primary nav order today:** Dashboard, Vulnerabilities, Alerts, Assets,
 EOL plan, Inventory sources, Tickets, Exceptions, Vendors, Docs, then the
@@ -312,6 +312,28 @@ seeded Elementor header is a horizontal row. Sign-in draws neither. See
   auth and lifecycle screens, and is drawn by core's `render_screen()`. This
   is how Tenable, Intune, CMDB, Jira, Automation, Backup, Authentication and
   End of life are configurable from the portal with no portal code of their own.
+- **Integrations is a grid of cards, and product screens hang off them.** Each
+  connector gets a small card: logo, vendor, category, health, last sync,
+  Configure / Test / Sync now, and links to the product's other screens. The
+  card's brand, logo and links come from `vh_integration_brand()` in core
+  (filter `vulnhub_integration_brand`); logos are bundled in
+  `vulnhub-core/admin/assets/brands/`, never hot-linked. Any section a card
+  links to (Tenable, CMDB, Intune, Jira, Automation, Jira routing, AWS
+  accounts) is left out of the side nav by `card_sections()`. Those pages keep
+  *Integrations* highlighted and link back to it in the breadcrumb. Platform
+  sections are never hidden this way, so Authentication stays in the nav even
+  though the SSO cards link to it. The SSO redirect URI is shown on each
+  provider's Configure page, not on Authentication.
+- **An integration's Configure page** (core `admin/views/integrations.php`) is
+  built from the Settings screen's parts (`vh-set`, `vh-scard`, `vh-field`,
+  `vh-savebar`), so dirty tracking and the save bar come from the same script
+  (`data-vh-settings`, with `data-vh-nav` naming the nav row to badge). A
+  field's `help` is not printed under its input. A small **?** beside the label
+  shows it in the sticky **Guide** card on the right when the screen is at
+  least 1100px wide, and inline under the field on narrower screens or with
+  scripting off (`data-vh-guide-form` / `data-vh-guide-panel`). `note` fields
+  stay visible, because they carry status and actions. Checkboxes render as
+  switches.
 - **Render order for the body:**
   1. If the section has `screen`, core's `render_screen()` draws it.
   2. Otherwise `vulnhub-dashboard/admin-views/<section>.php` is tried. That directory does not currently exist.
