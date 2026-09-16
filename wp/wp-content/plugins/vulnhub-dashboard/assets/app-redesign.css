@@ -2286,3 +2286,51 @@ ul.vh-prodlist--full > .vh-prodrow[hidden] { display: none; }
 /* Icon and name on one line; the sub-line keeps its own beneath them. */
 .vh-segbars__title { display: flex; align-items: center; min-width: 0; }
 .vh-segbars__title a { min-width: 0; overflow-wrap: anywhere; }
+
+/* ============================================================ INVENTORY SOURCES.
+   Four registers that each know part of the estate, and a grid of what each one
+   is missing. The numbers are the screen, so they get the weight; the labels
+   stay quiet. */
+.vh-src__caveat { max-width: 70ch; margin: 0 0 14px; }
+
+.vh-src__scope { display: flex; gap: 8px; margin: 0 0 16px; flex-wrap: wrap; }
+.vh-src__scope .vh-chip.is-active {
+  color: var(--vh-link-hover);
+  background: rgba(var(--vh-accent-rgb), .16);
+  border-color: rgba(var(--vh-accent-rgb), .75);
+}
+
+.vh-src__gaps ul { margin: 10px 0 0; padding: 0 0 0 18px; display: flex; flex-direction: column; gap: 8px; }
+.vh-src__gaps li { font-size: 13.5px; line-height: 1.5; }
+
+.vh-src__export { display: inline-block; margin: 0; }
+
+/* The grid. Row header sticks while the columns scroll, because losing which
+   register a row belongs to makes every number in it meaningless. */
+.vh-src__grid th[scope="row"] {
+  position: sticky; left: 0; z-index: 1;
+  background: var(--vh-raised-solid);
+  font-weight: 640; white-space: nowrap;
+}
+.vh-src__grid td { text-align: right; font-variant-numeric: tabular-nums; }
+.vh-src__cell a { font-weight: 640; }
+
+/* The diagonal is the row's own total, not a gap: it reads as context rather
+   than as something to chase. */
+.vh-src__cell--self { color: var(--vh-muted); background: var(--vh-neutral-bg); }
+.vh-src__cell--self a { color: var(--vh-ink-2); font-weight: 560; }
+
+/* A gap is the thing worth seeing. Weight and a left edge, not colour alone --
+   the number and its accessible name already say what it is. */
+.vh-src__cell--gap { border-left: 2px solid var(--vh-warn); }
+
+@media (max-width: 640px) {
+  /* In card mode the row header becomes the card's title: without this it
+     stays a table-cell inside a block row and sits beside the first value. */
+  .vh-src__wrap > table.vh-table > tbody > tr > th[scope="row"] {
+    display: block; position: static;
+    padding: 0 0 8px; border: 0; border-bottom: 1px solid var(--vh-line);
+    background: none; text-align: left; font-size: 14px;
+  }
+  .vh-src__wrap > table.vh-table > tbody > tr > td { text-align: left; }
+}

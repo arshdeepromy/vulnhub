@@ -33,6 +33,10 @@ final class VulnHub_Hosting {
 		// drill into the exact list (the CSV export routes here too).
 		add_filter( 'vulnhub_findings_query', array( __CLASS__, 'findings_query' ), 10, 2 );
 
+		// And the asset query, so `hosting` narrows a list, its infinite
+		// scroll and its CSV the same way it narrows the findings behind a bar.
+		add_filter( 'vulnhub_assets_query', array( __CLASS__, 'assets_query' ), 10, 2 );
+
 		// The same environments, one row at a time, on the assets list.
 		add_filter( 'vulnhub_asset_hostname_mark', array( __CLASS__, 'hostname_mark' ), 10, 2 );
 	}
@@ -84,6 +88,57 @@ final class VulnHub_Hosting {
 		$ext['where'][] = $ids ? 'f.asset_id IN (' . implode( ',', $ids ) . ')' : '1=0';
 
 		return $ext;
+	}
+
+	/**
+	 * Teach the central asset query about a `hosting` argument.
+	 *
+	 * A self-contained subquery rather than a join: `Repo::assets()` is a flat
+	 * SELECT over one unaliased table, and joining the locations table would
+	 * make its bare-column clauses ambiguous. The subquery carries its own
+	 * aliases, so nothing outside it changes.
+	 *
+	 * Note what this does NOT do: restrict to servers. `hosting_asset_ids()`
+	 * does, because the widget it feeds counts servers, and its bars drill into
+	 * findings. Here the reader is looking at the asset list, where every row
+	 * already shows its environment icon -- classifying only some of them would
+	 * mean filtering by an icon and watching rows that carry it disappear. The
+	 * widget's set is still one click away: add the Type filter.
+	 *
+	 * @param array<string,mixed> $ext  Extension clauses.
+	 * @param array<string,mixed> $args Query args.
+	 * @return array<string,mixed>
+	 */
+	public static function assets_query( array $ext, array $args ): array {
+		$env = isset( $args['hosting'] ) ? sanitize_key( (string) $args['hosting'] ) : '';
+
+		if ( '' === $env || ! isset( self::environments()[ $env ] ) ) {
+			return $ext;
+		}
+
+		$a  = vh_table( 'assets' );
+		$l  = vh_table( 'locations' );
+		$pk = self::placement_case();
+
+		$ext['where'][]  = "id IN ( SELECT a.id FROM {$a} a LEFT JOIN {$l} l ON l.id = a.location_id WHERE ( {$pk} ) = %s )"; // phpcs:ignore WordPress.DB.PreparedSQL
+		$ext['params'][] = $env;
+
+		return $ext;
+	}
+
+	/**
+	 * The environments, for a filter control elsewhere: slug => label.
+	 *
+	 * @return array<string,string>
+	 */
+	public static function environment_labels(): array {
+		$out = array();
+
+		foreach ( self::environments() as $key => $def ) {
+			$out[ $key ] = (string) $def['label'];
+		}
+
+		return $out;
 	}
 
 	/* =================================================================

@@ -1648,6 +1648,19 @@ final class VulnHub_Dash_App {
 			'operating_system' => self::q( 'operating_system' ),
 			'patch_group'      => self::q( 'patch_group' ),
 			'eol'              => self::q( 'eol' ),
+			/*
+			 * Answered by vulnhub-hosting through `vulnhub_assets_query`; core
+			 * neither knows nor needs to know what a hosting environment is.
+			 */
+			'hosting'          => self::q( 'hosting' ),
+			/*
+			 * Inventory comparison, as the source-gap screen links it:
+			 * `has=tenable&missing=cmdb` is "Tenable scans it, the register has
+			 * never heard of it". Comma-separated, and passed through as typed
+			 * -- Repo sanitises each slug.
+			 */
+			'has'              => self::q( 'has' ),
+			'missing'          => self::q( 'missing' ),
 			'orderby'          => $orderby,
 			'order'            => $order,
 		);
@@ -3219,7 +3232,14 @@ final class VulnHub_Dash_App {
 		<form class="vh-filters" method="get">
 			<?php
 			self::hidden_filters(
-				array( 'search', 'asset_type', 'team_id', 'coverage', 'defender', 'known', 'life', 'needs_user', 'location_id' )
+				/*
+				 * The names this form owns, so they are not also written as
+				 * hidden inputs. `has` and `missing` are deliberately absent:
+				 * they have no control of their own, arrive from the source
+				 * comparison screen, and must survive Apply -- which is exactly
+				 * what being left out of this list does for them.
+				 */
+				array( 'search', 'asset_type', 'team_id', 'coverage', 'defender', 'known', 'life', 'needs_user', 'location_id', 'hosting' )
 			);
 			?>
 			<label><?php esc_html_e( 'Search', 'vulnhub' ); ?>
@@ -3324,6 +3344,19 @@ final class VulnHub_Dash_App {
 					</optgroup>
 				</select>
 			</label>
+			<?php if ( class_exists( 'VulnHub_Hosting' ) ) : ?>
+				<label>
+					<span><?php esc_html_e( 'Hosting', 'vulnhub' ); ?></span>
+					<select name="hosting">
+						<option value=""><?php esc_html_e( 'Anywhere', 'vulnhub' ); ?></option>
+						<?php foreach ( VulnHub_Hosting::environment_labels() as $vh_env => $vh_env_label ) : ?>
+							<option value="<?php echo esc_attr( (string) $vh_env ); ?>" <?php selected( self::q( 'hosting' ), (string) $vh_env ); ?>>
+								<?php echo esc_html( $vh_env_label ); ?>
+							</option>
+						<?php endforeach; ?>
+					</select>
+				</label>
+			<?php endif; ?>
 			<label>
 				<span><?php esc_html_e( 'Lifecycle', 'vulnhub' ); ?></span>
 				<select name="life">
@@ -3383,6 +3416,43 @@ final class VulnHub_Dash_App {
 			}
 		}
 
+		/*
+		 * The inventory-comparison filters. They arrive from the source
+		 * comparison screen with no control of their own, and they are the
+		 * filters most capable of misleading: a list of 210 assets headed
+		 * "Assets & owners" with nothing saying "in Tenable, missing from the
+		 * CMDB" reads as the whole estate. Named in words, both together when
+		 * both are set, and removable as one.
+		 */
+		$vh_src_names = static function ( string $raw ): string {
+			$labels = vh_asset_sources();
+			$out    = array();
+
+			foreach ( Repo::source_slugs( $raw ) as $vh_slug ) {
+				$out[] = (string) ( $labels[ $vh_slug ] ?? $vh_slug );
+			}
+
+			return implode( ', ', $out );
+		};
+
+		$vh_has     = $vh_src_names( self::q( 'has' ) );
+		$vh_missing = $vh_src_names( self::q( 'missing' ) );
+
+		if ( '' !== $vh_has && '' !== $vh_missing ) {
+			$vh_chips['has|missing'] = sprintf(
+				/* translators: 1: systems the asset is in, 2: systems it is missing from. */
+				__( 'In %1$s, not in %2$s', 'vulnhub' ),
+				$vh_has,
+				$vh_missing
+			);
+		} elseif ( '' !== $vh_has ) {
+			/* translators: %s: one or more source systems. */
+			$vh_chips['has'] = sprintf( __( 'In %s', 'vulnhub' ), $vh_has );
+		} elseif ( '' !== $vh_missing ) {
+			/* translators: %s: one or more source systems. */
+			$vh_chips['missing'] = sprintf( __( 'Not in %s', 'vulnhub' ), $vh_missing );
+		}
+
 		$vh_loc = self::qi( 'location_id' );
 
 		if ( $vh_loc > 0 ) {
@@ -3396,7 +3466,17 @@ final class VulnHub_Dash_App {
 					<?php
 					// phpcs:ignore WordPress.Security.NonceVerification.Recommended
 					$vh_rest = is_array( $_GET ) ? array_map( 'sanitize_text_field', wp_unslash( $_GET ) ) : array();
-					unset( $vh_rest[ $vh_key ], $vh_rest['ap'], $vh_rest['page_id'] );
+					unset( $vh_rest['ap'], $vh_rest['page_id'] );
+
+					/*
+					 * A chip may stand for more than one parameter -- "In
+					 * Tenable, not in CMDB" is two -- and removing half of a
+					 * sentence leaves the list filtered by something no chip
+					 * now explains. The key carries every name it speaks for.
+					 */
+					foreach ( explode( '|', (string) $vh_key ) as $vh_drop ) {
+						unset( $vh_rest[ $vh_drop ] );
+					}
 					?>
 					<a class="vh-chip vh-chip--filter" href="<?php echo esc_url( self::page_url( 'assets', $vh_rest ) ); ?>">
 						<?php echo esc_html( $vh_text ); ?>

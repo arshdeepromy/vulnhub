@@ -2405,6 +2405,60 @@ final class Repo {
 			$params[] = '%,%';
 		}
 
+		/*
+		 * Comparing one inventory against another.
+		 *
+		 * `source` / `without_source` answer about one system at a time, which
+		 * cannot express the question the CMDB actually needs asking: "Tenable
+		 * scans it, so what is it doing missing from the asset register?" That
+		 * is two conditions at once -- in this, not in that -- so `has` and
+		 * `missing` each take a list and AND their way through it.
+		 *
+		 * Slugs are matched as quoted JSON keys, the way `source` above does,
+		 * so `cmdb` cannot match `cmdb_extra` and no slug can collide with a
+		 * stored date. An unknown slug is not an error and is not dropped: it
+		 * matches nothing in `has` (nothing is known by a system that does not
+		 * exist) and excludes nothing in `missing`, which is the truthful
+		 * answer either way and needs no whitelist to drift out of date.
+		 */
+		foreach ( self::source_slugs( $args['has'] ?? '' ) as $vh_has ) {
+			$where[]  = 'sources_json LIKE %s';
+			$params[] = '%' . $wpdb->esc_like( '"' . $vh_has . '"' ) . '%';
+		}
+
+		foreach ( self::source_slugs( $args['missing'] ?? '' ) as $vh_missing ) {
+			$where[]  = "( sources_json = '' OR sources_json NOT LIKE %s )";
+			$params[] = '%' . $wpdb->esc_like( '"' . $vh_missing . '"' ) . '%';
+		}
+
+		/*
+		 * Extension point for filters that live in another plugin, shaped like
+		 * `vulnhub_findings_query`: a clause, its bound values, appended in step
+		 * so the positional placeholders stay lined up with the blocks above.
+		 *
+		 * There is no join slot, deliberately. This query is a flat SELECT over
+		 * one unaliased table, and a joined table bringing its own `id` column
+		 * would make the bare-column clauses above ambiguous. A filter that
+		 * needs another table writes a self-contained subquery instead -- which
+		 * is what vulnhub-hosting does for `hosting`, and what core already does
+		 * for owner search.
+		 */
+		$ext = (array) apply_filters(
+			'vulnhub_assets_query',
+			array(
+				'where'  => array(),
+				'params' => array(),
+			),
+			$args
+		);
+
+		foreach ( (array) ( $ext['where'] ?? array() ) as $ext_clause ) {
+			$where[] = (string) $ext_clause;
+		}
+		foreach ( (array) ( $ext['params'] ?? array() ) as $ext_param ) {
+			$params[] = $ext_param;
+		}
+
 		$where_sql = implode( ' AND ', $where );
 
 		$allowed_order = array( 'hostname', 'risk_score', 'last_seen', 'open_critical', 'open_high', 'asset_type', 'owner_person_id', 'created_at' );
@@ -2644,6 +2698,31 @@ final class Repo {
 	 * @param string $stored Column value.
 	 * @return array<string,string> slug => Y-m-d, or '' where the date is unknown.
 	 */
+	/**
+	 * A `has` / `missing` argument as a list of source slugs.
+	 *
+	 * Accepts a comma-separated string (what a URL carries) or an array (what
+	 * PHP callers find natural). Slugs are sanitised rather than checked
+	 * against a list of known systems: see the note at the call site.
+	 *
+	 * @param mixed $value Raw argument.
+	 * @return array<int,string>
+	 */
+	public static function source_slugs( mixed $value ): array {
+		$parts = is_array( $value ) ? $value : explode( ',', (string) $value );
+		$out   = array();
+
+		foreach ( $parts as $part ) {
+			$slug = sanitize_key( trim( (string) $part ) );
+
+			if ( '' !== $slug && ! in_array( $slug, $out, true ) ) {
+				$out[] = $slug;
+			}
+		}
+
+		return $out;
+	}
+
 	public static function source_map( string $stored ): array {
 		$stored = trim( $stored );
 

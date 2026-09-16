@@ -31,6 +31,7 @@ require_once VULNHUB_DASH_DIR . 'includes/class-vh-dash-eol.php';
 require_once VULNHUB_DASH_DIR . 'includes/class-vh-dash-widgets.php';
 require_once VULNHUB_DASH_DIR . 'includes/class-vh-product-icons.php';
 require_once VULNHUB_DASH_DIR . 'includes/class-vh-dash-export.php';
+require_once VULNHUB_DASH_DIR . 'includes/class-vh-dash-sources.php';
 
 /**
  * Core is loaded after us (plugins load alphabetically: dashboard < core), so
@@ -58,6 +59,7 @@ add_action(
 		VulnHub_Dash_App::init();
 		VulnHub_Dash_Portal::init();
 		VulnHub_Dash_Export::init();
+		VulnHub_Dash_Sources::init();
 	},
 	20
 );

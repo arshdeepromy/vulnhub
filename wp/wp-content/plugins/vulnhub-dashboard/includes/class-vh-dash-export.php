@@ -929,6 +929,16 @@ final class VulnHub_Dash_Export {
 				'source'              => self::get( 'source' ),
 				'without_source'      => self::get( 'without_source' ),
 				'sole_source'         => self::get( 'sole_source' ),
+				/*
+				 * The same three the assets list added: `hosting` reaches Repo
+				 * through the vulnhub_assets_query extension, `has`/`missing`
+				 * through Repo itself. Carried by name for the same reason
+				 * `defender` above is -- a file that quietly holds the whole
+				 * estate when the screen showed 210 rows is worse than no file.
+				 */
+				'hosting'             => self::get( 'hosting' ),
+				'has'                 => self::get( 'has' ),
+				'missing'             => self::get( 'missing' ),
 				'eol'                 => self::get( 'eol' ),
 				'lifecycle_status'    => self::get( 'lifecycle_status' ),
 				'in_service_only'     => self::get( 'in_service_only' ),
