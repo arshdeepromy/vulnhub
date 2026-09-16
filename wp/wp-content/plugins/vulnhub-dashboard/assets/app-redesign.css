@@ -2261,3 +2261,15 @@ ul.vh-prodlist--full > .vh-prodrow[hidden] { display: none; }
 }
 .vh-srcs__link:hover .vh-chip--src.is-focus,
 .vh-srcs__link:focus-visible .vh-chip--src.is-focus { border-color: var(--vh-accent); }
+
+/* -------------------------------------- hosting environment, before a host.
+   An icon rather than a column: the assets list is already the densest screen
+   in the product, and where a server runs is a glance, not a field you read.
+   The label rides on the title and the accessible name, so the meaning never
+   rests on the picture -- and an unclassified machine draws nothing at all
+   rather than a shrug-shaped icon on hundreds of rows. */
+.vh-host-env {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; margin-right: 7px; vertical-align: -3px; flex: none;
+}
+.vh-host-env svg { width: 16px; height: 16px; }

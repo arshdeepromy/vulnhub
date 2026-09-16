@@ -1737,7 +1737,20 @@ final class VulnHub_Dash_App {
 								aria-label="<?php echo esc_attr( sprintf( /* translators: %s: hostname. */ __( 'Select %s', 'vulnhub' ), (string) $a['hostname'] ) ); ?>">
 						</td>
 					<?php endif; ?>
-					<td data-th="<?php esc_attr_e( 'Host', 'vulnhub' ); ?>"><a class="vh-mono" href="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $a['id'] ) ) ); ?>"><strong><?php echo esc_html( (string) $a['hostname'] ); ?></strong></a>
+					<td data-th="<?php esc_attr_e( 'Host', 'vulnhub' ); ?>"><?php
+						/**
+						 * A mark before the hostname: something true of the machine
+						 * that deserves a glance rather than a column of its own.
+						 * vulnhub-hosting answers with where the server runs.
+						 *
+						 * Must return escaped HTML, and must stay small -- this is
+						 * the densest cell on the busiest screen.
+						 *
+						 * @param string              $html Markup, '' by default.
+						 * @param array<string,mixed> $a    The asset row.
+						 */
+						echo apply_filters( 'vulnhub_asset_hostname_mark', '', $a ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- filtered markup is escaped by its producer.
+					?><a class="vh-mono" href="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $a['id'] ) ) ); ?>"><strong><?php echo esc_html( (string) $a['hostname'] ); ?></strong></a>
 						<?php if ( ! $vh_in_svc ) : ?>
 							<span class="vh-chip vh-chip--warn"><?php echo esc_html( (string) ( vh_lifecycle_statuses()[ (string) $a['lifecycle_status'] ]['label'] ?? $a['lifecycle_status'] ) ); ?></span>
 						<?php endif; ?>

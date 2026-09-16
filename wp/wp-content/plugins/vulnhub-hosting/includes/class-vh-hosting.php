@@ -32,6 +32,9 @@ final class VulnHub_Hosting {
 		// Make `hosting` a findings dimension so every number in the widget can
 		// drill into the exact list (the CSV export routes here too).
 		add_filter( 'vulnhub_findings_query', array( __CLASS__, 'findings_query' ), 10, 2 );
+
+		// The same environments, one row at a time, on the assets list.
+		add_filter( 'vulnhub_asset_hostname_mark', array( __CLASS__, 'hostname_mark' ), 10, 2 );
 	}
 
 	/**
@@ -275,8 +278,93 @@ final class VulnHub_Hosting {
 		return $layout;
 	}
 
-	/** A small brand mark per environment (inline SVG, CSP-safe). */
-	private static function icon( string $key ): string {
+	/**
+	 * Every asset's hosting environment, keyed by id.
+	 *
+	 * One query per request, memoised. The classification is the same CASE the
+	 * widget counts with -- deliberately, because a row's icon disagreeing with
+	 * the widget's totals is worse than no icon at all. It is resolved for the
+	 * whole estate rather than for the ids on screen: the list renders row by
+	 * row (and the infinite-scroll endpoint renders a fresh batch per request),
+	 * so there is no moment where the page's ids are all known at once, and the
+	 * estate is a few thousand short rows.
+	 *
+	 * @return array<int,string> asset id => environment key.
+	 */
+	public static function env_map(): array {
+		static $map = null;
+
+		if ( null !== $map ) {
+			return $map;
+		}
+
+		global $wpdb;
+
+		$a   = vh_table( 'assets' );
+		$l   = vh_table( 'locations' );
+		$map = array();
+
+		$rows = (array) $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			"SELECT a.id, " . self::placement_case() . " AS env
+			 FROM {$a} a LEFT JOIN {$l} l ON l.id = a.location_id", // phpcs:ignore WordPress.DB.PreparedSQL
+			ARRAY_A
+		);
+
+		foreach ( $rows as $row ) {
+			$map[ (int) $row['id'] ] = (string) $row['env'];
+		}
+
+		return $map;
+	}
+
+	/**
+	 * The environment icon that sits before a hostname on the assets list.
+	 *
+	 * Icon only: the label is on the tooltip and, for a screen reader, in the
+	 * accessible name. A word here would cost a column the screen does not have
+	 * -- but the meaning must not rest on a picture alone, which is why both
+	 * carry it.
+	 *
+	 * @param string              $html  Markup so far.
+	 * @param array<string,mixed> $asset Asset row.
+	 */
+	public static function hostname_mark( string $html, array $asset ): string {
+		$id = (int) ( $asset['id'] ?? 0 );
+
+		if ( ! $id ) {
+			return $html;
+		}
+
+		$env = self::env_map()[ $id ] ?? '';
+
+		/*
+		 * Unclassified draws nothing. A cloud glyph on every machine the rules
+		 * could not place would read as a finding about the estate rather than
+		 * an absence of information, and it would be on hundreds of rows.
+		 */
+		if ( '' === $env || 'unknown' === $env ) {
+			return $html;
+		}
+
+		$label = (string) ( self::environments()[ $env ]['label'] ?? $env );
+
+		return $html . sprintf(
+			'<span class="vh-host-env vh-host-env--%s" title="%s" role="img" aria-label="%s">%s</span>',
+			esc_attr( $env ),
+			esc_attr( $label ),
+			esc_attr( $label ),
+			self::icon_svg( $env )
+		);
+	}
+
+	/**
+	 * A small brand mark per environment (inline SVG, CSP-safe).
+	 *
+	 * The widget wraps it in its own sizing; the assets list hangs a class on
+	 * it. One definition either way -- two drawings of "AWS" that drift apart
+	 * is exactly the kind of thing nobody notices and everybody half-trusts.
+	 */
+	public static function icon_svg( string $key ): string {
 		switch ( $key ) {
 			case 'aws':
 				$svg = '<path fill="#FF9900" d="M18.4 10.6a5 5 0 0 0-9.5-1.8A4.3 4.3 0 1 0 5.5 17.5h12.2a3.5 3.5 0 0 0 .7-6.9z"/>';
@@ -292,8 +380,13 @@ final class VulnHub_Hosting {
 				$svg = '<path fill="#7d8aa3" d="M18.4 10.6a5 5 0 0 0-9.5-1.8A4.3 4.3 0 1 0 5.5 17.5h12.2a3.5 3.5 0 0 0 .7-6.9z"/>';
 		}
 
+		return '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">' . $svg . '</svg>';
+	}
+
+	/** The widget's framing of the same mark. */
+	private static function icon( string $key ): string {
 		return '<span style="display:inline-flex;width:18px;height:18px;margin-right:9px;vertical-align:middle;flex:none">'
-			. '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">' . $svg . '</svg></span>';
+			. self::icon_svg( $key ) . '</span>';
 	}
 
 	/** Drill URL: the findings on this environment's servers, optionally narrowed. */
