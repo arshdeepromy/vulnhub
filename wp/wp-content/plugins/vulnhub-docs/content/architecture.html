@@ -4,7 +4,7 @@
 
 <p>The application runs as a Docker Compose stack (<code>~/vulnhub</code>): a <code>wordpress:php8.3-apache</code> container serving the app on port 8093, MariaDB 11, a Redis object cache, a WP-CLI container, a cron loop container that runs <code>wp cron event run --due-now</code> every 60 seconds, and MailHog for captured mail. The portal answers both on <code>localhost:8093</code> and behind a Cloudflare tunnel at the public hostname — which is why widget HTML is cached per host (absolute links get baked in).</p>
 
-<h2>The eighteen plugins</h2>
+<h2>The nineteen plugins</h2>
 
 <p>Core boots on <code>plugins_loaded</code> at priority 5 and then fires <code>vulnhub_register_connectors</code>, which is where the connector plugins (Tenable, Intune, CMDB, Jira, AWS, Auth) register. Most other plugins boot on <code>plugins_loaded</code> at priority 20. Plugins load alphabetically, so <code>vulnhub-alerts</code>, <code>vulnhub-auth</code> and <code>vulnhub-dashboard</code> load <em>before</em> Core: none of them may test for <code>vulnhub()</code> at file scope — they check on <code>plugins_loaded</code> instead.</p>
 
@@ -31,11 +31,12 @@
 <div class="vh-defs">
   <div><span class="k">vulnhub-jira</span><span class="v">Raises and syncs remediation tickets in Jira Cloud, with an automation/routing engine and a reopener for still-detected issues.</span></div>
   <div><span class="k">vulnhub-alerts</span><span class="v">Watches advisory / zero-day feeds (EUVD, MSRC, CISA, GitHub, Red Hat, Ubuntu) and reports which advisories can actually reach your estate. Adds its own portal view and a nav badge.</span></div>
-  <div><span class="k">vulnhub-backup</span><span class="v">Batched, resumable backup &amp; restore, with optional scheduled push to S3.</span></div>
+  <div><span class="k">vulnhub-backup</span><span class="v">Batched, resumable backup &amp; restore — one <code>.tar.gz</code> holding the manifest, the database and <code>wp-content</code> — with optional scheduled push to S3.</span></div>
   <div><span class="k">vulnhub-mcp</span><span class="v">A Model Context Protocol server: lets an AI agent read and (audited) write the estate over JSON-RPC, authenticated by bearer tokens.</span></div>
   <div><span class="k">vulnhub-auth</span><span class="v">Identity: portal sign-in, SSO (Okta / Entra / generic OIDC), MFA, LDAP/AD, and the people directory.</span></div>
   <div><span class="k">vulnhub-elementor</span><span class="v">Exposes the live dashboard widgets as Elementor widgets and lets Elementor Pro build the portal header/footer.</span></div>
   <div><span class="k">vulnhub-docs</span><span class="v">This handbook: a contributed <code>docs</code> view and a Documentation admin section.</span></div>
+  <div><span class="k">vulnhub-eos</span><span class="v">The end-of-support remediation programme: imports the retirement workbook, splits the end-of-life widget into covered and not covered, and adds the <code>eol_plan</code> view. See <a href="?doc=lifecycle">Lifecycle &amp; exceptions</a>.</span></div>
 </div>
 
 <h2>How a request flows</h2>

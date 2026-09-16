@@ -37,6 +37,8 @@
   <div><span class="k">vulnhub_dashboard_default_layout</span><span class="v">Add a widget to the default board.</span></div>
   <div><span class="k">vulnhub_widget_connector_sources</span><span class="v">Map a new connector to the widget cache sources it should bust.</span></div>
   <div><span class="k">vulnhub_widget_cache_ttl / vulnhub_widget_stale_ttl</span><span class="v">Tune the freshness (15 min) and serve-stale (6 h) horizons.</span></div>
+  <div><span class="k">vulnhub_eol_bar_segments</span><span class="v">Replace the bands on one <em>Platforms past end of life</em> bar — <code>( array $segments, array $row, string $context )</code>. <code>$row</code> carries the release key, label, status and asset count. <code>$context</code> is <code>platforms</code> for the platform bars and empty for the software bars, so a consumer that only understands operating systems cannot restyle the wrong chart. This is how the remediation programme paints the green/red split.</span></div>
+  <div><span class="k">vulnhub_eol_bar_legend</span><span class="v">Relabel the key to match — <code>( array $legend, string $context )</code>. Paired with the filter above on purpose: recolour the bands without relabelling the key and the key describes colours that are no longer on the chart.</span></div>
 </div>
 
 <h3>The findings query — how the attack-path filters are built</h3>
@@ -64,6 +66,14 @@
   <div><span class="k">vulnhub_mcp_tools</span><span class="v">Add a tool to the MCP server's catalogue.</span></div>
   <div><span class="k">vulnhub_docs_groups / vulnhub_docs_body_&lt;slug&gt;</span><span class="v">Add pages or groups to <em>this</em> wiki, or override a page's body.</span></div>
 </div>
+
+<h2>Times: store UTC, display local</h2>
+
+<p>Every timestamp in the database is UTC. <code>vh_now()</code> is <code>gmdate()</code>, and MySQL's <code>NOW()</code> is UTC in these containers, so comparisons are UTC against UTC and need no conversion. Anything a person reads goes through <code>vh_date()</code>, <code>vh_ago()</code> or <code>wp_date()</code>, which render in the site's timezone.</p>
+
+<div class="vh-warn"><p>A bare <code>gmdate()</code> or <code>date()</code> printed to screen is a bug. The site timezone had never been set here, so "local time" meant UTC and every screen — including the clock on every sync log line — read twelve hours behind for months. Settings → System now shows the timezone and says so when it is unset.</p></div>
+
+<p>A <strong>date</strong> is not an instant. An end-of-life date, a plan deadline or a due date is a DATE column with no time in it, and converting it can move it a day: use <code>vh_date_only()</code>, which formats in UTC so 31 December cannot become 30 December. It also avoids printing a meaningless "00:00" after a date that never had a time.</p>
 
 <h2>Capabilities &amp; roles</h2>
 <p>Capabilities live in <code>\VulnHub\Core\Caps</code>. Gate your features on these, not on WordPress's <code>manage_options</code>.</p>

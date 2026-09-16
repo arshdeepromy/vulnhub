@@ -927,7 +927,39 @@ final class VulnHub_Dash_Charts {
 			}
 
 			$out .= '</span>';
-			$out .= '<span class="vh-segbars__total">' . esc_html( number_format_i18n( $total ) ) . '</span>';
+
+			/*
+			 * The total is the whole row, so it links to the whole row.
+			 *
+			 * A split bar makes each half clickable, and the number beside it
+			 * then looks like the one part of the row that does nothing --
+			 * which is exactly the part somebody reaches for when they want
+			 * both halves at once. `total_href` makes it a link; without one
+			 * it stays the plain number it has always been.
+			 */
+			$total_href  = (string) ( $row['total_href'] ?? '' );
+			$total_title = (string) ( $row['total_title'] ?? '' );
+			$total_text  = esc_html( number_format_i18n( $total ) );
+
+			if ( '' !== $total_href ) {
+				if ( '' === $total_title ) {
+					$total_title = sprintf(
+						/* translators: 1: count, 2: the row's name, 3: unit such as "assets". */
+						_x( 'All %1$s %3$s on %2$s', 'chart row total link', 'vulnhub' ),
+						number_format_i18n( $total ),
+						wp_strip_all_tags( (string) $row['label'] ),
+						$unit
+					);
+					$total_title = trim( preg_replace( '/\s+/', ' ', $total_title ) ?? $total_title );
+				}
+
+				$out .= '<a class="vh-segbars__total vh-segbars__total--link" href="' . esc_url( $total_href ) . '"'
+					. ' data-vh-tip="' . esc_attr( $total_title ) . '"'
+					. ' aria-label="' . esc_attr( $total_title ) . '">' . $total_text . '</a>';
+			} else {
+				$out .= '<span class="vh-segbars__total">' . $total_text . '</span>';
+			}
+
 			$out .= '</div>';
 		}
 

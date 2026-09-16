@@ -40,6 +40,8 @@ final class VH_EOS_Widget {
 	public static function init(): void {
 		add_filter( 'vulnhub_eol_bar_segments', array( __CLASS__, 'segments' ), 10, 3 );
 		add_filter( 'vulnhub_eol_bar_legend', array( __CLASS__, 'legend' ), 10, 2 );
+		add_filter( 'vulnhub_eol_bar_total_href', array( __CLASS__, 'total_href' ), 10, 3 );
+		add_filter( 'vulnhub_eol_headline_href', array( __CLASS__, 'headline_href' ), 10, 4 );
 	}
 
 	/**
@@ -278,7 +280,7 @@ final class VH_EOS_Widget {
 	/**
 	 * The plan page, filtered to one release and one side of the split.
 	 */
-	private static function url( string $key, string $coverage ): string {
+	private static function url( string $key, string $coverage = '', string $eol = '' ): string {
 		// The portal draws these bars, so it is normally present -- but the
 		// widget can also be rendered by the Elementor panel widget on a page
 		// served with the dashboard plugin disabled. An unlinked band is a
@@ -289,12 +291,72 @@ final class VH_EOS_Widget {
 
 		return VulnHub_Dash_Portal::portal_url(
 			'eol_plan',
-			array(
-				'key'      => $key,
-				'coverage' => $coverage,
-				'life'     => 'reportable',
+			array_filter(
+				array(
+					'key'      => $key,
+					'coverage' => $coverage,
+					'eol'      => $eol,
+					'life'     => 'reportable',
+				),
+				static fn( string $v ): bool => '' !== $v
 			)
 		);
+	}
+
+	/**
+	 * Where the number beside a bar goes: the same release, both halves.
+	 *
+	 * No `coverage`, deliberately. The two bands already answer "which of
+	 * these are covered"; the total is the only control that answers "show me
+	 * the whole release", and its row count matches the number printed because
+	 * both come from the same release key.
+	 *
+	 * @param string              $href    Incoming value.
+	 * @param array<string,mixed> $row     Estate row.
+	 * @param string              $context Which bars are being drawn.
+	 */
+	public static function total_href( string $href, array $row, string $context ): string {
+		if ( 'platforms' !== $context || ! self::ready() ) {
+			return $href;
+		}
+
+		$key = (string) ( $row['key'] ?? '' );
+
+		return '' !== $key ? self::url( $key ) : $href;
+	}
+
+	/**
+	 * Where a headline tile goes.
+	 *
+	 * Only `past` and `soon`: this screen is about machines that need
+	 * remediating, and it has nothing to say about a supported release or one
+	 * the lifecycle table cannot identify -- linking those would promise an
+	 * answer that is not there. The `eol` filter narrows the screen to the
+	 * same population the tile counted, so the two numbers agree.
+	 *
+	 * @param string            $href    Incoming value.
+	 * @param string            $key     past|soon|supported|unknown.
+	 * @param array<string,int> $counts  Tile counts.
+	 * @param string            $context Which tiles are being drawn.
+	 */
+	public static function headline_href( string $href, string $key, array $counts, string $context ): string {
+		if ( 'platforms' !== $context || ! self::ready() ) {
+			return $href;
+		}
+
+		if ( ! in_array( $key, array( 'past', 'soon' ), true ) ) {
+			return $href;
+		}
+
+		/*
+		 * A tile reading zero has nothing behind it, and a link to an empty
+		 * list is a worse answer than the number already on the tile.
+		 */
+		if ( (int) ( $counts[ $key ] ?? 0 ) < 1 ) {
+			return $href;
+		}
+
+		return self::url( '', '', $key );
 	}
 }
 

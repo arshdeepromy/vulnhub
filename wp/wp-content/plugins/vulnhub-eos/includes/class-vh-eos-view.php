@@ -218,6 +218,13 @@ final class VH_EOS_View {
 	 * arriving from there still filters rather than silently showing
 	 * everything.
 	 *
+	 * The full contract: `coverage` (covered | not_covered | overdue |
+	 * uncovered), `state`, `timeframe`, `tier`, `rag`, `project`, `key` (an
+	 * end-of-life release), `eol` (past | soon — the release lifecycle the
+	 * dashboard's headline tiles count), `search`, `team`, `site`, `life`.
+	 * `key` and `eol` have no control on the form: you arrive with them from
+	 * the dashboard, and the chip is how you clear them.
+	 *
 	 * @return array<string,string|int>
 	 */
 	public static function filters(): array {
@@ -232,6 +239,7 @@ final class VH_EOS_View {
 			'rag'       => self::one_of( self::q( 'rag' ), array( 'red', 'amber', 'green' ) ),
 			'project'   => self::q( 'project' ),
 			'key'       => self::q( 'key' ),
+			'eol'       => self::one_of( self::q( 'eol' ), array_keys( self::eol_filters() ) ),
 			'search'    => self::q( 'search' ),
 			'team'      => $team,
 			'site'      => $site,
@@ -266,6 +274,7 @@ final class VH_EOS_View {
 			'rag'         => $f['rag'],
 			'project'     => $f['project'],
 			'release_key' => $f['key'],
+			'eol_status'  => $f['eol'],
 			'search'      => $f['search'],
 			'team_id'     => (int) $f['team'],
 			// The repository names this one after the column it filters.
@@ -304,6 +313,20 @@ final class VH_EOS_View {
 				'orderby' => (string) $args['orderby'],
 				'order'   => (string) $args['order'],
 			)
+		);
+	}
+
+	/**
+	 * Release-lifecycle filters, matching the dashboard widget's headline
+	 * tiles. URL-only, like `key`: you arrive here by clicking a tile, and the
+	 * chip is how you get back out.
+	 *
+	 * @return array<string,string>
+	 */
+	public static function eol_filters(): array {
+		return array(
+			'past' => __( 'Release past end of life', 'vulnhub' ),
+			'soon' => __( 'Release ends within 6 months', 'vulnhub' ),
 		);
 	}
 
@@ -907,6 +930,11 @@ final class VH_EOS_View {
 				__( 'Release: %s', 'vulnhub' ),
 				self::release_label( (string) $f['key'] )
 			);
+		}
+
+		if ( '' !== (string) $f['eol'] ) {
+			$labels        = self::eol_filters();
+			$chips['eol']  = (string) ( $labels[ (string) $f['eol'] ] ?? $f['eol'] );
 		}
 
 		if ( '' !== (string) $f['life'] ) {

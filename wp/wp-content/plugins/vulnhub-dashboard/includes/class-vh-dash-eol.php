@@ -56,7 +56,7 @@ final class VulnHub_Dash_Eol {
 		// The four tiles stay: they are the denominator, and each is labelled.
 		// Summed from the rows already read, not from a second scan -- see
 		// Eol::summary().
-		self::headline( Eol::summary( $rows ) );
+		self::headline( Eol::summary( $rows ), '', array(), 'platforms' );
 
 		/*
 		 * The bars are only the releases that have run out, or are about to.
@@ -328,7 +328,7 @@ final class VulnHub_Dash_Eol {
 	 *
 	 * @param array<string,int> $counts Assets per status.
 	 */
-	private static function headline( array $counts, string $unit = '', array $labels = array() ): void {
+	private static function headline( array $counts, string $unit = '', array $labels = array(), string $context = '' ): void {
 		/*
 		 * Hardware keeps "past end of life", because a model really does end:
 		 * there is no newer release of the same laptop to move to. Software is
@@ -351,12 +351,33 @@ final class VulnHub_Dash_Eol {
 		echo '<div class="vh-tiles">';
 
 		foreach ( $defs as $key => [$label, $tone] ) {
+			$href = '';
+
+			if ( '' !== $context ) {
+				/**
+				 * Filters the destination of one headline tile.
+				 *
+				 * Only the tiles that name a population somebody can act on
+				 * are worth linking -- a consumer is expected to answer for
+				 * `past` and `soon` and leave `supported` and `unknown` alone,
+				 * because a screen about remediation has nothing to say about
+				 * a release that is still supported.
+				 *
+				 * @param string              $href    Empty for a tile that does not link.
+				 * @param string              $key     past|soon|supported|unknown.
+				 * @param array<string,int>   $counts  The tile counts.
+				 * @param string              $context Which set of tiles is being drawn.
+				 */
+				$href = (string) apply_filters( 'vulnhub_eol_headline_href', '', $key, $counts, $context );
+			}
+
 			echo VulnHub_Dash_Charts::stat_tile( // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 				array(
 					'label' => $label,
 					'value' => number_format_i18n( (int) ( $counts[ $key ] ?? 0 ) ),
 					'tone'  => 'past' === $key && ( $counts[ $key ] ?? 0 ) > 0 ? 'critical' : $tone,
 					'meta'  => $unit,
+					'href'  => $href,
 				)
 			);
 		}
@@ -454,11 +475,32 @@ final class VulnHub_Dash_Eol {
 				$segments = (array) apply_filters( 'vulnhub_eol_bar_segments', $segments, $row, $context );
 			}
 
+			/*
+			 * Where the number beside the bar goes. Empty by default: the row
+			 * label already links to this release in the assets list, and a
+			 * second link to the same place would be noise. It earns its keep
+			 * once a consumer splits the bar, because then the total is the
+			 * only way back to both halves at once.
+			 */
+			$total_href = '';
+
+			if ( '' !== $context ) {
+				/**
+				 * Filters the link on the total printed beside one bar.
+				 *
+				 * @param string              $total_href Empty for a plain number.
+				 * @param array<string,mixed> $row        Estate row, as passed to the segments filter.
+				 * @param string              $context    Which set of bars is being drawn.
+				 */
+				$total_href = (string) apply_filters( 'vulnhub_eol_bar_total_href', $total_href, $row, $context );
+			}
+
 			$out[] = array(
-				'label'    => (string) $row['label'],
-				'sub'      => $sub,
-				'href'     => $link ? self::url( (string) $row['key'] ) : '',
-				'segments' => $segments,
+				'label'      => (string) $row['label'],
+				'sub'        => $sub,
+				'href'       => $link ? self::url( (string) $row['key'] ) : '',
+				'segments'   => $segments,
+				'total_href' => $link ? $total_href : '',
 			);
 		}
 
