@@ -80,9 +80,29 @@ only for automation, which calls `VulnHub_Jira_Ticketer::raise()` directly.
    redirects to the ordinary export URL, so the file matches Export CSV exactly
    and is audited the same way. `wp_nonce_url()` escapes `&` as `&amp;`, which
    has to be undone before the redirect or the export gets no `view`.
-2. **Record the ticket.** The operator raises the request in JSM, then enters
-   its key or pastes its link. The key must match `ABC-123` and must not
-   already be recorded. `do=save` needs `vulnhub_raise_ticket`.
+2. **Describe the request:** request type, summary and notes. Then either:
+   - **Review and create in Jira** (shown when the Jira connector is enabled).
+     This posts `scope=assets` with the list's resolved filters (`f[]`), its raw
+     query (`q[]`), the request type, summary, notes and the ticked columns to
+     `POST /vulnhub/v1/tickets/draft`. `VulnHub_Dash_Tickets::draft_assets()`
+     answers it (at priority 5, ahead of the finding drafter):
+     - collects the whole asset list (`collect_assets()`)
+     - builds the asset CSV (`VulnHub_Dash_Export::assets_csv()`)
+     - has the ticketer build the issue (`build_scope_issue()`), with the same
+       routing, issue type and allowlist as finding tickets. The description
+       gives the ask, the notes, the filters in words, the first 30 assets
+       (with owner names, never emails) and how the ticket is tracked. The
+       labels are `vulnhub` and `vulnhub-<kind>`.
+
+     The same review screen and Send as finding tickets are used (see above).
+     On Send, `submit_scope_issue()` creates the issue exactly, records it as
+     `provider = jira` with the kind, scope and notes, attaches the asset
+     snapshot, attaches the CSV, and sends the browser to the ticket page.
+   - **I already raised it in JSM** (collapsed when Jira is enabled). The
+     operator enters the key of a request raised by hand. It must match
+     `ABC-123` and must not already be recorded. `do=save` needs
+     `vulnhub_raise_ticket`. Nothing is sent to Jira, and the ticket is recorded
+     with `provider = jsm`.
 
 Saving takes a snapshot of every asset the filters match. It pages through
 `Repo::assets()` 500 rows at a time and **refuses** to save if the rows read do

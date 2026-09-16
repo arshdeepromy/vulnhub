@@ -75,6 +75,11 @@ final class VulnHub_Dash_Tickets {
 	public static function init(): void {
 		add_action( 'admin_post_' . self::ACTION_SCOPE, array( __CLASS__, 'handle_scope' ) );
 		add_action( 'admin_post_' . self::ACTION_STATUS, array( __CLASS__, 'handle_status' ) );
+
+		// Asset-list tickets raised in Jira share the ticketer's review flow.
+		// Priority 5 so this answers asset drafts before the finding drafter.
+		add_filter( 'vulnhub_draft_ticket', array( __CLASS__, 'draft_assets' ), 5, 2 );
+		add_filter( 'vulnhub_ticket_page_url', static fn( string $url, int $id ): string => $id ? self::page_url( 'tickets', array( 'ticket' => $id ) ) : $url, 10, 2 );
 	}
 
 	private static function page_url( string $view, array $args = array() ): string {
@@ -285,18 +290,14 @@ final class VulnHub_Dash_Tickets {
 				</section>
 
 				<?php if ( $can_save ) : ?>
+					<?php
+					$vh_jira_on = function_exists( 'vulnhub_jira_connector' ) && vulnhub_jira_connector() && vulnhub_jira_connector()->is_enabled();
+					?>
 					<section class="vh-raise__step">
-						<h3><span class="vh-raise__n">2</span> <?php esc_html_e( 'Record the ticket you raised', 'vulnhub' ); ?></h3>
-						<p class="vh-sub vh-muted"><?php esc_html_e( 'Raise the request in Jira Service Management with the CSV attached, then enter its key here. The assets above are saved with the ticket, so its page can show which are done, which are still outstanding and which were retired.', 'vulnhub' ); ?></p>
+						<h3><span class="vh-raise__n">2</span> <?php esc_html_e( 'Describe the request', 'vulnhub' ); ?></h3>
+						<p class="vh-sub vh-muted"><?php esc_html_e( 'The assets above are saved with the ticket, so its page can show which are done, which are still outstanding and which were retired.', 'vulnhub' ); ?></p>
 
 						<div class="vh-raise__grid">
-							<label>
-								<span><?php esc_html_e( 'JSM ticket', 'vulnhub' ); ?> *</span>
-								<input type="text" name="ticket_key" required autocomplete="off" spellcheck="false" placeholder="SD-1234"
-									pattern="\s*(https?://\S+/)?[A-Za-z][A-Za-z0-9_]*-[0-9]+\s*"
-									title="<?php esc_attr_e( 'A Jira issue key such as SD-1234, or its link.', 'vulnhub' ); ?>"
-									value="<?php echo esc_attr( self::q( 'vh_ticket_key' ) ); ?>">
-							</label>
 							<label>
 								<span><?php esc_html_e( 'Request type', 'vulnhub' ); ?></span>
 								<select name="kind">
@@ -317,10 +318,30 @@ final class VulnHub_Dash_Tickets {
 							</label>
 						</div>
 
-						<div class="vh-modal__foot">
-							<button type="submit" name="do" value="save" class="vh-btn vh-btn--primary"><?php esc_html_e( 'Save ticket', 'vulnhub' ); ?></button>
-							<span class="vh-sub vh-muted"><?php esc_html_e( 'It will appear under Tickets.', 'vulnhub' ); ?></span>
-						</div>
+						<?php if ( $vh_jira_on ) : ?>
+							<div class="vh-modal__foot">
+								<button type="button" class="vh-btn vh-btn--primary" data-vh-raise-scope><?php esc_html_e( 'Review and create in Jira', 'vulnhub' ); ?></button>
+								<span class="vh-sub vh-muted"><?php esc_html_e( 'Shows everything that will be sent, with the CSV above attached. Nothing is sent until you press Send.', 'vulnhub' ); ?></span>
+							</div>
+						<?php endif; ?>
+
+						<details class="vh-raise__manual" <?php echo ( ! $vh_jira_on || '' !== self::q( 'vh_ticket_key' ) ) ? 'open' : ''; ?>>
+							<summary><?php esc_html_e( 'I already raised it in JSM', 'vulnhub' ); ?></summary>
+							<p class="vh-sub vh-muted"><?php esc_html_e( 'Raised the request by hand? Enter its key to track these assets against it. Nothing is sent to Jira.', 'vulnhub' ); ?></p>
+							<div class="vh-raise__grid">
+								<label>
+									<span><?php esc_html_e( 'JSM ticket', 'vulnhub' ); ?> *</span>
+									<input type="text" name="ticket_key" autocomplete="off" spellcheck="false" placeholder="SD-1234"
+										pattern="\s*(https?://\S+/)?[A-Za-z][A-Za-z0-9_]*-[0-9]+\s*"
+										title="<?php esc_attr_e( 'A Jira issue key such as SD-1234, or its link.', 'vulnhub' ); ?>"
+										value="<?php echo esc_attr( self::q( 'vh_ticket_key' ) ); ?>">
+								</label>
+							</div>
+							<div class="vh-modal__foot">
+								<button type="submit" name="do" value="save" class="vh-btn"><?php esc_html_e( 'Save ticket', 'vulnhub' ); ?></button>
+								<span class="vh-sub vh-muted"><?php esc_html_e( 'It will appear under Tickets.', 'vulnhub' ); ?></span>
+							</div>
+						</details>
 					</section>
 				<?php endif; ?>
 			</form>
@@ -370,6 +391,225 @@ final class VulnHub_Dash_Tickets {
 	private static function posted( string $key ): string {
 		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified by the caller.
 		return isset( $_POST[ $key ] ) && ! is_array( $_POST[ $key ] ) ? (string) wp_unslash( $_POST[ $key ] ) : '';
+	}
+
+	/**
+	 * Every asset a set of Assets-screen filters matches, or why not.
+	 *
+	 * The whole list or nothing: paged to the repository's ceiling and
+	 * compared against the total afterwards, because a short read saved as a
+	 * ticket's scope would report the missing machines as never asked about.
+	 *
+	 * @param array<string,string> $filters Export arguments (resolved filters).
+	 * @return array{ok:bool,message:string,total:int,assets:array<int,array<string,mixed>>}
+	 */
+	private static function collect_assets( array $filters ): array {
+		$base  = array_filter( $filters, static fn( string $v ): bool => '' !== $v );
+		$total = (int) ( Repo::assets( array_merge( $base, array( 'limit' => 1 ) ) )['total'] ?? 0 );
+		$out   = array( 'ok' => false, 'message' => '', 'total' => $total, 'assets' => array() );
+
+		if ( 0 === $total ) {
+			$out['message'] = __( 'These filters match no assets, so there is nothing to attach the ticket to.', 'vulnhub' );
+			return $out;
+		}
+
+		if ( $total > self::MAX_ASSETS ) {
+			/* translators: 1: number of assets, 2: the limit. */
+			$out['message'] = sprintf( __( 'These filters match %1$s assets; one ticket can hold at most %2$s. Narrow the list first.', 'vulnhub' ), number_format_i18n( $total ), number_format_i18n( self::MAX_ASSETS ) );
+			return $out;
+		}
+
+		$assets = array();
+
+		for ( $offset = 0; $offset < $total; $offset += self::PAGE ) {
+			$page = (array) ( Repo::assets( array_merge( $base, array( 'limit' => self::PAGE, 'offset' => $offset ) ) )['rows'] ?? array() );
+
+			if ( ! $page ) {
+				break;
+			}
+
+			foreach ( $page as $row ) {
+				$assets[ (int) $row['id'] ] = $row;
+			}
+		}
+
+		if ( count( $assets ) !== $total ) {
+			/* translators: 1: rows read, 2: rows expected. */
+			$out['message'] = sprintf( __( 'The asset list changed while it was being read (%1$s of %2$s). Nothing was saved; try again.', 'vulnhub' ), number_format_i18n( count( $assets ) ), number_format_i18n( $total ) );
+			return $out;
+		}
+
+		$out['ok']     = true;
+		$out['assets'] = array_values( $assets );
+
+		return $out;
+	}
+
+	/**
+	 * A ticket summary when the operator gave none.
+	 *
+	 * @param string[] $words Filters in words.
+	 */
+	private static function default_summary( string $kind_label, int $total, array $words ): string {
+		return vh_trim(
+			sprintf(
+				/* translators: 1: request type, 2: number of assets, 3: the filters in words. */
+				_n( '%1$s: %2$s asset (%3$s)', '%1$s: %2$s assets (%3$s)', $total, 'vulnhub' ),
+				$kind_label,
+				number_format_i18n( $total ),
+				implode( ', ', $words )
+			),
+			250
+		);
+	}
+
+	/**
+	 * Answer `vulnhub_draft_ticket` for an asset list: build the Jira ticket
+	 * and its asset CSV for review. Nothing is sent.
+	 *
+	 * @param array<string,mixed>|null $result Result so far.
+	 * @param array<string,mixed>      $params scope=assets, kind, filters, query, cols, summary, notes.
+	 * @return array<string,mixed>|null
+	 */
+	public static function draft_assets( ?array $result, array $params ): ?array {
+		if ( null !== $result || 'assets' !== ( $params['scope'] ?? '' ) ) {
+			return $result;
+		}
+
+		$fail = static fn( string $message ): array => array( 'ok' => false, 'message' => $message );
+
+		if ( ! function_exists( 'vulnhub_jira_connector' ) || ! vulnhub_jira_connector() || ! vulnhub_jira_connector()->is_enabled() ) {
+			return $fail( __( 'Jira is not enabled, so this can only be recorded by hand: use "I already raised it in JSM".', 'vulnhub' ) );
+		}
+
+		$kinds = Tickets::kinds();
+		$kind  = sanitize_key( (string) ( $params['kind'] ?? '' ) );
+
+		if ( empty( $kinds[ $kind ]['scope'] ) ) {
+			return $fail( __( 'Choose a request type.', 'vulnhub' ) );
+		}
+
+		$clean = static function ( $raw, array $allow = array() ): array {
+			$out = array();
+
+			foreach ( (array) $raw as $k => $v ) {
+				$name = sanitize_key( (string) $k );
+
+				if ( '' !== $name && is_scalar( $v ) && ( ! $allow || in_array( $name, $allow, true ) ) ) {
+					$out[ $name ] = sanitize_text_field( (string) $v );
+				}
+			}
+
+			return $out;
+		};
+
+		$filters = $clean( $params['filters'] ?? array() );
+		$query   = $clean( $params['query'] ?? array(), self::ASSET_QUERY_KEYS );
+		$found   = self::collect_assets( $filters );
+
+		if ( ! $found['ok'] ) {
+			return $fail( $found['message'] );
+		}
+
+		$words   = self::describe_filters( $query );
+		$total   = $found['total'];
+		$summary = trim( sanitize_text_field( (string) ( $params['summary'] ?? '' ) ) );
+		$summary = '' !== $summary ? $summary : self::default_summary( (string) $kinds[ $kind ]['label'], $total, $words );
+		$notes   = sanitize_textarea_field( (string) ( $params['notes'] ?? '' ) );
+		$ids     = array_map( static fn( array $a ): int => (int) $a['id'], $found['assets'] );
+		$cols    = array_map( 'sanitize_key', (array) ( $params['cols'] ?? array() ) );
+		$csv     = VulnHub_Dash_Export::assets_csv( $ids, $cols );
+
+		$csv['name'] = sprintf( 'vulnhub-assets-%s-%s.csv', str_replace( '_', '-', $kind ), wp_date( 'Y-m-d-Hi' ) );
+
+		// Names for the assets the description lists; the rest are in the file.
+		$described = array();
+		$locations = array_column( Repo::locations(), 'name', 'id' );
+
+		foreach ( array_slice( $found['assets'], 0, 30 ) as $a ) {
+			$described[] = array(
+				'id'               => (int) $a['id'],
+				'hostname'         => (string) $a['hostname'],
+				'ipv4'             => (string) $a['ipv4'],
+				'asset_type'       => (string) $a['asset_type'],
+				'operating_system' => (string) $a['operating_system'],
+				'site'             => (string) ( $locations[ (int) $a['location_id'] ] ?? '' ),
+				'owner'            => (string) ( Repo::person( (int) $a['owner_person_id'] )['display_name'] ?? '' ),
+				'team'             => (string) ( Repo::team( (int) $a['team_id'] )['name'] ?? '' ),
+			);
+		}
+
+		$built = vulnhub_jira_ticketer()->build_scope_issue(
+			array(
+				'kind'       => $kind,
+				'kind_label' => (string) $kinds[ $kind ]['label'],
+				'kind_help'  => (string) $kinds[ $kind ]['help'],
+				'summary'    => $summary,
+				'notes'      => $notes,
+				'filters'    => $words,
+				'total'      => $total,
+				'assets'     => $described,
+				'attachment' => $csv['name'],
+			)
+		);
+
+		if ( empty( $built['ok'] ) ) {
+			return $fail( (string) $built['message'] );
+		}
+
+		// The whole snapshot, for the per-asset tracking the ticket page shows.
+		$built['group_key'] = 'assets:' . md5( implode( ',', $ids ) );
+
+		$warnings = array();
+
+		if ( $csv['rows'] !== $total ) {
+			/* translators: 1: rows in the file, 2: assets on the ticket. */
+			$warnings[] = sprintf( __( 'The attachment has %1$d rows but the ticket covers %2$d assets. Review again before sending.', 'vulnhub' ), $csv['rows'], $total );
+		}
+
+		$snapshot = array_map(
+			static fn( array $a ): array => array(
+				'id'                      => (int) $a['id'],
+				'hostname'                => (string) $a['hostname'],
+				'asset_type'              => (string) $a['asset_type'],
+				'coverage_state'          => (string) $a['coverage_state'],
+				'defender_coverage_state' => (string) $a['defender_coverage_state'],
+				'lifecycle_status'        => (string) $a['lifecycle_status'],
+				'sources_json'            => (string) $a['sources_json'],
+			),
+			$found['assets']
+		);
+
+		return vulnhub_jira_ticketer()->present_draft(
+			vulnhub_jira_connector(),
+			$built,
+			$csv,
+			array(
+				'kind'       => 'assets',
+				'selected'   => $total,
+				'eligible'   => $total,
+				'skipped'    => 0,
+				'on_tickets' => array(),
+				'assets'     => $total,
+				'request'    => (string) $kinds[ $kind ]['label'],
+			),
+			$warnings,
+			array(
+				'type'    => 'assets',
+				'kind'    => $kind,
+				'notes'   => $notes,
+				'team_id' => (int) ( $query['team_id'] ?? 0 ),
+				'assets'  => $snapshot,
+				'scope'   => array(
+					'view'    => 'assets',
+					'args'    => $filters,
+					'query'   => $query,
+					'cols'    => array_keys( $csv['columns'] ),
+					'filters' => $words,
+				),
+			),
+			'assets'
+		);
 	}
 
 	public static function handle_scope(): void {
@@ -436,56 +676,20 @@ final class VulnHub_Dash_Tickets {
 			$fail( __( 'Choose a request type.', 'vulnhub' ), $typed );
 		}
 
-		/*
-		 * The whole list or nothing. Paged to the repository's ceiling, and
-		 * compared against the total afterwards: a short read saved as the
-		 * ticket's scope would report the missing machines as never asked
-		 * about, which is indistinguishable from them not existing.
-		 */
-		$base   = array_filter( $filters, static fn( string $v ): bool => '' !== $v );
-		$assets = array();
-		$total  = (int) ( Repo::assets( array_merge( $base, array( 'limit' => 1 ) ) )['total'] ?? 0 );
+		$found = self::collect_assets( $filters );
 
-		if ( 0 === $total ) {
-			$fail( __( 'These filters match no assets, so there is nothing to attach the ticket to.', 'vulnhub' ), $typed );
+		if ( ! $found['ok'] ) {
+			$fail( $found['message'], $typed );
 		}
 
-		if ( $total > self::MAX_ASSETS ) {
-			/* translators: 1: number of assets, 2: the limit. */
-			$fail( sprintf( __( 'These filters match %1$s assets; one ticket can hold at most %2$s. Narrow the list first.', 'vulnhub' ), number_format_i18n( $total ), number_format_i18n( self::MAX_ASSETS ) ), $typed );
-		}
-
-		for ( $offset = 0; $offset < $total; $offset += self::PAGE ) {
-			$page = (array) ( Repo::assets( array_merge( $base, array( 'limit' => self::PAGE, 'offset' => $offset ) ) )['rows'] ?? array() );
-
-			if ( ! $page ) {
-				break;
-			}
-
-			foreach ( $page as $row ) {
-				$assets[ (int) $row['id'] ] = $row;
-			}
-		}
-
-		if ( count( $assets ) !== $total ) {
-			/* translators: 1: rows read, 2: rows expected. */
-			$fail( sprintf( __( 'The asset list changed while it was being read (%1$s of %2$s). Nothing was saved; try again.', 'vulnhub' ), number_format_i18n( count( $assets ) ), number_format_i18n( $total ) ), $typed );
-		}
+		$assets = $found['assets'];
+		$total  = $found['total'];
 
 		$words   = self::describe_filters( $query );
 		$summary = trim( sanitize_text_field( self::posted( 'summary' ) ) );
 
 		if ( '' === $summary ) {
-			$summary = vh_trim(
-				sprintf(
-					/* translators: 1: request type, 2: number of assets, 3: the filters in words. */
-					_n( '%1$s: %2$s asset (%3$s)', '%1$s: %2$s assets (%3$s)', $total, 'vulnhub' ),
-					(string) $kinds[ $kind ]['label'],
-					number_format_i18n( $total ),
-					implode( ', ', $words )
-				),
-				250
-			);
+			$summary = self::default_summary( (string) $kinds[ $kind ]['label'], $total, $words );
 		}
 
 		$saved = Tickets::upsert(

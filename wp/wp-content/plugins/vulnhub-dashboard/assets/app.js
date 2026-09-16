@@ -446,7 +446,9 @@
 		// Scope.
 		var sc = draft.scope || {};
 		var scope = section( 'What this ticket covers' );
-		scope.appendChild( el( 'p', 'vh-review__big', '1 ticket · ' + sc.eligible + ' finding' + ( 1 === sc.eligible ? '' : 's' ) + ' · ' + sc.assets + ' asset' + ( 1 === sc.assets ? '' : 's' ) ) );
+		scope.appendChild( el( 'p', 'vh-review__big', 'assets' === sc.kind
+			? '1 ticket · ' + sc.assets + ' asset' + ( 1 === sc.assets ? '' : 's' ) + ( sc.request ? ' · ' + sc.request : '' )
+			: '1 ticket · ' + sc.eligible + ' finding' + ( 1 === sc.eligible ? '' : 's' ) + ' · ' + sc.assets + ' asset' + ( 1 === sc.assets ? '' : 's' ) ) );
 		if ( sc.skipped ) {
 			scope.appendChild( el( 'p', 'vh-sub', sc.skipped + ' selected finding' + ( 1 === sc.skipped ? ' is' : 's are' ) + ' already on an open ticket (' + ( sc.on_tickets || [] ).join( ', ' ) + ') and will be left out.' ) );
 		}
@@ -558,9 +560,11 @@
 					status.textContent = '';
 					body.innerHTML = '';
 					body.appendChild( el( 'div', 'vh-notice vh-notice--good', result.message || 'Ticket created.' ) );
-					send.textContent = 'Close';
+					send.textContent = result.redirect ? 'Open the ticket' : 'Close';
 					send.disabled = false;
-					send.onclick = function () { window.location.reload(); };
+					send.onclick = function () {
+						if ( result.redirect ) { window.location.href = result.redirect; } else { window.location.reload(); }
+					};
 				} )
 				.catch( function ( error ) {
 					status.textContent = '';
@@ -618,6 +622,37 @@
 				return;
 			}
 		}
+
+		loadDraft( reviewDialog(), request, false );
+	} );
+
+	/*
+	 * Assets & owners: the Raise Jira ticket dialog's "Review and create in
+	 * Jira". Carries the list's filters (f[...]), its raw query (q[...]), the
+	 * request type, summary, notes and the columns ticked above, then hands
+	 * over to the same review.
+	 */
+	document.addEventListener( 'click', function ( event ) {
+		var button = event.target.closest( '[data-vh-raise-scope]' );
+		if ( ! button ) {
+			return;
+		}
+		event.preventDefault();
+
+		var form = button.closest( 'form' );
+		var request = { scope: 'assets', filters: {}, query: {}, cols: [] };
+
+		form.querySelectorAll( 'input[type="hidden"]' ).forEach( function ( input ) {
+			var m = /^([fq])\[([^\]]+)\]$/.exec( input.name );
+			if ( m ) { ( 'f' === m[1] ? request.filters : request.query )[ m[2] ] = input.value; }
+		} );
+		form.querySelectorAll( 'input[name="cols[]"]:checked' ).forEach( function ( box ) { request.cols.push( box.value ); } );
+		request.kind = ( form.querySelector( '[name="kind"]' ) || {} ).value || '';
+		request.summary = ( form.querySelector( '[name="summary"]' ) || {} ).value || '';
+		request.notes = ( form.querySelector( '[name="notes"]' ) || {} ).value || '';
+
+		var host = button.closest( 'dialog' );
+		if ( host && host.open ) { host.close(); }
 
 		loadDraft( reviewDialog(), request, false );
 	} );

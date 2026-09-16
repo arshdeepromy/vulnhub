@@ -464,6 +464,13 @@ final class Rest {
 			'all'         => (bool) $request->get_param( 'all' ),
 			'filters'     => (array) $request->get_param( 'filters' ),
 			'cols'        => array_map( 'sanitize_key', (array) $request->get_param( 'cols' ) ),
+			// An asset-list ticket (Assets & owners): the list's filters, its
+			// raw query, the request type and the operator's own words.
+			'scope'       => sanitize_key( (string) $request->get_param( 'scope' ) ),
+			'kind'        => sanitize_key( (string) $request->get_param( 'kind' ) ),
+			'query'       => (array) $request->get_param( 'query' ),
+			'summary'     => (string) $request->get_param( 'summary' ),
+			'notes'       => (string) $request->get_param( 'notes' ),
 		);
 
 		/**

@@ -1170,21 +1170,6 @@ final class VulnHub_Dash_Export {
 	 * @return array{bytes:string,rows:int,columns:array<string,string>}
 	 */
 	public static function findings_csv( array $ids, array $col_keys ): array {
-		$all  = self::columns( 'findings' );
-		$keys = array_values( array_intersect( array_keys( $all ), $col_keys ) );
-		$keys = $keys ? $keys : array_values( array_intersect( array_keys( $all ), self::ticket_columns() ) );
-		$cols = array();
-
-		foreach ( $keys as $key ) {
-			$cols[ $key ] = $all[ $key ];
-		}
-
-		$out  = fopen( 'php://temp', 'w+' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
-		$rows = 0;
-
-		fwrite( $out, "\xEF\xBB\xBF" ); // phpcs:ignore WordPress.WP.AlternativeFunctions
-		self::put( $out, array_map( static fn( array $c ): string => (string) $c['label'], array_values( $cols ) ) );
-
 		self::$src = array(
 			'ids'     => implode( ',', array_map( 'intval', $ids ) ),
 			'orderby' => 'risk_score',
@@ -1197,17 +1182,86 @@ final class VulnHub_Dash_Export {
 			$base = self::findings_base();
 			unset( $base['state'] );
 
-			self::each(
-				$base,
-				static fn( array $a ): array => Repo::findings( $a ),
-				static function ( array $r ) use ( $out, $cols, &$rows ): void {
-					self::emit( $out, $cols, $r );
-					++$rows;
-				}
+			return self::csv_in_memory( 'findings', $col_keys, self::ticket_columns(), $base, static fn( array $a ): array => Repo::findings( $a ) );
+		} finally {
+			self::$src = null;
+		}
+	}
+
+	/**
+	 * Columns an asset ticket's attachment starts with.
+	 *
+	 * @return string[]
+	 */
+	public static function asset_ticket_columns(): array {
+		return array( 'hostname', 'ipv4', 'asset_type', 'os', 'owner', 'team', 'site', 'lifecycle', 'coverage', 'last_scan', 'edr' );
+	}
+
+	/**
+	 * An assets CSV for exactly these asset ids, built in memory, with the
+	 * same columns and cells as the Assets & owners export.
+	 *
+	 * @param int[]    $ids      Asset ids.
+	 * @param string[] $col_keys Column keys; none means asset_ticket_columns().
+	 * @return array{bytes:string,rows:int,columns:array<string,string>}
+	 */
+	public static function assets_csv( array $ids, array $col_keys ): array {
+		self::$src = array( 'in_memory' => '1' );
+
+		try {
+			return self::csv_in_memory(
+				'assets',
+				$col_keys,
+				self::asset_ticket_columns(),
+				array(
+					// Repo::assets() reads ids as an array. No lifecycle or
+					// reporting scope: the ids are the whole list.
+					'ids'     => array_map( 'intval', $ids ) ?: array( 0 ),
+					'orderby' => 'hostname',
+					'order'   => 'ASC',
+				),
+				static fn( array $a ): array => Repo::assets( $a )
 			);
 		} finally {
 			self::$src = null;
 		}
+	}
+
+	/**
+	 * Write a header and every row a query pages through into memory.
+	 *
+	 * Expects self::$src to be set by the caller, which is also what keeps
+	 * each() from flushing output in the middle of a REST response.
+	 *
+	 * @param string[]            $col_keys Chosen column keys.
+	 * @param string[]            $defaults Keys used when none are chosen.
+	 * @param array<string,mixed> $base     Query arguments.
+	 * @return array{bytes:string,rows:int,columns:array<string,string>}
+	 */
+	private static function csv_in_memory( string $view, array $col_keys, array $defaults, array $base, callable $query ): array {
+		$all  = self::columns( $view );
+		$keys = array_values( array_intersect( array_keys( $all ), $col_keys ) );
+		$keys = $keys ? $keys : array_values( array_intersect( array_keys( $all ), $defaults ) );
+		$cols = array();
+
+		foreach ( $keys as $key ) {
+			$cols[ $key ] = $all[ $key ];
+		}
+
+		$out  = fopen( 'php://temp', 'w+' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		$rows = 0;
+
+		fwrite( $out, "\xEF\xBB\xBF" ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		self::put( $out, array_map( static fn( array $c ): string => (string) $c['label'], array_values( $cols ) ) );
+
+		self::each(
+			$base,
+			$query,
+			static function ( array $r ) use ( $out, $cols, &$rows ): void {
+				self::emit( $out, $cols, $r );
+				++$rows;
+			}
+		);
 
 		rewind( $out );
 		$bytes = (string) stream_get_contents( $out );

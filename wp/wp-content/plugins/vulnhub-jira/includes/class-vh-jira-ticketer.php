@@ -400,6 +400,35 @@ final class VulnHub_Jira_Ticketer {
 			return $fail( (string) $built['message'], array( 'scope' => $scope_out ) );
 		}
 
+		return $this->present_draft(
+			$connector,
+			$built,
+			$csv,
+			$scope_out,
+			$warnings,
+			array(
+				'type' => 'findings',
+				'ids'  => $ids,
+			),
+			'findings'
+		);
+	}
+
+	/**
+	 * Keep a built draft under a token and describe it for the review screen.
+	 *
+	 * Shared by finding tickets and asset tickets, so both reviews show the
+	 * same things the same way.
+	 *
+	 * @param array<string,mixed>      $built     From build_issue() or build_scope_issue().
+	 * @param array<string,mixed>|null $csv       bytes, rows, columns, name.
+	 * @param array<string,mixed>      $scope_out Counts for the review.
+	 * @param string[]                 $warnings  Shown above the review.
+	 * @param array<string,mixed>      $extra     Stored with the draft for sending.
+	 * @param string                   $view      Export view whose columns the picker offers.
+	 * @return array<string,mixed>
+	 */
+	public function present_draft( VulnHub_Jira_Connector $connector, array $built, ?array $csv, array $scope_out, array $warnings, array $extra, string $view ): array {
 		$allowed = $connector->allowed_projects();
 
 		if ( $allowed && ! in_array( strtoupper( (string) $built['project'] ), $allowed, true ) ) {
@@ -426,12 +455,14 @@ final class VulnHub_Jira_Ticketer {
 
 		set_transient(
 			self::draft_key( $token ),
-			array(
-				'user'     => get_current_user_id(),
-				'created'  => time(),
-				'ids'      => $ids,
-				'built'    => $built,
-				'csv'      => $csv ? array( 'name' => $csv['name'], 'bytes' => base64_encode( $csv['bytes'] ), 'rows' => $csv['rows'] ) : null,
+			array_merge(
+				$extra,
+				array(
+					'user'    => get_current_user_id(),
+					'created' => time(),
+					'built'   => $built,
+					'csv'     => $csv ? array( 'name' => $csv['name'], 'bytes' => base64_encode( $csv['bytes'] ), 'rows' => $csv['rows'] ) : null,
+				)
 			),
 			self::DRAFT_TTL
 		);
@@ -474,7 +505,7 @@ final class VulnHub_Jira_Ticketer {
 		if ( class_exists( 'VulnHub_Dash_Export' ) ) {
 			$chosen = $csv ? array_keys( $csv['columns'] ) : array();
 
-			foreach ( VulnHub_Dash_Export::columns( 'findings' ) as $key => $col ) {
+			foreach ( VulnHub_Dash_Export::columns( $view ) as $key => $col ) {
 				$picker[] = array(
 					'key'     => (string) $key,
 					'label'   => (string) $col['label'],
@@ -511,6 +542,210 @@ final class VulnHub_Jira_Ticketer {
 				: array(),
 			'payload'     => $fields,
 			'warnings'    => $warnings,
+		);
+	}
+
+	/**
+	 * Build the issue for an asset-list ticket (Tenable coverage, CMDB gap,
+	 * clean-up…): same routing, issue type and allowlist as a finding ticket,
+	 * with a description that says what is being asked and of which assets.
+	 *
+	 * @param array<string,mixed> $spec kind, kind_label, kind_help, summary,
+	 *                                  notes, filters (words), total, assets
+	 *                                  (rows), attachment (file name).
+	 * @return array<string,mixed> ok=false with message, or the built issue.
+	 */
+	public function build_scope_issue( array $spec ): array {
+		$connector = vulnhub_jira_connector();
+
+		if ( ! $connector ) {
+			return array( 'ok' => false, 'message' => __( 'The Jira connector is not registered.', 'vulnhub' ) );
+		}
+
+		$team    = array();
+		$routing = $this->routing( $connector, $team );
+		$project = (string) $routing['project'];
+
+		if ( '' === $project ) {
+			return array( 'ok' => false, 'message' => __( 'No Jira project key is configured.', 'vulnhub' ) );
+		}
+
+		$assets = (array) $spec['assets'];
+		$total  = (int) $spec['total'];
+		$doc    = VulnHub_Jira_Adf::doc();
+
+		$doc->paragraph(
+			array(
+				VulnHub_Jira_Adf::strong( __( 'Raised from VulnHub.', 'vulnhub' ) ),
+				VulnHub_Jira_Adf::text( ' ' . (string) $spec['kind_help'] ),
+			)
+		);
+
+		if ( '' !== trim( (string) $spec['notes'] ) ) {
+			$doc->paragraph( (string) $spec['notes'] );
+		}
+
+		$doc->heading( __( 'Which assets', 'vulnhub' ) );
+		$doc->paragraph(
+			sprintf(
+				/* translators: %d: number of assets. */
+				_n( '%d asset matching:', '%d assets matching:', $total, 'vulnhub' ),
+				$total
+			)
+		);
+		$doc->bullets( array_map( static fn( string $f ): string => $f, (array) $spec['filters'] ) );
+
+		$doc->heading( __( 'Assets', 'vulnhub' ) );
+
+		$lines = array();
+
+		foreach ( array_slice( $assets, 0, self::DESCRIPTION_ASSETS ) as $a ) {
+			$detail = array_filter(
+				array(
+					(string) ( $a['ipv4'] ?? '' ),
+					vh_asset_type_label( (string) ( $a['asset_type'] ?? '' ) ),
+					(string) ( $a['operating_system'] ?? '' ),
+					(string) ( $a['site'] ?? '' ),
+					'' !== (string) ( $a['owner'] ?? '' ) ? sprintf( /* translators: %s: owner name. */ __( 'owner %s', 'vulnhub' ), (string) $a['owner'] ) : '',
+					'' !== (string) ( $a['team'] ?? '' ) ? sprintf( /* translators: %s: team name. */ __( 'team %s', 'vulnhub' ), (string) $a['team'] ) : '',
+				)
+			);
+
+			$lines[] = array(
+				VulnHub_Jira_Adf::strong( (string) $a['hostname'] ),
+				VulnHub_Jira_Adf::text( $detail ? ' — ' . implode( ' · ', $detail ) : '' ),
+			);
+		}
+
+		$doc->bullets( $lines );
+
+		if ( $total > count( $lines ) ) {
+			$doc->paragraph(
+				'' !== (string) $spec['attachment']
+					? sprintf(
+						/* translators: 1: number of assets not listed, 2: file name. */
+						_n( '… and %1$d more asset, listed in the attached %2$s.', '… and %1$d more assets, listed in the attached %2$s.', $total - count( $lines ), 'vulnhub' ),
+						$total - count( $lines ),
+						(string) $spec['attachment']
+					)
+					: sprintf(
+						/* translators: %d: number of assets not listed. */
+						_n( '… and %d more asset.', '… and %d more assets.', $total - count( $lines ), 'vulnhub' ),
+						$total - count( $lines )
+					)
+			);
+		} elseif ( '' !== (string) $spec['attachment'] ) {
+			/* translators: %s: file name. */
+			$doc->paragraph( sprintf( __( 'Every asset is listed in the attached %s.', 'vulnhub' ), (string) $spec['attachment'] ) );
+		}
+
+		$doc->rule();
+		$doc->heading( __( 'How this is tracked', 'vulnhub' ) );
+		$doc->paragraph( __( 'VulnHub checks each of these assets against its latest data and records which are done, which are still outstanding, and which no longer matter because they were retired. Please only close this ticket once the work is done.', 'vulnhub' ) );
+
+		$fields = array(
+			'project'     => array( 'key' => $project ),
+			'summary'     => vh_trim( (string) $spec['summary'], 250 ),
+			'issuetype'   => $routing['issue_type_ref'],
+			'description' => $doc->to_array(),
+			'labels'      => array( 'vulnhub', 'vulnhub-' . str_replace( '_', '-', sanitize_key( (string) $spec['kind'] ) ) ),
+		);
+
+		if ( '' !== $routing['team_field'] && '' !== $routing['team_value'] ) {
+			$fields[ $routing['team_field'] ] = $routing['team_write'];
+		}
+
+		return array(
+			'ok'         => true,
+			'fields'     => $fields,
+			'routing'    => $routing,
+			'project'    => $project,
+			'type'       => (string) $routing['issue_type'],
+			'priority'   => '',
+			'summary'    => (string) $fields['summary'],
+			'due'        => '',
+			'team'       => $team,
+			'severity'   => '',
+			'account_id' => '',
+			'group_key'  => 'assets:' . md5( implode( ',', array_map( static fn( array $a ): int => (int) $a['id'], $assets ) ) ),
+			'grouping'   => 'scope',
+		);
+	}
+
+	/**
+	 * Create a reviewed asset-list ticket, record it with its asset snapshot.
+	 *
+	 * @param array<string,mixed> $draft Stored draft.
+	 * @return array<string,mixed>
+	 */
+	private function submit_scope_issue( VulnHub_Jira_Connector $connector, array $draft ): array {
+		$built  = (array) $draft['built'];
+		$fields = (array) $built['fields'];
+
+		$response = $connector->client()->create_issue( $fields );
+
+		if ( ! $response->ok() ) {
+			$message = sprintf(
+				/* translators: 1: project key, 2: HTTP status, 3: error message. */
+				__( 'Jira refused to create the issue in %1$s (HTTP %2$d): %3$s', 'vulnhub' ),
+				(string) $built['project'],
+				$response->status,
+				vh_trim( $response->error_message(), 220 )
+			);
+
+			$connector->log( $message );
+			vulnhub()->logger->audit( 'ticket.create_failed', $message, 'ticket', 0, array( 'kind' => (string) $draft['kind'], 'status' => $response->status ), 'error' );
+
+			return array( 'ok' => false, 'message' => $message );
+		}
+
+		$key = (string) ( $response->data()['key'] ?? '' );
+
+		if ( '' === $key ) {
+			return array( 'ok' => false, 'message' => __( 'Jira accepted the issue but returned no issue key.', 'vulnhub' ) );
+		}
+
+		$saved = \VulnHub\Core\Tickets::upsert(
+			array(
+				'provider'        => 'jira',
+				'external_id'     => (string) ( $response->data()['id'] ?? '' ),
+				'external_key'    => $key,
+				'url'             => $connector->client()->browse_url( $key ),
+				'project_key'     => (string) $built['project'],
+				'issue_type'      => (string) $built['type'],
+				'summary'         => (string) $fields['summary'],
+				'status'          => __( 'To Do', 'vulnhub' ),
+				'status_category' => 'new',
+				'team_id'         => (int) ( $draft['team_id'] ?? 0 ),
+				'grouping_key'    => (string) $built['group_key'],
+				'created_via'     => 'manual',
+				'created_by'      => get_current_user_id(),
+				'kind'            => (string) $draft['kind'],
+				'source_view'     => 'assets',
+				'notes'           => (string) ( $draft['notes'] ?? '' ),
+				'scope'           => (array) ( $draft['scope'] ?? array() ),
+			)
+		);
+
+		\VulnHub\Core\Tickets::attach_assets( (int) $saved['id'], (array) $draft['assets'] );
+
+		vulnhub()->logger->audit(
+			'ticket.scope_created',
+			sprintf( 'Raised Jira issue %1$s (%2$s) covering %3$d assets', $key, (string) $draft['kind'], count( (array) $draft['assets'] ) ),
+			'ticket',
+			(int) $saved['id'],
+			array( 'kind' => (string) $draft['kind'], 'assets' => count( (array) $draft['assets'] ), 'project_key' => (string) $built['project'] )
+		);
+
+		return array(
+			'ok'      => true,
+			'message' => sprintf(
+				/* translators: 1: issue key, 2: number of assets. */
+				_n( 'Created %1$s covering %2$d asset.', 'Created %1$s covering %2$d assets.', count( (array) $draft['assets'] ), 'vulnhub' ),
+				$key,
+				count( (array) $draft['assets'] )
+			),
+			'ticket'  => (array) \VulnHub\Core\Tickets::get( (int) $saved['id'] ),
 		);
 	}
 
@@ -576,86 +811,115 @@ final class VulnHub_Jira_Ticketer {
 			// a retried request, finds nothing to send.
 			delete_transient( $key );
 
-			$ids  = array_map( 'intval', (array) $draft['ids'] );
-			$plan = $this->plan( $ids );
-			$now  = array_map( static fn( array $r ): int => (int) $r['id'], $plan['rows'] );
-			sort( $now );
-
-			if ( $now !== $ids ) {
-				return $fail(
-					sprintf(
-						/* translators: %d: findings no longer eligible. */
-						__( 'The selection changed after you reviewed it (%d finding(s) are now on another ticket or gone). Nothing was sent; open Raise ticket again to review the current version.', 'vulnhub' ),
-						count( array_diff( $ids, $now ) )
-					)
-				);
+			if ( 'assets' === ( $draft['type'] ?? 'findings' ) ) {
+				$result = $this->submit_scope_issue( $connector, $draft );
+			} else {
+				$result = $this->send_findings_draft( $connector, $draft );
 			}
-
-			$result = $this->submit_issue(
-				$connector,
-				(array) $draft['built'],
-				$plan['rows'],
-				array(
-					'exact'       => true,
-					'created_via' => 'manual',
-					'created_by'  => get_current_user_id(),
-				)
-			);
 
 			if ( empty( $result['ok'] ) ) {
 				return $fail( (string) $result['message'] );
 			}
 
-			$ticket  = (array) $result['ticket'];
-			$message = (string) $result['message'];
-
-			if ( ! empty( $draft['csv'] ) ) {
-				$upload = $connector->client()->attach(
-					(string) $ticket['external_key'],
-					(string) $draft['csv']['name'],
-					(string) base64_decode( (string) $draft['csv']['bytes'] ),
-					'text/csv'
-				);
-
-				if ( $upload->ok() ) {
-					$message .= ' ' . sprintf(
-						/* translators: 1: file name, 2: rows. */
-						__( 'Attached %1$s (%2$d rows).', 'vulnhub' ),
-						(string) $draft['csv']['name'],
-						(int) $draft['csv']['rows']
-					);
-				} else {
-					$message .= ' ' . sprintf(
-						/* translators: 1: file name, 2: HTTP status, 3: error. */
-						__( 'The ticket was created, but attaching %1$s failed (HTTP %2$d: %3$s). It was not retried; export the list and attach it by hand.', 'vulnhub' ),
-						(string) $draft['csv']['name'],
-						$upload->status,
-						vh_trim( $upload->error_message(), 140 )
-					);
-				}
-
-				vulnhub()->logger->audit(
-					$upload->ok() ? 'ticket.attached' : 'ticket.attach_failed',
-					sprintf( '%s: %s %s', (string) $ticket['external_key'], (string) $draft['csv']['name'], $upload->ok() ? 'attached' : 'not attached' ),
-					'ticket',
-					(int) $ticket['id'],
-					array( 'rows' => (int) $draft['csv']['rows'], 'status' => $upload->status ),
-					$upload->ok() ? 'info' : 'warning'
-				);
-			}
-
-			return array(
-				'ok'      => true,
-				'message' => $message,
-				'ticket'  => $ticket,
-				'tickets' => array( $ticket ),
-				'created' => 1,
-				'updated' => 0,
-				'failed'  => 0,
-			);
+			return $this->attach_draft_file( $connector, $draft, $result );
 		} finally {
 			$this->unlock_group( self::MANUAL_LOCK );
 		}
+	}
+
+	/**
+	 * Re-check a finding draft's selection and create its issue exactly.
+	 *
+	 * @param array<string,mixed> $draft Stored draft.
+	 * @return array<string,mixed>
+	 */
+	private function send_findings_draft( VulnHub_Jira_Connector $connector, array $draft ): array {
+		$fail = static fn( string $message ): array => array( 'ok' => false, 'message' => $message );
+		$ids  = array_map( 'intval', (array) $draft['ids'] );
+		$plan = $this->plan( $ids );
+		$now  = array_map( static fn( array $r ): int => (int) $r['id'], $plan['rows'] );
+		sort( $now );
+
+		if ( $now !== $ids ) {
+			return $fail(
+				sprintf(
+					/* translators: %d: findings no longer eligible. */
+					__( 'The selection changed after you reviewed it (%d finding(s) are now on another ticket or gone). Nothing was sent; open Raise ticket again to review the current version.', 'vulnhub' ),
+					count( array_diff( $ids, $now ) )
+				)
+			);
+		}
+
+		$result = $this->submit_issue(
+			$connector,
+			(array) $draft['built'],
+			$plan['rows'],
+			array(
+				'exact'       => true,
+				'created_via' => 'manual',
+				'created_by'  => get_current_user_id(),
+			)
+		);
+
+		return $result;
+	}
+
+	/**
+	 * Attach a sent draft's file to the ticket that was just created.
+	 *
+	 * @param array<string,mixed> $draft  Stored draft.
+	 * @param array<string,mixed> $result Successful create result.
+	 * @return array<string,mixed>
+	 */
+	private function attach_draft_file( VulnHub_Jira_Connector $connector, array $draft, array $result ): array {
+		$ticket  = (array) $result['ticket'];
+		$message = (string) $result['message'];
+
+		if ( ! empty( $draft['csv'] ) ) {
+			$upload = $connector->client()->attach(
+				(string) $ticket['external_key'],
+				(string) $draft['csv']['name'],
+				(string) base64_decode( (string) $draft['csv']['bytes'] ),
+				'text/csv'
+			);
+
+			if ( $upload->ok() ) {
+				$message .= ' ' . sprintf(
+					/* translators: 1: file name, 2: rows. */
+					__( 'Attached %1$s (%2$d rows).', 'vulnhub' ),
+					(string) $draft['csv']['name'],
+					(int) $draft['csv']['rows']
+				);
+			} else {
+				$message .= ' ' . sprintf(
+					/* translators: 1: file name, 2: HTTP status, 3: error. */
+					__( 'The ticket was created, but attaching %1$s failed (HTTP %2$d: %3$s). It was not retried; export the list and attach it by hand.', 'vulnhub' ),
+					(string) $draft['csv']['name'],
+					$upload->status,
+					vh_trim( $upload->error_message(), 140 )
+				);
+			}
+
+			vulnhub()->logger->audit(
+				$upload->ok() ? 'ticket.attached' : 'ticket.attach_failed',
+				sprintf( '%s: %s %s', (string) $ticket['external_key'], (string) $draft['csv']['name'], $upload->ok() ? 'attached' : 'not attached' ),
+				'ticket',
+				(int) $ticket['id'],
+				array( 'rows' => (int) $draft['csv']['rows'], 'status' => $upload->status ),
+				$upload->ok() ? 'info' : 'warning'
+			);
+		}
+
+		return array(
+			'ok'       => true,
+			'message'  => $message,
+			'ticket'   => $ticket,
+			'tickets'  => array( $ticket ),
+			'created'  => 1,
+			'updated'  => 0,
+			'failed'   => 0,
+			'redirect' => (string) apply_filters( 'vulnhub_ticket_page_url', '', (int) $ticket['id'] ),
+		);
 	}
 
 	/**
