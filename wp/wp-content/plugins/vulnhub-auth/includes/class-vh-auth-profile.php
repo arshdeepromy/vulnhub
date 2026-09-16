@@ -185,7 +185,7 @@ final class VulnHub_Auth_Profile {
 					sprintf(
 						/* translators: 1: enrolment date, 2: recovery codes left. */
 						__( 'Enrolled %1$s · %2$d recovery codes left', 'vulnhub' ),
-						$status['enrolled_at'] ? gmdate( 'j M Y', (int) strtotime( $status['enrolled_at'] . ' UTC' ) ) : '—',
+						$status['enrolled_at'] ? vh_date( (string) $status['enrolled_at'], 'j M Y' ) : '—',
 						(int) $status['recovery']
 					)
 				)

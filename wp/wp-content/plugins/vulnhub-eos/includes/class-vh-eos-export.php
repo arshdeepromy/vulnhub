@@ -176,7 +176,8 @@ final class VH_EOS_Export {
 				'value' => static function ( array $r ): string {
 					$d = (string) ( $r['deadline'] ?? '' );
 
-					return '' !== $d ? gmdate( 'Y-m-d', (int) ( strtotime( $d ) ?: 0 ) ) : '';
+					// A calendar date: formatted, never shifted. See vh_date_only().
+					return '' !== $d ? substr( $d, 0, 10 ) : '';
 				},
 			),
 			'overdue'       => array(
@@ -233,7 +234,8 @@ final class VH_EOS_Export {
 				'value' => static function ( array $r ): string {
 					$s = (string) ( $r['tenable_last_scan'] ?? $r['last_scan'] ?? '' );
 
-					return '' !== $s ? gmdate( 'Y-m-d', (int) ( strtotime( $s ) ?: 0 ) ) : '';
+					// An instant, so it reads in the site timezone like the screen does.
+					return '' !== $s ? vh_date( $s, 'Y-m-d' ) : '';
 				},
 			),
 			'controls'      => array(
@@ -383,7 +385,7 @@ final class VH_EOS_Export {
 			}
 		}
 
-		$parts[] = gmdate( 'Y-m-d-Hi' );
+		$parts[] = wp_date( 'Y-m-d-Hi' );
 
 		return implode( '-', $parts ) . '.csv';
 	}

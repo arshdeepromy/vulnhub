@@ -558,7 +558,7 @@ final class VulnHub_Dash_Portal {
 						printf(
 							/* translators: 1: four-digit year, 2: organisation wordmark. */
 							esc_html__( '© %1$s %2$s', 'vulnhub' ),
-							esc_html( gmdate( 'Y' ) ),
+							esc_html( wp_date( 'Y' ) ),
 							esc_html( strtoupper( $word ) )
 						);
 						?>

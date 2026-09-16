@@ -689,6 +689,34 @@ function vh_json( ?string $raw ): array {
 }
 
 /**
+ * Format a calendar date for display, WITHOUT moving it between timezones.
+ *
+ * An instant and a date are different things, and only one of them should be
+ * converted. "Support ended 2025-12-31" is a fact about a calendar, not a
+ * moment someone can be standing in: shifting it by the site's offset turns it
+ * into 1 January in Auckland or 30 December in New York, and a support deadline
+ * that moves depending on where the reader sits is worse than useless.
+ *
+ * So this reads the date part only and formats it in UTC — no shift — while
+ * still going through wp_date(), which keeps month names translated. Use it for
+ * DATE columns (support_end_date, patch_publication_date, the EOS plan
+ * deadline, kev_added, nvd_published) and vh_date() for DATETIME instants.
+ */
+function vh_date_only( ?string $date, string $format = 'j M Y' ): string {
+	if ( empty( $date ) || str_starts_with( (string) $date, '0000-00-00' ) ) {
+		return '—';
+	}
+
+	$ts = strtotime( substr( (string) $date, 0, 10 ) . ' 00:00:00 UTC' );
+
+	if ( false === $ts ) {
+		return '—';
+	}
+
+	return wp_date( $format, $ts, new DateTimeZone( 'UTC' ) );
+}
+
+/**
  * Format a MySQL datetime for display in the site timezone.
  */
 function vh_date( ?string $mysql, string $format = 'j M Y, H:i' ): string {

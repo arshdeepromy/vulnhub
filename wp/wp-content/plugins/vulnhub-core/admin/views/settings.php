@@ -416,6 +416,41 @@ $vh_help = static function ( string $id, string $text, bool $scope = false ): vo
 				<div class="vh-sysrow"><dt><?php esc_html_e( 'libsodium', 'vulnhub' ); ?></dt><dd><?php echo esc_html( defined( 'SODIUM_LIBRARY_VERSION' ) ? SODIUM_LIBRARY_VERSION : __( 'unavailable', 'vulnhub' ) ); ?></dd></div>
 				<div class="vh-sysrow"><dt><?php esc_html_e( 'WP-Cron', 'vulnhub' ); ?></dt><dd><?php echo esc_html( defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON ? __( 'external runner', 'vulnhub' ) : __( 'page-load driven', 'vulnhub' ) ); ?></dd></div>
 				<div class="vh-sysrow"><dt><?php esc_html_e( 'Site URL', 'vulnhub' ); ?></dt><dd><?php echo esc_html( home_url() ); ?></dd></div>
+				<?php
+				/*
+				 * Every time on every screen is stored in UTC and rendered in
+				 * this timezone. Left unset, WordPress calls UTC "local" and
+				 * says so nowhere: the platform then reports a scan that ran at
+				 * 9am as having run at 9pm the day before, and nothing on the
+				 * screen suggests the reader should doubt it. Worth one row.
+				 */
+				$vh_tz_name = (string) get_option( 'timezone_string' );
+				$vh_tz_set  = '' !== $vh_tz_name;
+				?>
+				<div class="vh-sysrow">
+					<dt><?php esc_html_e( 'Timezone', 'vulnhub' ); ?></dt>
+					<dd>
+						<?php if ( $vh_tz_set ) : ?>
+							<?php echo esc_html( $vh_tz_name ); ?>
+							<span class="vh-meta"><?php echo esc_html( wp_date( 'j M Y, H:i T' ) ); ?></span>
+						<?php else : ?>
+							<span class="vh-state vh-state--open"><?php esc_html_e( 'Not set — every time reads as UTC', 'vulnhub' ); ?></span>
+							<span class="vh-meta">
+								<?php
+								if ( current_user_can( 'manage_options' ) ) {
+									printf(
+										/* translators: %s: link to the WordPress general settings screen. */
+										esc_html__( 'Set it in %s so times match the people reading them.', 'vulnhub' ),
+										'<a href="' . esc_url( admin_url( 'options-general.php' ) ) . '">' . esc_html__( 'WordPress general settings', 'vulnhub' ) . '</a>'
+									);
+								} else {
+									esc_html_e( 'An administrator can set it in the WordPress general settings.', 'vulnhub' );
+								}
+								?>
+							</span>
+						<?php endif; ?>
+					</dd>
+				</div>
 			</dl>
 		</div>
 	</aside>

@@ -892,7 +892,7 @@ final class VulnHub_Dash_App {
 						<?php endif; ?>
 					</dd>
 					<dt><?php esc_html_e( 'Patch published', 'vulnhub' ); ?></dt>
-					<dd><?php echo esc_html( $v['patch_publication_date'] ? vh_date( (string) $v['patch_publication_date'] ) : '—' ); ?></dd>
+					<dd><?php echo esc_html( $v['patch_publication_date'] ? vh_date_only( (string) $v['patch_publication_date'] ) : '—' ); ?></dd>
 					<dt><?php esc_html_e( 'CVE', 'vulnhub' ); ?></dt>
 					<dd class="vh-mono"><?php echo esc_html( $cves ? implode( ', ', array_slice( $cves, 0, 6 ) ) : '—' ); ?></dd>
 				</dl>
@@ -2695,10 +2695,10 @@ final class VulnHub_Dash_App {
 							<?php if ( '' === $vh_support_end ) : ?>
 								—
 							<?php elseif ( $vh_expired ) : ?>
-								<span class="vh-chip vh-chip--bad"><?php echo esc_html( vh_date( $vh_support_end ) ); ?></span>
+								<span class="vh-chip vh-chip--bad"><?php echo esc_html( vh_date_only( $vh_support_end ) ); ?></span>
 								<span class="vh-meta"><?php esc_html_e( 'out of support', 'vulnhub' ); ?></span>
 							<?php else : ?>
-								<?php echo esc_html( vh_date( $vh_support_end ) ); ?>
+								<?php echo esc_html( vh_date_only( $vh_support_end ) ); ?>
 							<?php endif; ?>
 						</dd>
 						<dt><?php esc_html_e( 'Known by', 'vulnhub' ); ?></dt>

@@ -1,8 +1,11 @@
 <?php
 /**
- * Restore: validate an uploaded backup bundle, then replace wp-content and
- * the database with it. Destructive by design — v1 targets the stated use
- * case of standing a backup up on a fresh stack, not merging into a live one.
+ * Restore: validate an uploaded backup, then replace wp-content and the
+ * database with it. Destructive by design — v1 targets the stated use case of
+ * standing a backup up on a fresh stack, not merging into a live one.
+ *
+ * The operator uploads one file: the .tar.gz the backup screen produced. A
+ * .zip bundle from an older install is still accepted (see do_validate()).
  *
  * Same pass/batch/claim skeleton as VulnHub_Backup_Runner, mirrored phases:
  * validate -> extract_files (staged, then atomically renamed over the live
@@ -314,15 +317,50 @@ final class VulnHub_Backup_Restore_Runner {
 			return true;
 		}
 
-		$zip = new ZipArchive();
+		/*
+		 * Two shapes arrive here. A backup taken now is one .tar.gz holding
+		 * the three members; one taken before that change is a .zip of the
+		 * same three. Both are read, because the whole point of a backup is
+		 * that it still works when you need it, and the format it was written
+		 * in is not the operator's problem.
+		 *
+		 * The format is decided by the file's first bytes rather than its
+		 * name: this file was uploaded, so its extension proves nothing.
+		 */
+		$handle = fopen( $path, 'rb' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		$head   = $handle ? (string) fread( $handle, 4 ) : '';
 
-		if ( true !== $zip->open( $path ) ) {
-			self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'That file is not a valid backup bundle.', 'vulnhub' ) );
-			return true;
+		if ( $handle ) {
+			fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 		}
 
-		$zip->extractTo( $staging );
-		$zip->close();
+		$format = VulnHub_Backup_Storage::format_of( $head );
+
+		if ( 'targz' === $format ) {
+			$result = VulnHub_Backup_Storage::extract_targz(
+				$path,
+				$staging,
+				array( 'manifest.json', 'db.sql.gz', 'wp-content.zip' )
+			);
+
+			if ( ! $result['ok'] ) {
+				self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, (string) $result['error'] );
+				return true;
+			}
+		} elseif ( 'zip' === $format ) {
+			$zip = new ZipArchive();
+
+			if ( true !== $zip->open( $path ) ) {
+				self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'That file is not a valid backup bundle.', 'vulnhub' ) );
+				return true;
+			}
+
+			$zip->extractTo( $staging );
+			$zip->close();
+		} else {
+			self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'That file is not a VulnHub backup. Upload the .tar.gz the backup screen produced.', 'vulnhub' ) );
+			return true;
+		}
 
 		$manifest_path = $staging . '/manifest.json';
 

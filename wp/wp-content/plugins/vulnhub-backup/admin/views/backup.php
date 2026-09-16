@@ -18,10 +18,89 @@ if ( ! current_user_can( \VulnHub\Core\Caps::MANAGE ) ) {
 	return;
 }
 
+if ( ! function_exists( 'vulnhub_backup_portal_field' ) ) {
+	/**
+	 * Mark a form as submitted from the portal.
+	 *
+	 * `keep_redirects_in_portal()` falls back to the referer, which is usually
+	 * enough — but a referer is the one request header a browser, proxy or
+	 * privacy setting is free to strip, and losing it here means the operator
+	 * silently lands in wp-admin. The flag costs nothing and does not rely on
+	 * anyone's goodwill.
+	 *
+	 * Guarded on the dashboard classes because this same view renders in
+	 * wp-admin, where the portal is not loaded at all.
+	 */
+	function vulnhub_backup_portal_field(): void {
+		if ( ! class_exists( 'VulnHub_Dash_App' ) || ! class_exists( 'VulnHub_Dash_Portal' ) ) {
+			return;
+		}
+
+		if ( VulnHub_Dash_App::current_view() !== VulnHub_Dash_Portal::ADMIN_VIEW ) {
+			return;
+		}
+
+		echo '<input type="hidden" name="vh_from_portal" value="1" />';
+	}
+}
+
 $settings   = vulnhub()->settings;
 $local_sets = VulnHub_Backup_Storage::list_local();
 $recent     = VulnHub_Backup_Jobs::recent( 10 );
 $last_run   = vulnhub()->logger->last_run( 'backup_s3' );
+
+/*
+ * The job the progress panel follows: whichever is still running, else the one
+ * the redirect just told us about, else the most recent. A backup that is
+ * still going has to be visible the moment the page loads, not after the first
+ * poll — otherwise pressing the button looks like it did nothing.
+ */
+$vh_running = null;
+$vh_latest  = $recent[0] ?? null;
+
+foreach ( $recent as $vh_job ) {
+	if ( VulnHub_Backup_Jobs::RUNNING === (string) $vh_job['status'] ) {
+		$vh_running = $vh_job;
+		break;
+	}
+}
+
+// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display only.
+$vh_flagged = isset( $_GET['vh_job'] ) ? (int) $_GET['vh_job'] : 0;
+
+/*
+ * $vh_running means running, and nothing else — it is what disables the
+ * button. The job named in the redirect is only a hint about which one to
+ * show, and by the time the page renders it may already have finished.
+ */
+$vh_panel = $vh_running;
+
+if ( ! $vh_panel && $vh_flagged > 0 ) {
+	$vh_panel = VulnHub_Backup_Jobs::get( $vh_flagged );
+}
+
+if ( ! $vh_panel ) {
+	$vh_panel = $vh_latest;
+}
+
+/*
+ * How long the last finished backup took, so the warning below can say what
+ * "a while" actually means on this install rather than making the operator
+ * guess.
+ */
+$vh_last_took = '';
+
+foreach ( $recent as $vh_job ) {
+	if ( VulnHub_Backup_Jobs::DONE === (string) $vh_job['status'] && '' !== (string) $vh_job['finished_at'] ) {
+		$vh_from = strtotime( (string) $vh_job['started_at'] . ' UTC' );
+		$vh_to   = strtotime( (string) $vh_job['finished_at'] . ' UTC' );
+
+		if ( $vh_from && $vh_to && $vh_to > $vh_from ) {
+			$vh_last_took = human_time_diff( $vh_from, $vh_to );
+		}
+		break;
+	}
+}
 
 $enabled   = $settings->get_bool( 'backup_s3', 'enabled', false );
 $bucket    = (string) $settings->get( 'backup_s3', 'bucket', '' );
@@ -39,11 +118,89 @@ $secret_hint = $settings->secret_hint( 'backup_s3', 'secret_access_key' );
 		<?php esc_html_e( 'A backup captures the database and every plugin, theme and upload file — everything needed to stand this exact install up again on a fresh stack. It does not include the wp-config secrets (DB password, encryption key); note those down separately if this backup will be restored onto a different environment.', 'vulnhub' ); ?>
 	</p>
 
-	<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin: 16px 0;">
+	<p class="vh-backup__cost">
+		<?php
+		if ( '' !== $vh_last_took ) {
+			printf(
+				/* translators: %s: how long the last backup took, e.g. "2 minutes". */
+				esc_html__( 'A backup reads every table and every file, so the app is slower while it runs — the last one took %s. You can leave this page; it carries on in the background, and comes back here to show you where it got to.', 'vulnhub' ),
+				esc_html( $vh_last_took )
+			);
+		} else {
+			esc_html_e( 'A backup reads every table and every file, so the app is slower while it runs. You can leave this page; it carries on in the background.', 'vulnhub' );
+		}
+		?>
+	</p>
+
+	<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin: 16px 0;" data-vh-backup-form>
 		<?php wp_nonce_field( 'vulnhub_backup_now' ); ?>
 		<input type="hidden" name="action" value="vulnhub_backup_now" />
-		<?php submit_button( __( 'Backup Now', 'vulnhub' ), 'primary', 'submit', false ); ?>
+		<?php vulnhub_backup_portal_field(); ?>
+		<button type="submit" class="button button-primary vh-btn vh-btn--primary" <?php disabled( (bool) $vh_running ); ?>>
+			<?php echo $vh_running ? esc_html__( 'Backup running…', 'vulnhub' ) : esc_html__( 'Backup Now', 'vulnhub' ); ?>
+		</button>
 	</form>
+
+	<?php if ( $vh_panel ) : ?>
+		<?php
+		$vh_counters = (array) $vh_panel['counters_arr'];
+		$vh_is_run   = VulnHub_Backup_Jobs::RUNNING === (string) $vh_panel['status'];
+		?>
+		<div class="vh-backup-progress<?php echo $vh_is_run ? ' is-running' : ''; ?>"
+			data-vh-backup-progress="<?php echo esc_attr( (string) $vh_panel['id'] ); ?>"
+			data-vh-backup-active="<?php echo $vh_is_run ? '1' : '0'; ?>">
+
+			<div class="vh-backup-progress__head">
+				<strong data-vh-backup-phase>
+					<?php echo esc_html( (string) ( VulnHub_Backup_Jobs::phases()[ (string) $vh_panel['phase'] ] ?? $vh_panel['phase'] ) ); ?>
+				</strong>
+				<span class="vh-backup-progress__status" data-vh-backup-status>
+					<?php echo esc_html( (string) ( VulnHub_Backup_Jobs::statuses()[ (string) $vh_panel['status'] ] ?? $vh_panel['status'] ) ); ?>
+				</span>
+			</div>
+
+			<div class="vh-backup-progress__track" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+				aria-valuenow="<?php echo esc_attr( (string) VulnHub_Backup_Jobs::progress( $vh_panel ) ); ?>"
+				aria-label="<?php esc_attr_e( 'Backup progress', 'vulnhub' ); ?>" data-vh-backup-track>
+				<span class="vh-backup-progress__fill" data-vh-backup-fill
+					style="width: <?php echo esc_attr( (string) VulnHub_Backup_Jobs::progress( $vh_panel ) ); ?>%"></span>
+			</div>
+
+			<p class="vh-backup-progress__meta">
+				<span data-vh-backup-counters>
+					<?php
+					echo esc_html(
+						trim(
+							sprintf(
+								/* translators: 1: tables done, 2: tables total, 3: rows, 4: files. */
+								__( '%1$s of %2$s tables · %3$s rows · %4$s files', 'vulnhub' ),
+								number_format_i18n( (int) ( $vh_counters['tables_done'] ?? 0 ) ),
+								number_format_i18n( (int) ( $vh_counters['tables_total'] ?? 0 ) ),
+								number_format_i18n( (int) ( $vh_counters['rows_exported'] ?? 0 ) ),
+								number_format_i18n( (int) ( $vh_counters['files_archived'] ?? 0 ) )
+							)
+						)
+					);
+					?>
+				</span>
+				<span class="vh-backup-progress__started">
+					<?php
+					printf(
+						/* translators: %s: relative time, e.g. "2 minutes ago". */
+						esc_html__( 'started %s', 'vulnhub' ),
+						esc_html( vh_ago( (string) $vh_panel['started_at'] ) )
+					);
+					?>
+				</span>
+			</p>
+
+			<?php if ( '' !== (string) $vh_panel['error'] ) : ?>
+				<p class="vh-backup-progress__error" data-vh-backup-error><?php echo esc_html( (string) $vh_panel['error'] ); ?></p>
+			<?php else : ?>
+				<p class="vh-backup-progress__error" data-vh-backup-error hidden></p>
+			<?php endif; ?>
+		</div>
+	<?php endif; ?>
 
 	<h3><?php esc_html_e( 'Recent jobs', 'vulnhub' ); ?></h3>
 	<table class="widefat striped">
@@ -63,9 +220,9 @@ $secret_hint = $settings->secret_hint( 'backup_s3', 'secret_access_key' );
 			<?php foreach ( $recent as $job ) : ?>
 				<?php $counters = (array) $job['counters_arr']; ?>
 				<tr data-job-id="<?php echo esc_attr( (string) $job['id'] ); ?>">
-					<td><?php echo esc_html( (string) $job['started_at'] ); ?></td>
+					<td title="<?php echo esc_attr( vh_date( (string) $job['started_at'] ) ); ?>"><?php echo esc_html( vh_ago( (string) $job['started_at'] ) ); ?></td>
 					<td><?php echo esc_html( (string) $job['mode'] ); ?></td>
-					<td><?php echo esc_html( (string) $job['phase'] ); ?></td>
+					<td><?php echo esc_html( (string) ( VulnHub_Backup_Jobs::phases()[ (string) $job['phase'] ] ?? $job['phase'] ) ); ?></td>
 					<td><?php echo esc_html( (string) ( VulnHub_Backup_Jobs::statuses()[ (string) $job['status'] ] ?? $job['status'] ) ); ?></td>
 					<td><?php echo esc_html( sprintf( '%d rows, %d files', (int) ( $counters['rows_exported'] ?? 0 ), (int) ( $counters['files_archived'] ?? 0 ) ) ); ?></td>
 				</tr>
@@ -89,16 +246,28 @@ $secret_hint = $settings->secret_hint( 'backup_s3', 'secret_access_key' );
 			<?php endif; ?>
 			<?php foreach ( $local_sets as $set ) : ?>
 				<tr>
-					<td><?php echo esc_html( (string) $set['createdAt'] ); ?></td>
+					<td title="<?php echo esc_attr( vh_date( (string) $set['createdAt'] ) ); ?>"><?php echo esc_html( vh_ago( (string) $set['createdAt'] ) ); ?></td>
 					<td><?php echo esc_html( (string) $set['sizeLabel'] ); ?></td>
 					<td>
-						<?php foreach ( array( 'manifest.json', 'db.sql.gz', 'wp-content.zip' ) as $file ) : ?>
+						<?php
+						/*
+						 * Whatever the set actually contains, not a hardcoded
+						 * list: the archive format is the runner's business,
+						 * and this screen should not need editing when it
+						 * changes.
+						 */
+						$vh_files = isset( $set['files'] ) && is_array( $set['files'] )
+							? $set['files']
+							: array( 'manifest.json', 'db.sql.gz', 'wp-content.zip' );
+						?>
+						<?php foreach ( $vh_files as $file ) : ?>
 							<a href="<?php echo esc_url( rest_url( VulnHub_Backup_Rest::NS . '/download/' . rawurlencode( (string) $set['folder'] ) . '/' . $file ) ); ?>"><?php echo esc_html( $file ); ?></a>&nbsp;
 						<?php endforeach; ?>
 					</td>
 					<td>
 						<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" onsubmit="return confirm('<?php echo esc_js( __( 'Delete this local backup permanently?', 'vulnhub' ) ); ?>');">
 							<?php wp_nonce_field( 'vulnhub_backup_delete' ); ?>
+							<?php vulnhub_backup_portal_field(); ?>
 							<input type="hidden" name="action" value="vulnhub_backup_delete" />
 							<input type="hidden" name="folder" value="<?php echo esc_attr( (string) $set['folder'] ); ?>" />
 							<button type="submit" class="button-link-delete"><?php esc_html_e( 'Delete', 'vulnhub' ); ?></button>
@@ -117,7 +286,7 @@ $secret_hint = $settings->secret_hint( 'backup_s3', 'secret_access_key' );
 		<?php esc_html_e( 'Use it to stand a backup up on a fresh stack, not to merge into a live one.', 'vulnhub' ); ?>
 	</p>
 
-	<input type="file" id="vh-restore-file" accept=".zip" />
+	<input type="file" id="vh-restore-file" accept=".zip,.gz,.tgz,.tar.gz" />
 	<div id="vh-restore-progress" hidden>
 		<progress id="vh-restore-bar" max="100" value="0"></progress>
 		<span id="vh-restore-status"></span>
@@ -138,8 +307,8 @@ $secret_hint = $settings->secret_hint( 'backup_s3', 'secret_access_key' );
 		<div class="vh-last-run vh-last-run--<?php echo esc_attr( (string) $last_run['status'] ); ?>">
 			<strong><?php esc_html_e( 'Last run:', 'vulnhub' ); ?></strong>
 			<?php echo esc_html( (string) $last_run['status'] ); ?>
-			&mdash; <?php echo esc_html( (string) $last_run['started_at'] ); ?>
-			(<?php echo esc_html( sprintf( '%d ms', (int) $last_run['duration_ms'] ) ); ?>)
+			&mdash; <?php echo esc_html( vh_date( (string) $last_run['started_at'] ) ); ?>
+			(<?php echo esc_html( vh_duration_human( (int) $last_run['duration_ms'] ) ); ?>)
 			<?php if ( ! empty( $last_run['message'] ) ) : ?>
 				<div class="vh-last-run__message"><?php echo esc_html( (string) $last_run['message'] ); ?></div>
 			<?php endif; ?>
@@ -148,6 +317,7 @@ $secret_hint = $settings->secret_hint( 'backup_s3', 'secret_access_key' );
 
 	<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
 		<?php wp_nonce_field( 'vulnhub_backup_save_settings' ); ?>
+		<?php vulnhub_backup_portal_field(); ?>
 		<input type="hidden" name="action" value="vulnhub_backup_save_settings" />
 
 		<table class="form-table">

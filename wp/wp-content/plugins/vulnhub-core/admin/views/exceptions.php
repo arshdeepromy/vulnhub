@@ -96,13 +96,13 @@ if ( $vh_new && current_user_can( 'vulnhub_request_exception' ) ) :
 						<th scope="row"><label for="vh-exc-expires"><?php esc_html_e( 'Expires', 'vulnhub' ); ?></label></th>
 						<td>
 							<input type="date" id="vh-exc-expires" name="expires_at"
-								value="<?php echo esc_attr( gmdate( 'Y-m-d', time() + 90 * DAY_IN_SECONDS ) ); ?>" required>
+								value="<?php echo esc_attr( wp_date( 'Y-m-d', time() + 90 * DAY_IN_SECONDS ) ); ?>" required>
 							<span class="vh-field-help"><?php esc_html_e( 'Exceptions are always time-boxed. On expiry the findings return to the open count automatically.', 'vulnhub' ); ?></span>
 						</td>
 					</tr>
 					<tr>
 						<th scope="row"><label for="vh-exc-review"><?php esc_html_e( 'Review date', 'vulnhub' ); ?></label></th>
-						<td><input type="date" id="vh-exc-review" name="review_at" value="<?php echo esc_attr( gmdate( 'Y-m-d', time() + 45 * DAY_IN_SECONDS ) ); ?>"></td>
+						<td><input type="date" id="vh-exc-review" name="review_at" value="<?php echo esc_attr( wp_date( 'Y-m-d', time() + 45 * DAY_IN_SECONDS ) ); ?>"></td>
 					</tr>
 				</table>
 

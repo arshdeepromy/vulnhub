@@ -34,6 +34,12 @@ final class VulnHub_Backup_Jobs {
 	/** Job phases, in order. */
 	public const PHASE_DB_EXPORT    = 'db_export';
 	public const PHASE_FILES_ARCHIVE = 'files_archive';
+	/*
+	 * Packing the three members into the single .tar.gz an operator
+	 * downloads. Declared here with its siblings; the runner owns the
+	 * behaviour and refers to this constant.
+	 */
+	public const PHASE_PACKAGE      = 'package';
 	public const PHASE_UPLOAD       = 'upload';
 	public const PHASE_RETENTION    = 'retention';
 	public const PHASE_DONE         = 'done';
@@ -132,6 +138,78 @@ final class VulnHub_Backup_Jobs {
 			self::FAILED    => __( 'Failed', 'vulnhub' ),
 			self::CANCELLED => __( 'Cancelled', 'vulnhub' ),
 		);
+	}
+
+	/**
+	 * Human labels for every phase.
+	 *
+	 * The raw slugs were being printed at the operator ("db_export",
+	 * "files_archive"), which reads like debug output and says nothing about
+	 * how much is left. These are also the labels the progress panel steps
+	 * through, so they are written as what is happening now, not as a noun.
+	 *
+	 * @return array<string,string>
+	 */
+	public static function phases(): array {
+		return array(
+			self::PHASE_DB_EXPORT      => __( 'Exporting the database', 'vulnhub' ),
+			self::PHASE_FILES_ARCHIVE  => __( 'Archiving plugin, theme and upload files', 'vulnhub' ),
+			self::PHASE_PACKAGE        => __( 'Packing everything into one file', 'vulnhub' ),
+			self::PHASE_UPLOAD         => __( 'Uploading to S3', 'vulnhub' ),
+			self::PHASE_RETENTION      => __( 'Tidying up older backups', 'vulnhub' ),
+			self::PHASE_DONE           => __( 'Finished', 'vulnhub' ),
+		);
+	}
+
+	/**
+	 * The phases a job walks through, in order, for a progress readout.
+	 *
+	 * @return array<int,string>
+	 */
+	public static function phase_order(): array {
+		return array(
+			self::PHASE_DB_EXPORT,
+			self::PHASE_FILES_ARCHIVE,
+			self::PHASE_PACKAGE,
+			self::PHASE_UPLOAD,
+			self::PHASE_RETENTION,
+		);
+	}
+
+	/**
+	 * Roughly how far through a job is, 0-100.
+	 *
+	 * Deliberately coarse: only the database phase knows its own denominator
+	 * (tables), and the file phase does not know how many files it will find
+	 * until it has found them. So each phase is worth an equal slice, and the
+	 * database phase refines its own slice by tables done. A bar that lies
+	 * precisely is worse than one that is honestly approximate.
+	 *
+	 * @param array<string,mixed> $job Hydrated job row.
+	 */
+	public static function progress( array $job ): int {
+		$status = (string) ( $job['status'] ?? '' );
+
+		if ( in_array( $status, array( self::DONE, self::FAILED, self::CANCELLED ), true ) ) {
+			return 100;
+		}
+
+		$order = self::phase_order();
+		$index = array_search( (string) ( $job['phase'] ?? '' ), $order, true );
+
+		if ( false === $index ) {
+			return 0;
+		}
+
+		$slice    = 100 / max( 1, count( $order ) );
+		$counters = (array) ( $job['counters_arr'] ?? array() );
+		$within   = 0.0;
+
+		if ( self::PHASE_DB_EXPORT === (string) $job['phase'] && (int) ( $counters['tables_total'] ?? 0 ) > 0 ) {
+			$within = min( 1.0, (int) $counters['tables_done'] / (int) $counters['tables_total'] );
+		}
+
+		return (int) min( 99, round( ( $index + $within ) * $slice ) );
 	}
 
 	/**

@@ -544,7 +544,7 @@ add_action(
 
 		nocache_headers();
 		header( 'Content-Type: text/csv; charset=utf-8' );
-		header( 'Content-Disposition: attachment; filename="vulnhub-' . $id . '-' . gmdate( 'Y-m-d' ) . '.csv"' );
+		header( 'Content-Disposition: attachment; filename="vulnhub-' . $id . '-' . wp_date( 'Y-m-d' ) . '.csv"' );
 
 		$out = fopen( 'php://output', 'w' );
 		fputcsv( $out, $data['headers'] );
