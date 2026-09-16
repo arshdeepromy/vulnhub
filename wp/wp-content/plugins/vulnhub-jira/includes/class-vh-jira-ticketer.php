@@ -1709,9 +1709,24 @@ final class VulnHub_Jira_Ticketer {
 			$doc->heading( __( 'After this ticket is closed', 'vulnhub' ) );
 		}
 
+		/*
+		 * Say what will really happen after closure. Promising an automatic
+		 * reopen on a site where reopening is switched off would teach the
+		 * service desk to expect something that never comes.
+		 */
+		$connector = vulnhub_jira_connector();
+		$reopens   = $connector && $connector->reopens();
+		$comments  = $connector && $connector->comments_on_verify();
+
 		$doc->paragraph(
 			array(
-				VulnHub_Jira_Adf::text( __( 'VulnHub tracks this ticket and re-checks it against the scanner after it is closed. If the vulnerability is still detected the ticket is reopened automatically, so please only close it once the remediation is actually deployed.', 'vulnhub' ) ),
+				VulnHub_Jira_Adf::text(
+					$reopens
+						? __( 'VulnHub tracks this ticket and re-checks it against the scanner after it is closed. If the vulnerability is still detected the ticket is reopened automatically, so please only close it once the remediation is actually deployed.', 'vulnhub' )
+						: ( $comments
+							? __( 'VulnHub re-checks this ticket against the scanner after it is closed and adds a comment with the result. Please only close it once the remediation is actually deployed.', 'vulnhub' )
+							: __( 'VulnHub re-checks these findings against the scanner after this ticket is closed and records the result in VulnHub. Please only close it once the remediation is actually deployed.', 'vulnhub' ) )
+				),
 			)
 		);
 
