@@ -2854,10 +2854,165 @@ final class Repo {
 		// The date guard is not paranoia: an import that could not parse a
 		// date once wrote the epoch rather than NULL, and "patched on 1
 		// January 1970" would have counted every one of those as fixed.
+		// LOCATE, not LIKE 'There is no known solution%': a literal % in a
+		// fragment that may reach wpdb::prepare() is read as a placeholder.
 		return "( ( {$a}patch_publication_date IS NOT NULL"
 			. " AND {$a}patch_publication_date > '1970-01-02' )"
 			. " OR ( {$a}solution IS NOT NULL AND {$a}solution <> ''"
-			. " AND {$a}solution NOT LIKE 'There is no known solution%' ) )";
+			. " AND LOCATE( 'There is no known solution', {$a}solution ) <> 1 ) )";
+	}
+
+	/* -----------------------------------------------------------------
+	 * Where the fix comes from
+	 *
+	 * Tenable's fix for a library is the library's own release: "Upgrade
+	 * libcurl to 8.4.0". When that library ships inside another application
+	 * (a libcurl.dll in an ODBC driver under Power BI Desktop), nobody can
+	 * install that release; the copy only changes when the application's
+	 * vendor ships a build carrying it. So a finding with a fix has one of
+	 * two routes, and "patch available" only honestly describes the first:
+	 *
+	 *   direct -- install the vendor's update for the thing itself
+	 *   app    -- update the application that ships the component (whether
+	 *             its vendor has shipped the fixed component is not known)
+	 *   none   -- Tenable knows no fix
+	 *
+	 * A component is a library or application whose finding was attributed
+	 * to a different application by its install path (f.bundle_app, read by
+	 * VH_Product::app_from_output()). OS packages are not components: their
+	 * bundle_app is the source package, which is the thing to update.
+	 * --------------------------------------------------------------- */
+
+	/**
+	 * SQL: the finding is a component shipped inside another application.
+	 * Needs findings (`$f`) and vulns (`$v`) joined.
+	 */
+	public static function component_sql( string $f = 'f', string $v = 'v' ): string {
+		return "( {$v}.product_kind IN ( 'library', 'application' ) AND {$f}.bundle_app_slug <> '' AND {$f}.bundle_app_slug <> {$v}.product_slug )";
+	}
+
+	/**
+	 * SQL: the fix route as 'direct', 'app' or 'none'.
+	 */
+	public static function fix_route_sql( string $f = 'f', string $v = 'v' ): string {
+		return 'CASE WHEN NOT ' . self::patch_sql( $v ) . " THEN 'none' WHEN " . self::component_sql( $f, $v ) . " THEN 'app' ELSE 'direct' END";
+	}
+
+	/**
+	 * The same test on a hydrated finding row (needs product_kind,
+	 * product_slug or product, and bundle_app_slug).
+	 */
+	public static function is_component( array $row ): bool {
+		$kind = (string) ( $row['product_kind'] ?? '' );
+		$app  = (string) ( $row['bundle_app_slug'] ?? '' );
+		$own  = (string) ( $row['product_slug'] ?? \VH_Product::slug( (string) ( $row['product'] ?? '' ) ) );
+
+		return in_array( $kind, array( 'library', 'application' ), true ) && '' !== $app && $app !== $own;
+	}
+
+	/**
+	 * 'direct', 'app' or 'none' for a hydrated finding row.
+	 */
+	public static function fix_route( array $row ): string {
+		if ( ! self::has_patch( $row ) ) {
+			return 'none';
+		}
+
+		return self::is_component( $row ) ? 'app' : 'direct';
+	}
+
+	/**
+	 * Labels for the routes, as filters and columns show them.
+	 *
+	 * @return array<string,string>
+	 */
+	public static function fix_route_labels(): array {
+		return array(
+			'direct' => __( 'Patch available', 'vulnhub' ),
+			'app'    => __( 'Update the app that ships it', 'vulnhub' ),
+			'none'   => __( 'No fix known', 'vulnhub' ),
+		);
+	}
+
+	/**
+	 * Why a finding has the fix route it has, in words, from the data it came
+	 * from: Tenable's patch date and solution, and for a component the app,
+	 * path and versions in the scanner's output.
+	 *
+	 * @return array{route:string,label:string,short:string,why:string}
+	 */
+	public static function fix_evidence( array $row ): array {
+		$route    = self::fix_route( $row );
+		$solution = trim( (string) ( $row['solution'] ?? '' ) );
+		$date     = trim( (string) ( $row['patch_publication_date'] ?? '' ) );
+		$date     = ( '' !== $date && '0000-00-00' !== $date && $date > '1970-01-02' ) ? substr( $date, 0, 10 ) : '';
+		$output   = (string) ( $row['output'] ?? '' );
+		$product  = trim( (string) ( $row['product'] ?? '' ) );
+		$app      = trim( (string) ( $row['bundle_app'] ?? '' ) );
+
+		$tenable = array();
+		if ( '' !== $date ) {
+			/* translators: %s: date. */
+			$tenable[] = sprintf( __( 'patch published %s', 'vulnhub' ), $date );
+		}
+		if ( '' !== $solution && ! str_starts_with( $solution, 'There is no known solution' ) ) {
+			$tenable[] = '"' . vh_trim( (string) preg_replace( '/\s+/u', ' ', $solution ), 140 ) . '"';
+		}
+
+		if ( 'none' === $route ) {
+			return array(
+				'route' => 'none',
+				'label' => self::fix_route_labels()['none'],
+				'short' => __( 'No fix known', 'vulnhub' ),
+				'why'   => '' !== $solution
+					? __( 'Tenable: there is no known solution at this time.', 'vulnhub' )
+					: __( 'Tenable publishes no patch date and no remediation for this.', 'vulnhub' ),
+			);
+		}
+
+		if ( 'direct' === $route ) {
+			return array(
+				'route' => 'direct',
+				'label' => self::fix_route_labels()['direct'],
+				'short' => __( 'Patch available', 'vulnhub' ),
+				/* translators: %s: Tenable's patch date and solution. */
+				'why'   => sprintf( __( 'Tenable: %s.', 'vulnhub' ), implode( ' · ', $tenable ) ),
+			);
+		}
+
+		$installed = preg_match( '/Installed version\s*:\s*([^\r\n]+)/i', $output, $m ) ? trim( $m[1] ) : '';
+		$fixed     = preg_match( '/Fixed version\s*:\s*([^\r\n]+)/i', $output, $m ) ? trim( $m[1] ) : '';
+		$path      = \VH_Product::install_path( $output );
+		$copies    = preg_match_all( '/^\s*Path\s*:/mi', $output );
+
+		$found = sprintf(
+			/* translators: 1: component, 2: installed version, 3: application. */
+			__( '%1$s%2$s ships inside %3$s', 'vulnhub' ),
+			'' !== $product ? $product : __( 'The vulnerable component', 'vulnhub' ),
+			'' !== $installed ? ' ' . $installed : '',
+			$app
+		);
+
+		$why = $found . ( '' !== $path ? ' (' . $path . ')' : '' ) . '. ';
+		if ( $tenable ) {
+			/* translators: 1: component, 2: Tenable's patch date and solution. */
+			$why .= sprintf( __( "Tenable's fix is for %1\$s itself: %2\$s", 'vulnhub' ), '' !== $product ? $product : __( 'the component', 'vulnhub' ), implode( ' · ', $tenable ) ) . ( '' !== $fixed ? sprintf( /* translators: %s: version. */ __( ' (fixed in %s)', 'vulnhub' ), $fixed ) : '' ) . '. ';
+		}
+		/* translators: %s: application. */
+		$why .= sprintf( __( 'That release only reaches this machine through an update to %s. If it is already on the latest version, its vendor has not shipped the fixed component yet: remove the component or record an exception.', 'vulnhub' ), $app );
+
+		if ( $copies > 1 ) {
+			/* translators: %d: number of copies. */
+			$why .= ' ' . sprintf( __( 'The scanner lists %d copies on this machine; each may belong to a different application.', 'vulnhub' ), $copies );
+		}
+
+		return array(
+			'route' => 'app',
+			'label' => self::fix_route_labels()['app'],
+			/* translators: %s: application. */
+			'short' => sprintf( __( 'Update %s', 'vulnhub' ), $app ),
+			'why'   => $why,
+		);
 	}
 
 	/**
@@ -2888,7 +3043,10 @@ final class Repo {
 	 * `vulns` is how many distinct problems, `findings` is how much work,
 	 * `assets` is how many machines somebody has to get to.
 	 *
-	 * @return array<int,array{severity:string,patchable:bool,vulns:int,findings:int,assets:int}>
+	 * Split three ways by fix route (see fix_route_sql()): `patchable` stays
+	 * true for both routes that have a fix, and `route` says which.
+	 *
+	 * @return array<int,array{severity:string,route:string,patchable:bool,vulns:int,findings:int,assets:int}>
 	 */
 	public static function patch_matrix(): array {
 		global $wpdb;
@@ -2913,7 +3071,7 @@ final class Repo {
 
 		$f     = vh_table( 'findings' );
 		$v     = vh_table( 'vulns' );
-		$patch = self::patch_sql( 'v' );
+		$route = self::fix_route_sql( 'f', 'v' );
 
 		/*
 		 * Scoped to the reporting estate, because that is what the number
@@ -2930,7 +3088,7 @@ final class Repo {
 
 		$rows = (array) $wpdb->get_results(
 			"SELECT f.severity AS severity,
-			CASE WHEN {$patch} THEN 1 ELSE 0 END AS patchable,
+			{$route} AS route,
 			COUNT(DISTINCT f.vuln_id) AS vulns,
 			COUNT(*) AS findings,
 			COUNT(DISTINCT f.asset_id) AS assets
@@ -2939,16 +3097,17 @@ final class Repo {
 			INNER JOIN {$a} a ON a.id = f.asset_id
 			WHERE f.state IN ('open','reopened') AND f.exception_id = 0
 			AND a.lifecycle_status IN (" . vh_reportable_sql() . ")
-			GROUP BY f.severity, patchable", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			GROUP BY f.severity, route", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			ARRAY_A
 		);
 
 		$seen = array();
 
 		foreach ( $rows as $r ) {
-			$seen[ (string) $r['severity'] . ':' . (int) $r['patchable'] ] = array(
+			$seen[ (string) $r['severity'] . ':' . (string) $r['route'] ] = array(
 				'severity'  => (string) $r['severity'],
-				'patchable' => (bool) $r['patchable'],
+				'route'     => (string) $r['route'],
+				'patchable' => 'none' !== (string) $r['route'],
 				'vulns'     => (int) $r['vulns'],
 				'findings'  => (int) $r['findings'],
 				'assets'    => (int) $r['assets'],
@@ -2967,10 +3126,11 @@ final class Repo {
 				continue;
 			}
 
-			foreach ( array( 1, 0 ) as $patchable ) {
-				$out[] = $seen[ $sev . ':' . $patchable ] ?? array(
+			foreach ( array( 'direct', 'app', 'none' ) as $rt ) {
+				$out[] = $seen[ $sev . ':' . $rt ] ?? array(
 					'severity'  => $sev,
-					'patchable' => (bool) $patchable,
+					'route'     => $rt,
+					'patchable' => 'none' !== $rt,
 					'vulns'     => 0,
 					'findings'  => 0,
 					'assets'    => 0,
@@ -3708,9 +3868,22 @@ final class Repo {
 		 * post-pass over the page.
 		 */
 		if ( isset( $args['patch_available'] ) && '' !== $args['patch_available'] ) {
-			$want    = in_array( (string) $args['patch_available'], array( '1', 'yes', 'true' ), true );
-			$where[] = ( $want ? '' : 'NOT ' ) . self::patch_sql( 'v' );
-			$need_v  = true;
+			$pa = (string) $args['patch_available'];
+
+			/*
+			 * `direct` and `app` split "a fix exists" by where it comes from
+			 * (see fix_route_sql()); '1' keeps meaning either, for links and
+			 * callers that predate the split.
+			 */
+			if ( 'direct' === $pa ) {
+				$where[] = '( ' . self::patch_sql( 'v' ) . ' AND NOT ' . self::component_sql( 'f', 'v' ) . ' )';
+			} elseif ( 'app' === $pa ) {
+				$where[] = '( ' . self::patch_sql( 'v' ) . ' AND ' . self::component_sql( 'f', 'v' ) . ' )';
+			} else {
+				$want    = in_array( $pa, array( '1', 'yes', 'true' ), true );
+				$where[] = ( $want ? '' : 'NOT ' ) . self::patch_sql( 'v' );
+			}
+			$need_v = true;
 		}
 
 		/*
@@ -4078,7 +4251,7 @@ final class Repo {
 			a.hostname, a.fqdn, a.ipv4, a.asset_type, a.operating_system, a.criticality,
 			a.owner_person_id, a.team_id, a.location_id,
 			v.title AS vuln_title, v.plugin_id, v.family, v.cve_json, v.cvss3_base, v.vpr_score,
-			v.product, v.product_kind, v.component_class,
+			v.product, v.product_slug, v.product_kind, v.component_class,
 			v.solution, v.description, v.exploit_available, v.patch_publication_date,
 			p.display_name AS owner_name, p.upn AS owner_upn, p.department AS owner_department,
 			t.name AS team_name,

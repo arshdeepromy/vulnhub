@@ -65,6 +65,7 @@ final class VulnHub_Dash_Action {
 	 */
 	private const COLOURS = array(
 		'patch'       => 'var(--vh-good)',
+		'update_app'  => 'var(--vh-sev-medium)',
 		'remove'      => 'var(--vh-series-1)',
 		'config'      => 'var(--vh-series-2)',
 		'blocked_eol' => 'var(--vh-sev-critical)',

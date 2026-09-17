@@ -81,17 +81,18 @@ final class VulnHub_Dash_Ticket_Report {
 				md5( implode( ',', $eol_ids ) ),
 			)
 		);
-		$key    = 'vh_ticket_cov_' . md5( $sig );
+		$key    = 'vh_ticket_cov2_' . md5( $sig );
 		$cached = get_transient( $key );
 
 		if ( is_array( $cached ) ) {
 			return $cached;
 		}
 
-		$patch = Repo::patch_sql( 'v' );
+		// Patch dimension: 1 direct patch, 2 update the app that ships it, 0 none.
+		$route = Repo::fix_route_sql( 'f', 'v' );
 		$rows  = (array) $wpdb->get_results(
 			'SELECT f.severity AS severity,
-				CASE WHEN ' . $patch . ' THEN 1 ELSE 0 END AS patchable,
+				CASE ( ' . $route . " ) WHEN 'direct' THEN 1 WHEN 'app' THEN 2 ELSE 0 END AS patchable," . '
 				CASE WHEN f.ticket_id > 0 THEN 1 ELSE 0 END AS raised,
 				' . ( $eol_ids ? 'CASE WHEN f.asset_id IN (' . implode( ',', $eol_ids ) . ') THEN 1 ELSE 0 END' : '0' ) . ' AS eol_os,
 				COUNT(*) AS findings,
@@ -108,7 +109,7 @@ final class VulnHub_Dash_Ticket_Report {
 		$out = array();
 
 		foreach ( self::SEVERITIES as $sev ) {
-			foreach ( array( 1, 0 ) as $p ) {
+			foreach ( array( 1, 2, 0 ) as $p ) {
 				foreach ( array( 1, 0 ) as $r ) {
 					foreach ( array( 1, 0 ) as $e ) {
 						$out[ $sev ][ $p ][ $r ][ $e ] = array( 'findings' => 0, 'assets' => 0 );
@@ -160,7 +161,8 @@ final class VulnHub_Dash_Ticket_Report {
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		$p = isset( $_GET['cov_patch'] ) ? sanitize_key( wp_unslash( (string) $_GET['cov_patch'] ) ) : 'both';
 
-		return in_array( $p, array( 'both', 'yes', 'no' ), true ) ? $p : 'both';
+		// `yes` predates the split and still means either route with a fix.
+		return in_array( $p, array( 'both', 'direct', 'app', 'yes', 'no' ), true ) ? $p : 'both';
 	}
 
 	/**
@@ -169,7 +171,7 @@ final class VulnHub_Dash_Ticket_Report {
 	 * @return array{raised:array{findings:int,assets:int},not:array{findings:int,assets:int}}
 	 */
 	private static function cell( array $cov, string $sev, string $patch, string $os = 'any' ): array {
-		$pick = 'both' === $patch ? array( 1, 0 ) : array( 'yes' === $patch ? 1 : 0 );
+		$pick = self::patch_dims( $patch );
 		$oses = 'any' === $os ? array( 1, 0 ) : array( 'eol' === $os ? 1 : 0 );
 		$out  = array( 'raised' => array( 'findings' => 0, 'assets' => 0 ), 'not' => array( 'findings' => 0, 'assets' => 0 ) );
 
@@ -189,6 +191,21 @@ final class VulnHub_Dash_Ticket_Report {
 	}
 
 	/**
+	 * Patch dimension keys for a patch choice.
+	 *
+	 * @return int[]
+	 */
+	private static function patch_dims( string $patch ): array {
+		return array(
+			'both'   => array( 1, 2, 0 ),
+			'direct' => array( 1 ),
+			'app'    => array( 2 ),
+			'yes'    => array( 1, 2 ),
+			'no'     => array( 0 ),
+		)[ $patch ] ?? array( 1, 2, 0 );
+	}
+
+	/**
 	 * The Vulnerabilities list holding exactly one number's rows.
 	 *
 	 * @param bool|null $raised True: on a ticket; false: not; null: either.
@@ -201,7 +218,7 @@ final class VulnHub_Dash_Ticket_Report {
 		);
 
 		if ( 'both' !== $patch ) {
-			$args['patch_available'] = 'yes' === $patch ? '1' : '0';
+			$args['patch_available'] = array( 'direct' => 'direct', 'app' => 'app', 'yes' => '1', 'no' => '0' )[ $patch ] ?? '0';
 		}
 		if ( null !== $raised ) {
 			$args['ticketed'] = $raised ? 'yes' : 'no';
@@ -249,8 +266,16 @@ final class VulnHub_Dash_Ticket_Report {
 				</fieldset>
 				<fieldset class="vh-trep__chips">
 					<legend><?php esc_html_e( 'Patch', 'vulnhub' ); ?></legend>
-					<?php foreach ( array( 'yes' => __( 'Patchable', 'vulnhub' ), 'no' => __( 'Not patchable', 'vulnhub' ), 'both' => __( 'Both', 'vulnhub' ) ) as $val => $label ) : ?>
-						<label class="vh-chipcheck">
+					<?php foreach ( array( 'direct' => __( 'Patch available', 'vulnhub' ), 'app' => __( 'Update the app', 'vulnhub' ), 'no' => __( 'No fix', 'vulnhub' ), 'both' => __( 'All', 'vulnhub' ) ) as $val => $label ) : ?>
+						<?php
+						$vh_tip = array(
+							'direct' => __( 'A vendor update for the vulnerable software itself.', 'vulnhub' ),
+							'app'    => __( 'The vulnerable component (for example a libcurl.dll) ships inside another application; the fix arrives when that application is updated.', 'vulnhub' ),
+							'no'     => __( 'Tenable knows no fix.', 'vulnhub' ),
+							'both'   => '',
+						)[ $val ];
+						?>
+						<label class="vh-chipcheck"<?php echo '' !== $vh_tip ? ' data-vh-tip="' . esc_attr( $vh_tip ) . '"' : ''; ?>>
 							<input type="radio" name="cov_patch" value="<?php echo esc_attr( $val ); ?>" <?php checked( $patch, $val ); ?>>
 							<span><?php echo esc_html( $label ); ?></span>
 						</label>
@@ -303,7 +328,7 @@ final class VulnHub_Dash_Ticket_Report {
 									<span>
 										<?php
 										/* translators: %s: assets. */
-										echo esc_html( sprintf( __( 'not raised · %s assets', 'vulnhub' ), ( 'both' === $patch ? '≤' : '' ) . number_format_i18n( $c['not']['assets'] ) ) );
+										echo esc_html( sprintf( __( 'not raised · %s assets', 'vulnhub' ), ( count( self::patch_dims( $patch ) ) > 1 ? '≤' : '' ) . number_format_i18n( $c['not']['assets'] ) ) );
 										?>
 									</span>
 								</a>
@@ -791,12 +816,12 @@ final class VulnHub_Dash_Ticket_Report {
 			$rows = array();
 
 			foreach ( self::SEVERITIES as $sev ) {
-				foreach ( array( 1 => 'yes', 0 => 'no' ) as $p => $pl ) {
+				foreach ( array( 1 => 'direct', 2 => 'app', 0 => 'no' ) as $p => $pl ) {
 					foreach ( array( 1 => 'yes', 0 => 'no' ) as $r => $rl ) {
 						foreach ( array( 1 => 'eol', 0 => 'supported' ) as $e => $el ) {
 							$rows[] = array(
 								vh_severity_label( $sev ),
-								$pl,
+								array( 'direct' => 'Patch available', 'app' => 'Update the app that ships it', 'no' => 'No fix known' )[ $pl ],
 								$rl,
 								1 === $e ? 'End of life' : 'Supported',
 								(string) $cov[ $sev ][ $p ][ $r ][ $e ]['findings'],
@@ -809,7 +834,7 @@ final class VulnHub_Dash_Ticket_Report {
 			}
 
 			return array(
-				'headers' => array( 'Severity', 'Patch available', 'Raised', 'Operating system', 'Open findings', 'Assets', 'List' ),
+				'headers' => array( 'Severity', 'Fix', 'Raised', 'Operating system', 'Open findings', 'Assets', 'List' ),
 				'rows'    => $rows,
 			);
 		}

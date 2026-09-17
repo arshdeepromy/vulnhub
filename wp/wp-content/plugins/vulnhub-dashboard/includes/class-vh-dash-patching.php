@@ -54,7 +54,10 @@ final class VulnHub_Dash_Patching {
 	/**
 	 * The same figures shaped as one row per severity.
 	 *
-	 * @return array<string,array{label:string,yes:array<string,int>,no:array<string,int>}>
+	 * `yes` is a direct patch, `app` an update to the application that ships
+	 * the component, `no` no known fix.
+	 *
+	 * @return array<string,array{label:string,yes:array<string,int>,app:array<string,int>,no:array<string,int>}>
 	 */
 	public static function by_severity(): array {
 		$out = array();
@@ -66,11 +69,12 @@ final class VulnHub_Dash_Patching {
 				$out[ $sev ] = array(
 					'label' => (string) $row['severity_label'],
 					'yes'   => array( 'vulns' => 0, 'findings' => 0, 'assets' => 0 ),
+					'app'   => array( 'vulns' => 0, 'findings' => 0, 'assets' => 0 ),
 					'no'    => array( 'vulns' => 0, 'findings' => 0, 'assets' => 0 ),
 				);
 			}
 
-			$side = $row['patchable'] ? 'yes' : 'no';
+			$side = array( 'direct' => 'yes', 'app' => 'app', 'none' => 'no' )[ (string) $row['route'] ] ?? 'no';
 
 			$out[ $sev ][ $side ] = array(
 				'vulns'    => (int) $row['vulns'],
@@ -85,13 +89,16 @@ final class VulnHub_Dash_Patching {
 	/**
 	 * The vulnerability list, filtered to one cell of the matrix.
 	 */
-	public static function url( string $severity, bool $patchable ): string {
+	public static function url( string $severity, string $route ): string {
 		return VulnHub_Dash_Portal::portal_url(
 			'vulnerabilities',
 			array(
 				'severity'        => $severity,
-				'patch_available' => $patchable ? '1' : '0',
+				'patch_available' => array( 'direct' => 'direct', 'app' => 'app' )[ $route ] ?? '0',
 				'state'           => 'open_any',
+				// The matrix excludes accepted risk; the list has to as well,
+				// or the segment opens more rows than it counted.
+				'excepted'        => 'exclude',
 			)
 		);
 	}
@@ -111,27 +118,30 @@ final class VulnHub_Dash_Patching {
 		$rows      = array();
 		$no_patch  = 0;
 		$patchable = 0;
+		$via_app   = 0;
 
 		foreach ( $by as $sev => $cell ) {
 			$yes = (int) $cell['yes']['findings'];
+			$app = (int) $cell['app']['findings'];
 			$no  = (int) $cell['no']['findings'];
 
 			$patchable += $yes;
+			$via_app   += $app;
 			$no_patch  += $no;
 
 			$rows[] = array(
 				'label'    => (string) $cell['label'],
 				'sub'      => sprintf(
 					/* translators: %s: number of distinct vulnerabilities. */
-					_n( '%s vulnerability', '%s vulnerabilities', (int) $cell['yes']['vulns'] + (int) $cell['no']['vulns'], 'vulnhub' ),
-					number_format_i18n( (int) $cell['yes']['vulns'] + (int) $cell['no']['vulns'] )
+					_n( '%s vulnerability', '%s vulnerabilities', (int) $cell['yes']['vulns'] + (int) $cell['app']['vulns'] + (int) $cell['no']['vulns'], 'vulnhub' ),
+					number_format_i18n( (int) $cell['yes']['vulns'] + (int) $cell['app']['vulns'] + (int) $cell['no']['vulns'] )
 				),
 				'segments' => array(
 					array(
 						'label'  => __( 'Patch available', 'vulnhub' ),
 						'value'  => $yes,
 						'colour' => 'var(--vh-good)',
-						'href'   => self::url( (string) $sev, true ),
+						'href'   => self::url( (string) $sev, 'direct' ),
 						'title'  => sprintf(
 							/* translators: 1: count, 2: severity, 3: assets. */
 							__( '%1$s %2$s findings with a patch, on %3$s assets', 'vulnhub' ),
@@ -141,10 +151,23 @@ final class VulnHub_Dash_Patching {
 						),
 					),
 					array(
+						'label'  => __( 'Update the app that ships it', 'vulnhub' ),
+						'value'  => $app,
+						'colour' => 'var(--vh-sev-medium)',
+						'href'   => self::url( (string) $sev, 'app' ),
+						'title'  => sprintf(
+							/* translators: 1: count, 2: severity, 3: assets. */
+							__( '%1$s %2$s findings in components shipped inside other applications, on %3$s assets: the fix arrives through an update to that application', 'vulnhub' ),
+							number_format_i18n( $app ),
+							strtolower( (string) $cell['label'] ),
+							number_format_i18n( (int) $cell['app']['assets'] )
+						),
+					),
+					array(
 						'label'  => __( 'No patch available', 'vulnhub' ),
 						'value'  => $no,
 						'colour' => 'var(--vh-sev-critical)',
-						'href'   => self::url( (string) $sev, false ),
+						'href'   => self::url( (string) $sev, 'none' ),
 						'title'  => sprintf(
 							/* translators: 1: count, 2: severity, 3: assets. */
 							__( '%1$s %2$s findings with no known fix, on %3$s assets', 'vulnhub' ),
@@ -168,12 +191,27 @@ final class VulnHub_Dash_Patching {
 				'scale'  => 'row',
 				'legend' => array(
 					array( 'label' => __( 'Patch available', 'vulnhub' ), 'colour' => 'var(--vh-good)' ),
+					array( 'label' => __( 'Update the app that ships it', 'vulnhub' ), 'colour' => 'var(--vh-sev-medium)' ),
 					array( 'label' => __( 'No patch available', 'vulnhub' ), 'colour' => 'var(--vh-sev-critical)' ),
 				),
 			)
 		);
 
-		$total = $patchable + $no_patch;
+		$total = $patchable + $via_app + $no_patch;
+
+		if ( $total > 0 && $via_app > 0 ) {
+			printf(
+				'<p class="vh-w__note">%s</p>',
+				esc_html(
+					sprintf(
+						/* translators: 1: count, 2: percentage. */
+						__( '%1$s (%2$s%%) are components shipped inside other applications, such as a libcurl inside a driver: Tenable\'s fix is for the component, and it only arrives when that application\'s vendor ships it.', 'vulnhub' ),
+						number_format_i18n( $via_app ),
+						number_format_i18n( round( ( $via_app / $total ) * 100, 1 ) )
+					)
+				)
+			);
+		}
 
 		if ( $total > 0 ) {
 			printf(
@@ -201,7 +239,7 @@ final class VulnHub_Dash_Patching {
 			array_map(
 				static fn( array $r ): array => array(
 					(string) $r['severity_label'],
-					$r['patchable'] ? __( 'Available', 'vulnhub' ) : __( 'None known', 'vulnhub' ),
+					Repo::fix_route_labels()[ (string) $r['route'] ] ?? '',
 					number_format_i18n( (int) $r['vulns'] ),
 					number_format_i18n( (int) $r['findings'] ),
 					number_format_i18n( (int) $r['assets'] ),
@@ -221,7 +259,7 @@ final class VulnHub_Dash_Patching {
 		return array(
 			'headers' => array(
 				__( 'Severity', 'vulnhub' ),
-				__( 'Patch available', 'vulnhub' ),
+				__( 'Fix', 'vulnhub' ),
 				__( 'Vulnerabilities', 'vulnhub' ),
 				__( 'Open findings', 'vulnhub' ),
 				__( 'Assets affected', 'vulnhub' ),
@@ -229,7 +267,7 @@ final class VulnHub_Dash_Patching {
 			'rows'    => array_map(
 				static fn( array $r ): array => array(
 					(string) $r['severity_label'],
-					$r['patchable'] ? __( 'yes', 'vulnhub' ) : __( 'no', 'vulnhub' ),
+					Repo::fix_route_labels()[ (string) $r['route'] ] ?? '',
 					(string) $r['vulns'],
 					(string) $r['findings'],
 					(string) $r['assets'],

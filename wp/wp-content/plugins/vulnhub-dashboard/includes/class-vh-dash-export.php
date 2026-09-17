@@ -205,7 +205,8 @@ final class VulnHub_Dash_Export {
 					'vpr'         => array( $sev, __( 'VPR', 'vulnhub' ), static fn( array $r ): string => (string) $r['vpr_score'] ),
 					'risk_score'  => array( $sev, __( 'Risk score', 'vulnhub' ), static fn( array $r ): string => (string) $r['risk_score'] ),
 					'exploit'     => array( $sev, __( 'Exploit available', 'vulnhub' ), static fn( array $r ): string => self::yn( ! empty( $r['exploit_available'] ) ) ),
-					'patch'       => array( $rem, __( 'Patch available', 'vulnhub' ), static fn( array $r ): string => self::yn( Repo::has_patch( $r ) ) ),
+					'patch'       => array( $rem, __( 'Fix', 'vulnhub' ), static fn( array $r ): string => Repo::fix_evidence( $r )['short'] ),
+					'fix_why'     => array( $rem, __( 'Why (fix evidence)', 'vulnhub' ), static fn( array $r ): string => Repo::fix_evidence( $r )['why'] ),
 					'solution'    => array( $rem, __( 'Solution', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['solution'] ?? '' ) ),
 					'state'       => array( $rem, __( 'State', 'vulnhub' ), static fn( array $r ): string => (string) $r['state'] ),
 					'first_found' => array( $rem, __( 'First found', 'vulnhub' ), static fn( array $r ): string => (string) $r['first_found'] ),
@@ -241,7 +242,7 @@ final class VulnHub_Dash_Export {
 
 				$cols = array(
 					'severity'  => array( $g, __( 'Severity', 'vulnhub' ), static fn( array $r ): string => (string) $r['severity_label'] ),
-					'patchable' => array( $g, __( 'Patch available', 'vulnhub' ), static fn( array $r ): string => self::yn( ! empty( $r['patchable'] ) ) ),
+					'patchable' => array( $g, __( 'Fix', 'vulnhub' ), static fn( array $r ): string => (string) ( Repo::fix_route_labels()[ (string) ( $r['route'] ?? '' ) ] ?? self::yn( ! empty( $r['patchable'] ) ) ) ),
 					'vulns'     => array( $g, __( 'Vulnerabilities', 'vulnhub' ), static fn( array $r ): string => (string) $r['vulns'] ),
 					'findings'  => array( $g, __( 'Open findings', 'vulnhub' ), static fn( array $r ): string => (string) $r['findings'] ),
 					'assets'    => array( $g, __( 'Assets affected', 'vulnhub' ), static fn( array $r ): string => (string) $r['assets'] ),
@@ -1160,7 +1161,7 @@ final class VulnHub_Dash_Export {
 	 * @return string[]
 	 */
 	public static function ticket_columns(): array {
-		return array( 'hostname', 'ipv4', 'owner', 'team', 'location', 'title', 'severity', 'cve', 'install_path', 'solution', 'due_at' );
+		return array( 'hostname', 'ipv4', 'owner', 'team', 'location', 'title', 'severity', 'cve', 'install_path', 'solution', 'patch', 'due_at' );
 	}
 
 	/**

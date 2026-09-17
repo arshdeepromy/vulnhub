@@ -2126,6 +2126,39 @@ final class VulnHub_Jira_Ticketer {
 
 		$doc->heading( __( 'Vendor remediation', 'vulnhub' ) );
 
+		/*
+		 * Components shipped inside other applications: the solution text
+		 * below is the component's own release ("Upgrade libcurl to 8.4.0"),
+		 * which nobody can install into someone else's application. Say
+		 * which applications carry them, so the fix is asked of the right
+		 * vendor.
+		 */
+		$bundled = array();
+
+		foreach ( $rows as $row ) {
+			if ( 'app' === \VulnHub\Core\Repo::fix_route( $row ) ) {
+				$bundled[ (string) $row['bundle_app'] ][ (string) ( $row['product'] ?? '' ) ] = true;
+			}
+		}
+
+		if ( $bundled ) {
+			$doc->paragraph(
+				__( 'Some of these vulnerabilities are in components shipped inside other applications. The remediation text below is for the component itself; apply it by updating the application that ships it. If that application is already on its latest version, its vendor has not shipped the fixed component yet.', 'vulnhub' )
+			);
+			$doc->bullets(
+				array_map(
+					static fn( string $app, array $components ): string => sprintf(
+						/* translators: 1: application, 2: components. */
+						__( 'Update %1$s (ships %2$s)', 'vulnhub' ),
+						$app,
+						implode( ', ', array_filter( array_keys( $components ) ) )
+					),
+					array_keys( array_slice( $bundled, 0, 15, true ) ),
+					array_values( array_slice( $bundled, 0, 15, true ) )
+				)
+			);
+		}
+
 		$solutions = array();
 
 		foreach ( $rows as $row ) {
@@ -2626,13 +2659,14 @@ final class VulnHub_Jira_Ticketer {
 		$sql = 'SELECT
 				f.id, f.severity, f.state, f.port, f.protocol, f.service, f.risk_score,
 				f.first_found, f.last_found, f.due_at, f.ticket_id, f.exception_id,
+				f.bundle_app, f.bundle_app_slug,
 				a.id AS asset_id, a.hostname, a.fqdn, a.ipv4, a.asset_type,
 				a.operating_system, a.os_version, a.criticality, a.environment,
 				a.business_service, a.team_id, a.owner_person_id, a.location_id, a.tags_json,
 				v.id AS vuln_id, v.source AS vuln_source, v.plugin_id, v.title AS vuln_title,
 				v.family, v.cve_json, v.cvss2_base, v.cvss3_base, v.vpr_score,
 				v.exploit_available, v.description AS vuln_description, v.solution,
-				v.see_also, v.patch_publication_date,
+				v.see_also, v.patch_publication_date, v.product, v.product_slug, v.product_kind,
 				p.display_name AS owner_name, p.upn AS owner_upn, p.email AS owner_email,
 				p.job_title AS owner_title, p.department AS owner_department, p.manager_upn,
 				t.id AS team_row_id, t.name AS team_name, t.manager_email,

@@ -21,12 +21,15 @@ names the test that decides whether an asset's ask has been met.
 
 This panel covers open findings (`open`, `reopened`) on reporting-scope assets,
 with accepted risk excluded. They are grouped by severity, patch availability
-(`Repo::patch_sql()`) and whether the finding is on a ticket (`ticket_id > 0`).
+(`Repo::fix_route_sql()`: direct patch, update the app that ships it, or none)
+and whether the finding is on a ticket (`ticket_id > 0`).
 
 - **Controls:**
   - Severity checkboxes: `cov_c`, `cov_h`, `cov_m`, `cov_l`, plus `cov=1`.
     The default is critical and high.
-  - Patch: `cov_patch` = `yes`, `no` or `both`.
+  - Patch: `cov_patch` = `direct` (Patch available), `app` (Update the app that
+    ships it), `no` (No fix) or `both` (All). `yes`, from before the split,
+    still means either fix.
   - Operating system: `cov_os` = `any`, `eol` or `supported`. This is whether
     the host's OS is past vendor support (`Eol::eol_os_asset_ids()`). For
     example, End of life plus Patchable is what a patch can still fix on
@@ -46,9 +49,13 @@ with accepted risk excluded. They are grouped by severity, patch availability
   `os_support` (`eol` | `supported`) in `Repo::findings()` and is on both
   export allow-lists. It asks about the host, unlike `support=eol`, which asks
   whether the finding itself is end of life.
-- **Checked:** all 72 severity × patch × raised × OS combinations were
-  compared between the widget, the list total and the export scope. They
-  agree.
+- **Checked:** severity × patch × raised × OS combinations were compared
+  between the widget, the list total and the export scope, and they agree. The
+  latest check covered 32 combinations after the three-way patch split.
+- **Jira descriptions:** when a ticket covers components, the Vendor
+  remediation section names the applications to update ("Update Microsoft
+  Power BI Desktop (ships libcurl)") before Tenable's component-level
+  solution text.
 - **Raising from it:** open a *not raised* number, select rows (or all
   matching, up to 500), then **Raise ticket for selected**.
 - **Caching:** counts are cached for an hour. The cache key includes the widget

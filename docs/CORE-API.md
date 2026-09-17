@@ -437,11 +437,12 @@ VH_Action::sql_for( 'patch', 'f', 'v' );    // a WHERE fragment matching one cla
 VH_Action::for_row( $finding );             // the same rule against a hydrated row
 ```
 
-Six classes, and **the first one that matches wins**:
+Seven classes, and **the first one that matches wins**:
 
 | Class | Means | Rule |
 |---|---|---|
 | `excepted` | Accepted risk | the finding carries an `exception_id` |
+| `update_app` | Update the application that ships it | as `patch`, and the finding is a component shipped inside another application (`Repo::component_sql()`; see `docs/LIFECYCLE.md`) |
 | `patch` | Schedule it | a patch publication date, or solution text instructing an upgrade |
 | `remove` | Uninstall it | no vendor fix; the solution says remove or uninstall |
 | `config` | A setting or GPO | no vendor fix; the solution says disable, registry, group policy, configure or setting |

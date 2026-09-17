@@ -75,6 +75,7 @@ final class VH_Action {
 
 	public const EXCEPTED    = 'excepted';
 	public const PATCH       = 'patch';
+	public const UPDATE_APP  = 'update_app';
 	public const REMOVE      = 'remove';
 	public const CONFIG      = 'config';
 	public const BLOCKED_EOL = 'blocked_eol';
@@ -89,6 +90,7 @@ final class VH_Action {
 	public static function classes(): array {
 		return array(
 			self::PATCH       => __( 'Patch available', 'vulnhub' ),
+			self::UPDATE_APP  => __( 'Update the app that ships it', 'vulnhub' ),
 			self::REMOVE      => __( 'Remove the software', 'vulnhub' ),
 			self::CONFIG      => __( 'Change a setting', 'vulnhub' ),
 			self::BLOCKED_EOL => __( 'Blocked: OS past end of life', 'vulnhub' ),
@@ -103,7 +105,7 @@ final class VH_Action {
 	 * @return array<int,string>
 	 */
 	public static function actionable(): array {
-		return array( self::PATCH, self::REMOVE, self::CONFIG );
+		return array( self::PATCH, self::UPDATE_APP, self::REMOVE, self::CONFIG );
 	}
 
 	public static function label( string $class ): string {
@@ -124,6 +126,8 @@ final class VH_Action {
 		switch ( $class ) {
 			case self::PATCH:
 				return __( 'A vendor fix exists: schedule it.', 'vulnhub' );
+			case self::UPDATE_APP:
+				return __( 'The vulnerable component ships inside another application: update that application. If it is already current, its vendor has not shipped the fix yet.', 'vulnhub' );
 			case self::REMOVE:
 				return __( 'No fix, but the software can be uninstalled.', 'vulnhub' );
 			case self::CONFIG:
@@ -260,6 +264,9 @@ final class VH_Action {
 	public static function sql_case( string $f = 'f', string $v = 'v' ): string {
 		return 'CASE'
 			. " WHEN {$f}.exception_id > 0 THEN '" . self::EXCEPTED . "'"
+			// A component shipped inside another application: the fix is that
+			// application's update, not the component's (Repo::component_sql()).
+			. ' WHEN ' . self::patch_expr( $v ) . ' AND ' . \VulnHub\Core\Repo::component_sql( $f, $v ) . " THEN '" . self::UPDATE_APP . "'"
 			. ' WHEN ' . self::patch_expr( $v ) . " THEN '" . self::PATCH . "'"
 			. ' WHEN ' . self::remove_expr( $v ) . " THEN '" . self::REMOVE . "'"
 			. ' WHEN ' . self::config_expr( $v ) . " THEN '" . self::CONFIG . "'"
@@ -308,7 +315,7 @@ final class VH_Action {
 		$has_date = '' !== $date && '0000-00-00' !== $date && $date > '1970-01-02';
 
 		if ( $has_date || self::matches( $solution, array( 'upgrade', 'update', 'apply patch', 'install patch' ) ) ) {
-			return self::PATCH;
+			return \VulnHub\Core\Repo::is_component( $row ) ? self::UPDATE_APP : self::PATCH;
 		}
 
 		if ( self::matches( $solution, array( 'remove', 'uninstall' ) ) ) {

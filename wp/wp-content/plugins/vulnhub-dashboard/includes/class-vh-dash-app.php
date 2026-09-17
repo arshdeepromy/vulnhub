@@ -1278,9 +1278,12 @@ final class VulnHub_Dash_App {
 			<div class="vh-notice vh-notice--info">
 				<?php
 				echo esc_html(
-					in_array( $vh_patch, array( '1', 'yes', 'true' ), true )
-						? __( 'Showing only findings a vendor has published a fix for.', 'vulnhub' )
-						: __( 'Showing only findings with no known fix. These cannot be patched; they need a compensating control, an exception or a decommission.', 'vulnhub' )
+					match ( true ) {
+						'direct' === $vh_patch => __( 'Showing only findings with a vendor update for the vulnerable software itself.', 'vulnhub' ),
+						'app' === $vh_patch    => __( 'Showing only findings in components shipped inside another application (such as a library in a driver folder). Tenable\'s fix is for the component; it arrives through an update to that application, if its vendor has shipped one.', 'vulnhub' ),
+						in_array( $vh_patch, array( '1', 'yes', 'true' ), true ) => __( 'Showing findings with a fix: a direct vendor update, or an update to the application that ships the component.', 'vulnhub' ),
+						default                => __( 'Showing only findings with no known fix. These cannot be patched; they need a compensating control, an exception or a decommission.', 'vulnhub' ),
+					}
 				);
 				?>
 				<a href="<?php echo esc_url( remove_query_arg( 'patch_available' ) ); ?>"><?php esc_html_e( 'Clear this filter', 'vulnhub' ); ?></a>
@@ -1364,8 +1367,10 @@ final class VulnHub_Dash_App {
 			<label><?php esc_html_e( 'Patch', 'vulnhub' ); ?>
 				<select name="patch_available">
 					<option value=""><?php esc_html_e( 'Any', 'vulnhub' ); ?></option>
-					<option value="1" <?php selected( self::q( 'patch_available' ), '1' ); ?>><?php esc_html_e( 'Patch available', 'vulnhub' ); ?></option>
-					<option value="0" <?php selected( self::q( 'patch_available' ), '0' ); ?>><?php esc_html_e( 'No patch available', 'vulnhub' ); ?></option>
+					<option value="direct" <?php selected( self::q( 'patch_available' ), 'direct' ); ?>><?php esc_html_e( 'Patch available', 'vulnhub' ); ?></option>
+					<option value="app" <?php selected( self::q( 'patch_available' ), 'app' ); ?>><?php esc_html_e( 'Update the app that ships it', 'vulnhub' ); ?></option>
+					<option value="1" <?php selected( self::q( 'patch_available' ), '1' ); ?>><?php esc_html_e( 'Any fix (either of the above)', 'vulnhub' ); ?></option>
+					<option value="0" <?php selected( self::q( 'patch_available' ), '0' ); ?>><?php esc_html_e( 'No fix known', 'vulnhub' ); ?></option>
 				</select>
 			</label>
 			<label><?php esc_html_e( 'Operating system', 'vulnhub' ); ?>
@@ -2341,6 +2346,8 @@ final class VulnHub_Dash_App {
 					<?php if ( $cves ) : ?>· <?php echo esc_html( implode( ', ', array_slice( $cves, 0, 2 ) ) ); ?><?php endif; ?>
 					<?php if ( ! empty( $f['exploit_available'] ) ) : ?>· <span class="vh-flag"><?php esc_html_e( 'exploit available', 'vulnhub' ); ?></span><?php endif; ?>
 				</span>
+				<?php $vh_ev = Repo::fix_evidence( $f ); ?>
+				<span class="vh-fixroute vh-fixroute--<?php echo esc_attr( $vh_ev['route'] ); ?>" data-vh-tip="<?php echo esc_attr( $vh_ev['why'] ); ?>"><?php echo esc_html( $vh_ev['short'] ); ?></span>
 				<?php
 				/*
 				 * What the scanner actually says, in the row rather than a
@@ -2361,6 +2368,10 @@ final class VulnHub_Dash_App {
 				<?php if ( '' !== $vh_desc || '' !== $vh_fix ) : ?>
 					<details class="vh-vdetail">
 						<summary><?php esc_html_e( 'What the scanner reports', 'vulnhub' ); ?></summary>
+						<p class="vh-vdetail__fix">
+							<span class="vh-vdetail__k"><?php esc_html_e( 'Why', 'vulnhub' ); ?></span>
+							<?php echo esc_html( $vh_ev['why'] ); ?>
+						</p>
 						<?php if ( '' !== $vh_desc ) : ?>
 							<p class="vh-vdetail__body"><?php echo esc_html( vh_trim( $vh_desc, 420 ) ); ?></p>
 						<?php endif; ?>

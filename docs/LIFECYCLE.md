@@ -33,6 +33,52 @@ evidence that the string is a reliable marker rather than a coincidence.
 
 That comes to 2,226 patchable of 11,746 vulnerabilities.
 
+### Where the fix comes from: direct, or through another application
+
+"A fix exists" says nothing about **who ships it**. Tenable's solution for a
+library is the library's own release, for example *"Upgrade libcurl to version
+8.4.0 or later"*. When that libcurl is a `libcurl.dll` inside an ODBC driver
+under Power BI Desktop, nobody can install curl 8.4.0 into it. The copy changes
+only when the application's vendor ships a build that carries the new
+component.
+
+So findings with a fix are split by route (`Repo::fix_route_sql()` / `fix_route()`):
+
+| Route | Label | Rule |
+|---|---|---|
+| `direct` | Patch available | a fix exists, and the finding is not a component |
+| `app` | Update the app that ships it | a fix exists, and the finding is a component (`Repo::component_sql()`) |
+| `none` | No fix known | no patch date and no solution other than the no-solution sentence |
+
+**What counts as a component.**
+- The vulnerability's `product_kind` is `library` or `application`.
+- Its install path attributed the finding to a different application
+  (`f.bundle_app_slug`, read by `VH_Product::app_from_output()`, not equal to
+  `v.product_slug`).
+
+OS packages are not components: their `bundle_app` is the source package, which
+is the thing to update.
+
+**How big the split is.** On this estate, 457 of 1,787 "patchable" critical
+findings, and 818 of 3,019 high, go through another application's update.
+
+**Why a finding has its route.** `Repo::fix_evidence( $row )` returns the
+route, a short label (*"Update Microsoft Power BI Desktop"*) and a sentence
+built only from the data:
+- Tenable's patch date and solution
+- for a component: the component and installed version, the application,
+  the path and the fixed version from the scanner output, plus a note when
+  the output lists several copies
+
+The finding row shows it as a chip, with the sentence as its tooltip and under
+"What the scanner reports". The findings CSV has **Fix** and **Why (fix
+evidence)** columns, and **Fix** is a default ticket-attachment column.
+
+**Known limit.** Tenable lists every copy on a machine in one finding, and
+`bundle_app` is read from the first path. A finding can involve several
+applications while naming one. The evidence says how many copies the output
+lists.
+
 ### Where it lives
 
 `VulnHub\Core\Repo` holds the test twice, deliberately adjacent:
@@ -55,9 +101,13 @@ divergence.
   `vh_reportable_sql()`**, because the vulnerability list defaults to the same
   reporting scope; when it was not, the chart promised 2,457 and the list
   delivered 2,453, which reads as a rounding error rather than a filter.
-- `Repo::findings( [ 'patch_available' => '1' | '0' ] )` — the filter the chart
-  segments link to. Note `'0'` is a real value; do not let an `array_filter`
-  strip it.
+- `Repo::findings( [ 'patch_available' => 'direct' | 'app' | '1' | '0' ] )` — the
+  filter the chart segments link to. `direct` and `app` are the two routes,
+  `1` is either of them (kept for older links), and `0` means no fix. `'0'` is
+  a real value; do not let an `array_filter` strip it.
+- `patch_matrix()` rows carry `route` (`direct` | `app` | `none`) and keep
+  `patchable` (true for both routes with a fix). Chart segments link with
+  `excepted=exclude`, because the matrix excludes accepted risk.
 - Findings rows hydrated by `Repo::findings()` carry `patch_publication_date`
   and `solution`, so `has_patch()` works on them without another query.
 

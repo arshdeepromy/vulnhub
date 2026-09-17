@@ -2748,3 +2748,9 @@ dialog.vh-review[open] { display: flex; }
 .vh-review__textarea { width: 100%; min-height: 300px; resize: vertical; box-sizing: border-box; padding: 12px 14px; border-radius: 8px; border: 1px solid var(--vh-line); background: var(--vh-bg, rgba(0,0,0,.2)); color: var(--vh-ink); font: 12.5px/1.55 var(--vh-mono, ui-monospace, monospace); }
 .vh-review__textarea:focus { outline: 2px solid var(--vh-series-1); outline-offset: 1px; }
 .vh-review__editbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+
+/* Fix route on a finding row: patch / update the app / no fix */
+.vh-fixroute { display: inline-block; margin-top: 4px; padding: 1px 8px; border-radius: 6px; font-size: 11px; line-height: 18px; border: 1px solid var(--vh-line); cursor: help; }
+.vh-fixroute--direct { color: var(--vh-good); border-color: color-mix(in srgb, var(--vh-good) 45%, transparent); }
+.vh-fixroute--app { color: var(--vh-sev-medium); border-color: color-mix(in srgb, var(--vh-sev-medium) 45%, transparent); }
+.vh-fixroute--none { color: var(--vh-muted); }

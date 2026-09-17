@@ -167,9 +167,10 @@ The vulnerabilities list has its own vocabulary, beyond `search` / `severity` /
 
 | Parameter | Means |
 |---|---|
-| `fix=<class>` | `patch`, `remove`, `config`, `blocked_eol`, `await_fix`, `excepted` — what the work actually is (see `VH_Action` in `docs/CORE-API.md`) |
+| `fix=<class>` | `update_app`, `patch`, `remove`, `config`, `blocked_eol`, `await_fix`, `excepted` — what the work actually is (see `VH_Action` in `docs/CORE-API.md`) |
 | `excepted=exclude\|only` | drop accepted risk from the list, or show only it |
-| `patch_available=1\|0`, `support=eol\|insupport` | the narrower questions: did a vendor ship anything, is the platform still supported |
+| `patch_available=direct\|app\|1\|0`, `support=eol\|insupport` | the narrower questions: is there a direct patch, does the fix come through an update to the app that ships the component, either, or no fix; is the platform still supported |
+| `os_eol=yes\|no`, `ticketed=yes\|no` | the host's OS is past vendor support or not; the finding is on a ticket or not |
 | `hosting=<env>`, `platform=<os>` | the same environment vocabulary as the assets list; platform is windows / linux / macos |
 | `product`, `zone`, `route`, `delivery`, `poc`, `sev_not`, `asset` | URL-only drill-downs from the dashboard, each with a banner |
 
