@@ -114,23 +114,33 @@ signal 2 is what catches that case.
 - **Evidence:** `Repo::fix_evidence()` appends the note to the "why" text, so
   it appears on the finding row, in the CSV's *Why* column and in the chip
   colour (green, red or amber).
-- **Jira:** the remediation section groups the ticket's component findings by
-  application, then by copy (component plus path key). Each copy gets one
-  bullet with:
-  - the exact path, the installed version, the fixed version and how many of
-    the ticket's findings it covers
-  - the verdict, with one reference machine as evidence:
-    - **fixed build seen:** a machine with that copy at or above the fixed
-      version, giving hostname, FQDN, IP, OS, type, site, the version at that
-      path and when it was last scanned
-    - **resolved:** a machine where it was resolved with the application still
-      installed, and the date
-    - **not seen:** the newest version at that path and how many machines carry
-      it
+- **Jira** (`VulnHub_Jira_Ticketer::describe_app_fix()`): each application's
+  remediation leads with the instruction, then the evidence, then the detail.
+  1. **Heading:** "Update X: an update that fixes this is available", or
+     "X: no update fixes this yet".
+  2. **One plain paragraph:**
+     - which machine already has the fixed component inside X (or had it
+       resolved with X still installed), and how many of the ticket's findings
+       updating fixes
+     - "Except: …" for any copy still vulnerable on every machine it was seen
+       on, with what to do instead (remove the component or record an
+       exception)
+  3. **Bullets:** the reference machine (hostname, FQDN, IP, OS, type, site,
+     the version and path it has, when it was last scanned), then every path
+     on the ticket marked *fixed by updating*, *no fixed build yet* or *not
+     enough evidence*.
 
-  `App_Fix::references( $row, 1 )` reads the same evidence `recompute()` does,
-  for one finding, so the machine count in the description matches the stored
-  verdict. The description stays within 10 applications and 8 copies each.
+  Copies are merged by where they sit inside the application (the last three
+  path segments), so a Microsoft Store install and a Program Files install of
+  the same driver read as one line. Tenable's component-level solution
+  ("Upgrade libcurl to 8.4.0") is left out for these findings, because it
+  contradicts the instruction. `App_Fix::references( $row, 1 )` reads the same
+  evidence as the stored verdict. The section stays within 10 applications.
+
+  **Store installs:** `path_key()` also wildcards the version and publisher in
+  Microsoft Store (MSIX) folder names
+  (`Microsoft.MicrosoftPowerBIDesktop_2.157.1354.0_x64__8wekyb3d8bbwe` becomes
+  `microsoft.microsoftpowerbidesktop_*`).
 
 On this estate: 7,738 shipped, 5,182 not seen, 2,719 unknown. For example,
 Power BI Desktop's BigQuery ODBC driver still carries libcurl 7.84.0 on every

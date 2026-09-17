@@ -1970,6 +1970,157 @@ final class VulnHub_Jira_Ticketer {
 	}
 
 	/**
+	 * Remediation for one application's bundled components, instruction first.
+	 *
+	 * For the service desk the order matters more than the detail: say whether
+	 * updating the application fixes it (and on which machine that is already
+	 * true), say which copy will survive the update, then list the paths.
+	 *
+	 * @param array<string,array<int,array<string,mixed>>> $copies Rows by product|path key.
+	 */
+	private function describe_app_fix( VulnHub_Jira_Adf $doc, string $app, array $copies ): void {
+		// Merge copies by where they sit inside the application (the last three
+		// path segments), so a Store install and a Program Files install of the
+		// same driver read as one line.
+		$groups = array();
+
+		foreach ( $copies as $rows ) {
+			$ref  = \VulnHub\Core\App_Fix::references( $rows[0], 1 );
+			$path = str_replace( '/', '\\', (string) preg_replace( '#\\\\{2,}#', '\\', $ref['path'] ) );
+			$tail = implode( '\\', array_slice( explode( '\\', $path ), -3 ) );
+			$key  = (string) ( $rows[0]['product'] ?? '' ) . '|' . strtolower( $tail );
+
+			$g = $groups[ $key ] ?? array(
+				'product'   => (string) ( $rows[0]['product'] ?? '' ),
+				'tail'      => '' !== $tail ? $tail : __( 'an unreported path', 'vulnhub' ),
+				'paths'     => array(),
+				'findings'  => 0,
+				'installed' => $ref['installed'],
+				'fixed'     => $ref['fixed'],
+				'max'       => '',
+				'observed'  => 0,
+				'newer'     => null,
+				'newer_n'   => 0,
+				'resolved'  => null,
+				'resolved_n' => 0,
+			);
+
+			$g['paths'][ $path ] = true;
+			$g['findings']      += count( $rows );
+			$g['observed']       = max( $g['observed'], $ref['observed'] );
+			if ( '' !== $ref['max'] && ( '' === $g['max'] || version_compare( $ref['max'], $g['max'], '>' ) ) ) {
+				$g['max'] = $ref['max'];
+			}
+			if ( $ref['newer'] && $ref['newer_total'] > $g['newer_n'] ) {
+				$g['newer']   = $ref['newer'][0];
+				$g['newer_n'] = $ref['newer_total'];
+			}
+			if ( $ref['resolved'] && $ref['resolved_total'] > $g['resolved_n'] ) {
+				$g['resolved']   = $ref['resolved'][0];
+				$g['resolved_n'] = $ref['resolved_total'];
+			}
+
+			$groups[ $key ] = $g;
+		}
+
+		$fixable = array_filter( $groups, static fn( array $g ): bool => null !== $g['newer'] || null !== $g['resolved'] );
+		$waiting = array_filter( $groups, static fn( array $g ): bool => ! ( null !== $g['newer'] || null !== $g['resolved'] ) && '' !== $g['max'] && '' !== $g['fixed'] );
+		$unknown = array_diff_key( $groups, $fixable, $waiting );
+		$count   = static fn( array $gs ): int => (int) array_sum( array_column( $gs, 'findings' ) );
+
+		$doc->paragraph(
+			array(
+				VulnHub_Jira_Adf::strong(
+					$fixable
+						/* translators: %s: application. */
+						? sprintf( __( 'Update %s: an update that fixes this is available', 'vulnhub' ), $app )
+						/* translators: %s: application. */
+						: ( $waiting ? sprintf( __( '%s: no update fixes this yet', 'vulnhub' ), $app ) : sprintf( __( 'Update %s', 'vulnhub' ), $app ) )
+				),
+			)
+		);
+
+		$sentences = array();
+
+		if ( $fixable ) {
+			$best = reset( $fixable );
+			$m    = $best['newer'] ?? $best['resolved'];
+
+			$sentences[] = null !== $best['newer']
+				? sprintf(
+					/* translators: 1: hostname, 2: component, 3: version, 4: application, 5: vulnerable version, 6: findings. */
+					_n( '%1$s already has %2$s %3$s inside %4$s (the vulnerable copy is %5$s), so updating %4$s to the version on that machine fixes %6$d finding on this ticket.', '%1$s already has %2$s %3$s inside %4$s (the vulnerable copies are %5$s), so updating %4$s to the version on that machine fixes %6$d findings on this ticket.', $count( $fixable ), 'vulnhub' ),
+					$m['hostname'],
+					$best['product'],
+					$m['version'],
+					$app,
+					$best['installed'],
+					$count( $fixable )
+				)
+				: sprintf(
+					/* translators: 1: hostname, 2: application, 3: date, 4: findings. */
+					_n( 'On %1$s this was fixed on %3$s while %2$s stayed installed, so updating %2$s fixes %4$d finding on this ticket.', 'On %1$s this was fixed on %3$s while %2$s stayed installed, so updating %2$s fixes %4$d findings on this ticket.', $count( $fixable ), 'vulnhub' ),
+					$m['hostname'],
+					$app,
+					$m['when'],
+					$count( $fixable )
+				);
+		}
+
+		foreach ( $waiting as $g ) {
+			$sentences[] = sprintf(
+				/* translators: 1: "Except:" or "", 2: component, 3: location inside the app, 4: version, 5: machines, 6: findings. */
+				_n( '%1$s%2$s in %3$s is still %4$s on every machine it was seen on (%5$d), so updating will not fix %6$d finding yet: remove that component if it is not used, or record an exception.', '%1$s%2$s in %3$s is still %4$s on every machine it was seen on (%5$d), so updating will not fix %6$d findings yet: remove that component if it is not used, or record an exception.', $g['findings'], 'vulnhub' ),
+				$fixable ? __( 'Except: ', 'vulnhub' ) : '',
+				$g['product'],
+				$g['tail'],
+				$g['max'],
+				max( 1, $g['observed'] ),
+				$g['findings']
+			);
+		}
+
+		if ( $unknown ) {
+			/* translators: 1: findings, 2: application. */
+			$sentences[] = sprintf( _n( 'For %1$d finding there is not enough evidence to tell whether updating %2$s fixes it; update, then re-check.', 'For %1$d findings there is not enough evidence to tell whether updating %2$s fixes them; update, then re-check.', $count( $unknown ), 'vulnhub' ), $count( $unknown ), $app );
+		}
+
+		$doc->paragraph( implode( ' ', $sentences ) );
+
+		// Details: the reference machine, then where each copy sits.
+		$details = array();
+
+		foreach ( $fixable as $g ) {
+			$m = $g['newer'] ?? $g['resolved'];
+			/* translators: 1: hostname, 2: details, 3: component, 4: version or "fixed", 5: path, 6: date. */
+			$details[] = sprintf(
+				__( 'Reference machine: %1$s (%2$s) — %3$s %4$s at %5$s, %6$s', 'vulnhub' ),
+				$m['hostname'],
+				self::ref_details( $m ),
+				$g['product'],
+				null !== $g['newer'] ? $m['version'] : __( 'fixed', 'vulnhub' ),
+				$m['path'],
+				null !== $g['newer']
+					/* translators: %s: date. */
+					? sprintf( __( 'last scanned %s', 'vulnhub' ), $m['when'] )
+					/* translators: %s: date. */
+					: sprintf( __( 'resolved %s', 'vulnhub' ), $m['when'] )
+			);
+		}
+
+		foreach ( $groups as $key => $g ) {
+			$state = isset( $fixable[ $key ] ) ? __( 'fixed by updating', 'vulnhub' ) : ( isset( $waiting[ $key ] ) ? __( 'no fixed build yet', 'vulnhub' ) : __( 'not enough evidence', 'vulnhub' ) );
+
+			foreach ( array_keys( $g['paths'] ) as $path ) {
+				/* translators: 1: path, 2: component, 3: installed version, 4: fixed version, 5: state. */
+				$details[] = sprintf( __( '%1$s — %2$s %3$s (fixed in %4$s) — %5$s', 'vulnhub' ), $path, $g['product'], '' !== $g['installed'] ? $g['installed'] : '?', '' !== $g['fixed'] ? $g['fixed'] : '?', $state );
+			}
+		}
+
+		$doc->bullets( array_slice( $details, 0, 12 ) );
+	}
+
+	/**
 	 * A reference machine in words: FQDN or IP, OS, type, site.
 	 *
 	 * @param array<string,string> $m App_Fix::references() entry.
@@ -2307,93 +2458,21 @@ final class VulnHub_Jira_Ticketer {
 		}
 
 		if ( $bundled ) {
-			$doc->paragraph(
-				__( 'Some of these vulnerabilities are in components shipped inside other applications. The remediation text below is for the component itself; apply it by updating the application that ships it. Where a fixed build has been seen, one machine that already has it is given for reference.', 'vulnhub' )
-			);
-
 			foreach ( array_slice( $bundled, 0, 10, true ) as $app => $copies ) {
-				$products = array_unique( array_filter( array_map( static fn( array $group ): string => (string) ( $group[0]['product'] ?? '' ), $copies ) ) );
-
-				$doc->paragraph(
-					array(
-						VulnHub_Jira_Adf::strong(
-							sprintf(
-								/* translators: 1: application, 2: components. */
-								__( 'Update %1$s (ships %2$s)', 'vulnhub' ),
-								$app,
-								implode( ', ', $products )
-							)
-						),
-					)
-				);
-
-				$lines = array();
-
-				foreach ( array_slice( $copies, 0, 8, true ) as $group ) {
-					$first   = $group[0];
-					$product = (string) ( $first['product'] ?? '' );
-					$verdict = (string) ( $first['app_fix'] ?? '' );
-					$ref     = \VulnHub\Core\App_Fix::references( $first, 1 );
-					$path    = '' !== $ref['path'] ? $ref['path'] : __( '(no path reported)', 'vulnhub' );
-
-					/* translators: 1: path, 2: component, 3: installed version, 4: fixed version, 5: number of findings. */
-					$head = sprintf(
-						_n( '%1$s — %2$s %3$s, fixed in %4$s (%5$d finding on this ticket)', '%1$s — %2$s %3$s, fixed in %4$s (%5$d findings on this ticket)', count( $group ), 'vulnhub' ),
-						$path,
-						$product,
-						'' !== $ref['installed'] ? $ref['installed'] : '?',
-						'' !== $ref['fixed'] ? $ref['fixed'] : '?',
-						count( $group )
-					);
-
-					if ( $ref['newer'] ) {
-						$m    = $ref['newer'][0];
-						$body = sprintf(
-							/* translators: 1: machines, 2: hostname, 3: asset details, 4: component, 5: version, 6: path, 7: date. */
-							_n( 'Fixed build seen on %1$d machine. Reference: %2$s (%3$s) has %4$s %5$s at %6$s, last scanned %7$s.', 'Fixed build seen on %1$d machines. Reference: %2$s (%3$s) has %4$s %5$s at %6$s, last scanned %7$s.', $ref['newer_total'], 'vulnhub' ),
-							$ref['newer_total'],
-							$m['hostname'],
-							self::ref_details( $m ),
-							$product,
-							$m['version'],
-							$m['path'],
-							$m['when']
-						);
-					} elseif ( $ref['resolved'] ) {
-						$m    = $ref['resolved'][0];
-						$body = sprintf(
-							/* translators: 1: machines, 2: hostname, 3: asset details, 4: date, 5: path, 6: application. */
-							_n( 'Resolved on %1$d machine that still has the application. Reference: %2$s (%3$s), resolved %4$s at %5$s with %6$s still installed.', 'Resolved on %1$d machines that still have the application. Reference: %2$s (%3$s), resolved %4$s at %5$s with %6$s still installed.', $ref['resolved_total'], 'vulnhub' ),
-							$ref['resolved_total'],
-							$m['hostname'],
-							self::ref_details( $m ),
-							$m['when'],
-							$m['path'],
-							$app
-						);
-					} elseif ( \VulnHub\Core\App_Fix::NOT_SEEN === $verdict || ( '' !== $ref['max'] && '' !== $ref['fixed'] ) ) {
-						$body = sprintf(
-							/* translators: 1: component, 2: version, 3: machines, 4: fixed version. */
-							_n( 'No fixed build seen: the newest %1$s at this path is %2$s (on %3$d machine), below %4$s. Updating may not resolve this yet; consider removing the component or an exception.', 'No fixed build seen: the newest %1$s at this path is %2$s (across %3$d machines), below %4$s. Updating may not resolve this yet; consider removing the component or an exception.', max( 1, $ref['observed'] ), 'vulnhub' ),
-							$product,
-							'' !== $ref['max'] ? $ref['max'] : $ref['installed'],
-							max( 1, $ref['observed'] ),
-							$ref['fixed']
-						);
-					} else {
-						$body = __( 'Not enough evidence to tell whether the application ships the fixed component.', 'vulnhub' );
-					}
-
-					$lines[] = $head . ': ' . $body;
-				}
-
-				$doc->bullets( $lines );
+				$this->describe_app_fix( $doc, (string) $app, $copies );
 			}
 		}
 
 		$solutions = array();
 
 		foreach ( $rows as $row ) {
+			// A component's own release ("Upgrade libcurl to 8.4.0") cannot be
+			// applied inside another application; the instruction above is the
+			// remediation for those, so its text would only contradict it.
+			if ( 'app' === \VulnHub\Core\Repo::fix_route( $row ) ) {
+				continue;
+			}
+
 			$solution = trim( (string) ( $row['solution'] ?? '' ) );
 
 			if ( '' === $solution ) {
@@ -2407,7 +2486,7 @@ final class VulnHub_Jira_Ticketer {
 			foreach ( array_slice( array_values( $solutions ), 0, 8 ) as $solution ) {
 				$doc->paragraph( $solution );
 			}
-		} else {
+		} elseif ( ! $bundled ) {
 			$doc->paragraph( __( 'The vulnerability source published no remediation text for these findings. Apply the vendor patch or mitigation referenced by the CVEs above.', 'vulnhub' ) );
 		}
 

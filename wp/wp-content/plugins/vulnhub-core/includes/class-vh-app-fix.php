@@ -527,6 +527,9 @@ final class App_Fix {
 		$p = (string) preg_replace( '#\\\\users\\\\[^\\\\]+\\\\#', '\\users\\*\\', $p );
 		$p = (string) preg_replace( '#^/home/[^/]+/#', '/home/*/', $p );
 		$p = (string) preg_replace( '#(?<=\\\\|/)v?\d+(?:\.\d+)+(?=\\\\|/)#', '*', $p );
+		// A Microsoft Store (MSIX) folder carries its version and publisher:
+		// Microsoft.MicrosoftPowerBIDesktop_2.157.1354.0_x64__8wekyb3d8bbwe.
+		$p = (string) preg_replace( '#(?<=\\\\)([a-z0-9.]+)_\d+(?:\.\d+)+_[a-z0-9]+__[a-z0-9]+(?=\\\\)#', '$1_*', $p );
 
 		return $p;
 	}
