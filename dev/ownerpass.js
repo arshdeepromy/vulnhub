@@ -55,12 +55,19 @@ const bad = (n, d) => { fail++; console.log(`FAIL  ${n}${d ? '  — ' + d : ''}`
   };
 
   const OPEN = "f.state IN ('open','reopened') AND f.exception_id = 0";
+  // Terms are read from the estate (or the environment), never written here:
+  // real owner names, team names and addresses do not belong in the repo.
+  const pick = (q) => execSync(`echo ${JSON.stringify(q)} | ${VH_ROOT}/q.sh`, { encoding: 'utf8' }).trim().split('\n').pop().trim();
+  const OWNER = process.env.VH_OWNER_NAME || pick("SELECT p.display_name FROM vh_vulnhub_people p JOIN vh_vulnhub_assets a ON a.owner_person_id=p.id WHERE p.display_name <> '' GROUP BY p.id ORDER BY COUNT(*) DESC LIMIT 1");
+  const TEAM  = process.env.VH_TEAM_TERM || pick("SELECT SUBSTRING_INDEX(t.name,' ',-1) FROM vh_vulnhub_teams t JOIN vh_vulnhub_assets a ON a.team_id=t.id AND a.owner_person_id IS NULL GROUP BY t.id ORDER BY COUNT(*) DESC LIMIT 1");
+  const IP    = process.env.VH_IP_TERM || pick("SELECT a.ipv4 FROM vh_vulnhub_assets a JOIN vh_vulnhub_findings f ON f.asset_id=a.id WHERE a.ipv4 <> '' LIMIT 1");
+  const like  = (v) => v.replace(/'/g, "''");
   const EXPECT = {
-    findingsOwner: sql(`SELECT COUNT(*) FROM vh_vulnhub_findings f JOIN vh_vulnhub_assets a ON a.id=f.asset_id JOIN vh_vulnhub_people p ON p.id=a.owner_person_id WHERE p.display_name LIKE '%Owner Name%' AND ${OPEN}`),
-    assetsOwner:   sql("SELECT COUNT(*) FROM vh_vulnhub_assets a JOIN vh_vulnhub_people p ON p.id=a.owner_person_id WHERE p.display_name LIKE '%Owner Name%'"),
-    assetsWindows:     sql("SELECT COUNT(*) FROM vh_vulnhub_assets a JOIN vh_vulnhub_teams t ON t.id=a.team_id WHERE t.name LIKE '%Windows%'"),
+    findingsOwner: sql(`SELECT COUNT(*) FROM vh_vulnhub_findings f JOIN vh_vulnhub_assets a ON a.id=f.asset_id JOIN vh_vulnhub_people p ON p.id=a.owner_person_id WHERE LOCATE('${like(OWNER)}', p.display_name) > 0 AND ${OPEN}`),
+    assetsOwner:   sql(`SELECT COUNT(*) FROM vh_vulnhub_assets a JOIN vh_vulnhub_people p ON p.id=a.owner_person_id WHERE LOCATE('${like(OWNER)}', p.display_name) > 0`),
+    assetsTeam:    sql(`SELECT COUNT(*) FROM vh_vulnhub_assets a JOIN vh_vulnhub_teams t ON t.id=a.team_id WHERE LOCATE('${like(TEAM)}', t.name) > 0`),
   };
-  console.log(`expected from SQL: findings(Owner Name)=${EXPECT.findingsOwner} assets(Owner Name)=${EXPECT.assetsOwner} assets(Windows)=${EXPECT.assetsWindows}`);
+  console.log(`expected from SQL: findings(owner)=${EXPECT.findingsOwner} assets(owner)=${EXPECT.assetsOwner} assets(team)=${EXPECT.assetsTeam}`);
 
   const count = async (url, re) => {
     await page.goto(url, { waitUntil: 'domcontentloaded' });
@@ -72,7 +79,7 @@ const bad = (n, d) => { fail++; console.log(`FAIL  ${n}${d ? '  — ' + d : ''}`
   const ASSET = /([0-9]+)\s+assets? in the inventory/;
 
   console.log('\nvulnerability list');
-  const n1 = await count(`${BASE}/vulnerabilities/?search=Owner+Name&lifecycle=all`, FIND);
+  const n1 = await count(`${BASE}/vulnerabilities/?search=${encodeURIComponent(OWNER)}&lifecycle=all`, FIND);
   (n1 === EXPECT.findingsOwner) ? ok('owner name finds that person\'s findings', `${n1}`)
     : bad('owner name finds findings', `got ${n1}, sql says ${EXPECT.findingsOwner}`);
 
@@ -83,18 +90,18 @@ const bad = (n, d) => { fail++; console.log(`FAIL  ${n}${d ? '  — ' + d : ''}`
     const i = hdr.findIndex(h => /owner/i.test(h));
     return [...document.querySelectorAll('tbody tr')].map(r => ((r.cells[i] || {}).innerText || '').trim());
   });
-  const allMax = owners.length > 0 && owners.every(o => /Owner Name/.test(o));
+  const allMax = owners.length > 0 && owners.every(o => o.includes(OWNER));
   allMax ? ok('every row on screen is that owner', `${owners.length} rows checked`)
          : bad('every row is that owner', [...new Set(owners)].slice(0, 3).join(' | '));
 
   console.log('\nassets list');
-  const a1 = await count(`${BASE}/assets/?search=Owner+Name&life=all`, ASSET);
+  const a1 = await count(`${BASE}/assets/?search=${encodeURIComponent(OWNER)}&life=all`, ASSET);
   (a1 === EXPECT.assetsOwner) ? ok('owner name finds their assets', `${a1}`)
     : bad('owner name finds their assets', `got ${a1}, sql says ${EXPECT.assetsOwner}`);
 
-  const a2 = await count(`${BASE}/assets/?search=Windows&life=all`, ASSET);
-  (a2 === EXPECT.assetsWindows) ? ok('team name matches unassigned kit too', `${a2}`)
-    : bad('team name matches', `got ${a2}, sql says ${EXPECT.assetsWindows}`);
+  const a2 = await count(`${BASE}/assets/?search=${encodeURIComponent(TEAM)}&life=all`, ASSET);
+  (a2 === EXPECT.assetsTeam) ? ok('team name matches unassigned kit too', `${a2}`)
+    : bad('team name matches', `got ${a2}, sql says ${EXPECT.assetsTeam}`);
 
   console.log('\nwhat already worked still works');
   // A hostname read out of the estate, so this survives a re-import too.
@@ -103,7 +110,7 @@ const bad = (n, d) => { fail++; console.log(`FAIL  ${n}${d ? '  — ' + d : ''}`
   const h = await count(`${BASE}/assets/?search=${encodeURIComponent(host)}&life=all`, ASSET);
   (h >= 1) ? ok('hostname still matches', `${h}`) : bad('hostname still matches', `${h}`);
 
-  const ip = await count(`${BASE}/vulnerabilities/?search=192.0.2.10&lifecycle=all`, FIND);
+  const ip = await count(`${BASE}/vulnerabilities/?search=${encodeURIComponent(IP)}&lifecycle=all`, FIND);
   (ip > 0) ? ok('an IP now matches on the vulnerability list too', `${ip} findings`) : bad('IP matches on vuln list', `${ip}`);
 
   const cve = await count(`${BASE}/vulnerabilities/?search=libcurl&lifecycle=all`, FIND);
@@ -120,7 +127,7 @@ const bad = (n, d) => { fail++; console.log(`FAIL  ${n}${d ? '  — ' + d : ''}`
    * and never printed -- only the count it produces is.
    */
   const email = execSync(
-    `echo "SELECT email FROM vh_vulnhub_people WHERE display_name LIKE '%Owner Name%' AND email <> '' LIMIT 1" | ${VH_ROOT}/q.sh`,
+    `echo "SELECT email FROM vh_vulnhub_people WHERE display_name LOCATE('${like(OWNER)}', display_name) > 0 AND email <> '' LIMIT 1" | ${VH_ROOT}/q.sh`,
     { encoding: 'utf8' }
   ).trim().split('\n').pop().trim();
 
@@ -138,10 +145,10 @@ const bad = (n, d) => { fail++; console.log(`FAIL  ${n}${d ? '  — ' + d : ''}`
   }
 
   console.log('\nsearch survives Apply, and exports');
-  await page.goto(`${BASE}/vulnerabilities/?search=Owner+Name&lifecycle=all`, { waitUntil: 'networkidle' });
+  await page.goto(`${BASE}/vulnerabilities/?search=${encodeURIComponent(OWNER)}&lifecycle=all`, { waitUntil: 'networkidle' });
   await Promise.all([ page.waitForNavigation({ waitUntil: 'networkidle' }), page.click('form.vh-filters button:has-text("Apply")') ]);
   const kept = await page.evaluate(() => document.querySelector('input[name="search"]').value);
-  (kept === 'Owner Name') ? ok('search term survives Apply', kept) : bad('search survives Apply', kept);
+  (kept === OWNER) ? ok('search term survives Apply', kept) : bad('search survives Apply', kept);
 
   const csv = await page.evaluate(async () => {
     const f = document.querySelector('form.vh-export__panel');

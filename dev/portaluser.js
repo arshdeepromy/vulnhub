@@ -2,7 +2,7 @@ const VH_ROOT = process.env.VULNHUB_ROOT || require('path').resolve(__dirname, '
 /*
  * What a portal-only administrator actually experiences.
  *
- * `portal.tester` holds vulnhub_admin and no WordPress capability at all, which
+ * The portal test account (`VH_PORTAL_USER`) holds vulnhub_admin and no WordPress capability at all, which
  * is the account shape a real security team would use. Everything they need
  * has to be reachable from the front end, and wp-admin has to be closed to
  * them without swallowing their form submissions.

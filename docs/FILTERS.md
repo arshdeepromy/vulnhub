@@ -112,7 +112,7 @@ and FQDN on the other, and stopped there.
 Both lists now include the owner: the person's display name, their email and
 their UPN, and the team behind them. Team matters as much as person, because
 on unassigned kit the team is the only thing the column shows -- searching
-`Windows` has to find the 91 assets whose owner cell reads "Platform Services
+`Windows` has to find every asset whose owner cell reads "Platform Services
 Windows", none of which has a person attached.
 
 Email and UPN are matched but never displayed by the search. They are what a

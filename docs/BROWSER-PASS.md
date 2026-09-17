@@ -46,8 +46,8 @@ reads `VULNHUB_URL`; they resolve the project root from `VULNHUB_ROOT`.
 
 | Script | Signs in as | Credential |
 |---|---|---|
-| `browserpass.js`, `interact.js`, `probe.js`, `designaudit.js`, `elementorpass.js`, `dragpass.js`, `exportpass.js`, `lifecyclepass.js`, `ownerpass.js` | `admin` (administrator) at `wp-login.php` | `.admin_pass` |
-| `boardpass.js`, `importpass.js`, `portaluser.js` | `portal.tester` (portal-only `vulnhub_admin`, no WordPress rights) | `.portal_test_pass` |
+| `browserpass.js`, `interact.js`, `probe.js`, `designaudit.js`, `elementorpass.js`, `dragpass.js`, `exportpass.js`, `lifecyclepass.js`, `ownerpass.js` | `VH_ADMIN_USER` (an administrator; default `admin`) at `wp-login.php` | `.admin_pass` |
+| `boardpass.js`, `importpass.js`, `portaluser.js` | `VH_PORTAL_USER` (portal-only `vulnhub_admin`, no WordPress rights; default `portal.tester`) | `.portal_test_pass` |
 | `railhover.js` | no password — a session cookie you mint | `VH_COOKIE`; `VH_BASE` overrides the URL |
 
 Passwords are read off disk and handed straight to the login form; they are

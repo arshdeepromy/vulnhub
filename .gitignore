@@ -17,3 +17,7 @@ wp/wp-content/upgrade/
 # repository, and no code reads it -- it was imported once through the screen.
 dev/real-*.csv
 wp/wp-content/plugins/vulnhub-eos/data/
+
+# Browser-pass screenshots show whatever the stack holds -- on a real install,
+# real hostnames, addresses and owners. Never commit them.
+dev/shots/
