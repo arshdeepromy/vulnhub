@@ -882,7 +882,7 @@ final class VulnHub_Dash_Tickets {
 			'<button type="button" class="vh-btn vh-btn--ghost vh-btn--sm %1$s" data-vh-check="%2$d" title="%3$s">%4$s</button>',
 			esc_attr( $extra_class ),
 			(int) $t['id'],
-			esc_attr__( 'Read the status from Jira, rescan this ticket\'s network-scanned hosts in Tenable, then re-check. Agent-based machines are checked on their latest agent results.', 'vulnhub' ),
+			esc_attr__( 'Read the status from Jira, rescan this ticket\'s network-scanned workstations in Tenable, then re-check. Servers are never rescanned from here, and agent-based machines are checked on their latest results.', 'vulnhub' ),
 			esc_html__( 'Verify', 'vulnhub' )
 		);
 	}
@@ -911,9 +911,20 @@ final class VulnHub_Dash_Tickets {
 			$out .= '<span class="vh-meta">' . esc_html__( 'Not checked yet', 'vulnhub' ) . '</span>';
 		}
 
-		if ( '' !== $due ) {
+		$next = Tickets::next_check( $t );
+
+		if ( $next && ! empty( $next['at'] ) && Tickets::VERIFY_CONFIRMED !== (string) $t['verification_state'] ) {
+			$out .= '<span class="vh-meta">' . esc_html(
+				sprintf(
+					/* translators: 1: date and time, 2: why. */
+					__( 'next check %1$s, %2$s', 'vulnhub' ),
+					wp_date( 'D j M H:i', (int) strtotime( (string) $next['at'] . ' UTC' ) ),
+					(string) $next['reason']
+				)
+			) . '</span>';
+		} elseif ( '' !== $due ) {
 			/* translators: %s: date. */
-			$out .= '<span class="vh-meta">' . esc_html( sprintf( __( 'due %s, checked automatically then', 'vulnhub' ), $due ) ) . '</span>';
+			$out .= '<span class="vh-meta">' . esc_html( sprintf( __( 'due %s', 'vulnhub' ), $due ) ) . '</span>';
 		}
 
 		return '<div class="vh-check-last" data-vh-check-last="' . (int) $t['id'] . '">' . $out . '</div>';

@@ -3698,7 +3698,7 @@ final class VulnHub_Dash_App {
 		<?php if ( VulnHub_Dash_Tickets::can_check() ) : ?>
 			<div class="vh-check-bar">
 				<button type="button" class="vh-btn vh-btn--sm" data-vh-check-all><?php esc_html_e( 'Verify all tickets', 'vulnhub' ); ?></button>
-				<span class="vh-meta"><?php esc_html_e( 'Verify reads each ticket\'s status from Jira, rescans its network-scanned hosts in Tenable and re-checks its findings. Agent-based machines are not rescanned; they are checked on their latest agent results. Tickets that are already verified fixed are skipped. Every ticket is also checked automatically on its due date, without a rescan.', 'vulnhub' ); ?></span>
+				<span class="vh-meta"><?php esc_html_e( 'Verify reads each ticket\'s status from Jira, rescans its network-scanned workstations in Tenable and re-checks its findings. Servers are never rescanned from here, and agent-based machines are checked on their latest results. Tickets already verified fixed are skipped. Without anyone pressing Verify, each ticket is checked at 10:00 the morning after its assets\' scheduled Tenable scan runs, and on its due date.', 'vulnhub' ); ?></span>
 			</div>
 			<?php echo VulnHub_Dash_Tickets::check_panel(); // phpcs:ignore WordPress.Security.EscapeOutput ?>
 		<?php endif; ?>

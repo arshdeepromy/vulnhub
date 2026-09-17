@@ -1,6 +1,6 @@
 <?php
 /**
- * Verify tickets on demand, and on their due date.
+ * Verify tickets on demand, after scheduled scans, and on their due date.
  *
  * A check is a background job, because the slow parts are Tenable's:
  *
@@ -8,17 +8,23 @@
  *                (`vulnhub_refresh_ticket`), so a ticket resolved in Jira a
  *                minute ago is judged as resolved
  *   2. scan      Verify only: launch the configured network scan with the
- *                tickets' network-scanned hosts as its only targets, and wait
- *                for it to finish. Agent-based machines are never scanned this
- *                way -- an agent scan cannot be narrowed to single machines --
- *                they are judged on their latest agent results.
+ *                tickets' network-scanned workstations as its only targets,
+ *                and wait for it to finish. Servers are never scanned from
+ *                here (VulnHub_Tenable_Schedules::RESCAN_ASSET_TYPES, checked
+ *                on each asset's own type by guard_assets(), again just before
+ *                the launch). Agent-based
+ *                machines are not either -- an agent scan cannot be narrowed to
+ *                single machines -- they are judged on their latest results.
  *   3. verify    VulnHub_Tenable_Verifier::check_ticket() for every ticket that
- *                covers findings; asset-list tickets are judged live anyway,
- *                so their check is the status refresh.
+ *                covers findings; asset-list tickets are summarised from their
+ *                live outcomes.
  *
  * Jobs advance one step per cron event (the stack's cron loop runs every
- * minute) and store their progress in an option the Tickets page polls. On a
- * ticket's due date an automatic job checks it -- no scan, nothing launched.
+ * minute) and store their progress in an option the Tickets page polls.
+ *
+ * Automatic checks never scan. Hourly, each open ticket is planned: it is
+ * checked at 10:00 the morning after each run of the scan schedule chosen for
+ * its asset types, and at 10:00 on its due date.
  *
  * Nothing here writes to Jira: the status refresh only reads, and whether a
  * check comments on or reopens a ticket is the Jira connector's own setting.
@@ -292,13 +298,13 @@ final class VulnHub_Tenable_Ticket_Check {
 
 		if ( $job['rescan'] && $targets && $scan_id ) {
 			$job['phase']   = 'scan';
-			$job['scan']    = array( 'id' => $scan_id, 'targets' => $targets, 'launched_at' => 0, 'status' => 'launching' );
+			$job['scan']    = array( 'id' => $scan_id, 'assets' => $targets, 'targets' => array_values( array_unique( $targets ) ), 'launched_at' => 0, 'status' => 'launching' );
 			/* translators: %d: number of hosts. */
-			$job['message'] = sprintf( _n( 'Launching a Tenable rescan of %d network host…', 'Launching a Tenable rescan of %d network hosts…', count( $targets ), 'vulnhub' ), count( $targets ) );
+			$job['message'] = sprintf( _n( 'Launching a Tenable rescan of %d workstation…', 'Launching a Tenable rescan of %d workstations…', count( $targets ), 'vulnhub' ), count( $targets ) );
 		} else {
 			$job['phase']   = 'verify';
 			$job['message'] = $job['rescan'] && $targets && ! $scan_id
-				? __( 'No rescan scan is chosen in the Tenable settings, so network hosts are checked on their latest scan. Checking…', 'vulnhub' )
+				? __( 'No rescan scan is chosen in the Tenable settings, so workstations are checked on their latest scan. Checking…', 'vulnhub' )
 				: __( 'Checking findings against Tenable…', 'vulnhub' );
 		}
 
@@ -320,6 +326,24 @@ final class VulnHub_Tenable_Ticket_Check {
 		$scan = (array) $job['scan'];
 
 		if ( empty( $scan['launched_at'] ) ) {
+			// Re-read by asset id now, not trusting what was gathered earlier.
+			$guard           = $this->guard_assets( array_keys( (array) $scan['assets'] ) );
+			$scan['assets']  = $guard['allowed'];
+			$scan['targets'] = array_values( array_unique( $guard['allowed'] ) );
+
+			if ( $guard['refused'] ) {
+				vulnhub()->logger->audit( 'ticket.rescan_refused', sprintf( 'Refused to rescan %d asset(s) that are not workstations', count( $guard['refused'] ) ), 'ticket', 0, array( 'job' => $job['id'], 'refused' => array_keys( $guard['refused'] ) ), 'warning' );
+			}
+
+			if ( ! $scan['targets'] ) {
+				$scan['status'] = 'not launched';
+				$job['scan']    = $scan;
+				$job['phase']   = 'verify';
+				$job['message'] = __( 'No workstation could be rescanned, so no scan was started; checking on the latest results.', 'vulnhub' );
+
+				return $job;
+			}
+
 			$response = $connector->client()->launch_scan( (int) $scan['id'], (array) $scan['targets'] );
 
 			if ( ! $response->ok() ) {
@@ -338,7 +362,7 @@ final class VulnHub_Tenable_Ticket_Check {
 			$scan['status']      = 'pending';
 			$job['scan']         = $scan;
 			/* translators: %d: number of hosts. */
-			$job['message']      = sprintf( _n( 'Tenable is rescanning %d network host. Results are checked when it finishes.', 'Tenable is rescanning %d network hosts. Results are checked when it finishes.', count( (array) $scan['targets'] ), 'vulnhub' ), count( (array) $scan['targets'] ) );
+			$job['message']      = sprintf( _n( 'Tenable is rescanning %d workstation. Results are checked when it finishes.', 'Tenable is rescanning %d workstations. Results are checked when it finishes.', count( (array) $scan['targets'] ), 'vulnhub' ), count( (array) $scan['targets'] ) );
 
 			vulnhub()->logger->audit( 'ticket.rescan_launched', sprintf( 'Launched Tenable scan %d against %d host(s) to verify tickets', (int) $scan['id'], count( (array) $scan['targets'] ) ), 'ticket', 0, array( 'job' => $job['id'], 'scan' => (int) $scan['id'], 'targets' => $scan['targets'] ) );
 
@@ -411,6 +435,8 @@ final class VulnHub_Tenable_Ticket_Check {
 				$summary = array( 'state' => 'unavailable', 'headline' => __( 'Tenable is not enabled, so findings could not be checked.', 'vulnhub' ) );
 			}
 
+			$this->plan_ticket( (array) \VulnHub\Core\Tickets::get( (int) $id ), time() );
+
 			$job['tickets'][ $id ]['state']   = 'checked';
 			$job['tickets'][ $id ]['result']  = (string) $summary['state'];
 			$job['tickets'][ $id ]['message'] = (string) $summary['headline'];
@@ -424,18 +450,24 @@ final class VulnHub_Tenable_Ticket_Check {
 	}
 
 	/* =================================================================
-	 * Due dates
+	 * Automatic checks: after scheduled scans, and on the due date
 	 * ============================================================== */
 
 	/**
-	 * Hourly: check every ticket whose due date has arrived and has not been
-	 * checked since. No scan is launched.
+	 * Hourly: refresh Tenable's schedules, plan every open ticket's next
+	 * automatic check, and start one job, with no scan, for the tickets whose
+	 * moment has come.
 	 */
 	public function run_due(): void {
 		global $wpdb;
 
-		$today = wp_date( 'Y-m-d' );
-		$rows  = (array) $wpdb->get_results(
+		$connector = $this->connector();
+
+		if ( $connector && $connector->is_enabled() ) {
+			VulnHub_Tenable_Schedules::data( $connector, true );
+		}
+
+		$rows = (array) $wpdb->get_results(
 			$wpdb->prepare(
 				'SELECT * FROM ' . vh_table( 'tickets' ) . " WHERE external_key <> '' AND verification_state <> %s", // phpcs:ignore WordPress.DB.PreparedSQL
 				\VulnHub\Core\Tickets::VERIFY_CONFIRMED
@@ -446,25 +478,112 @@ final class VulnHub_Tenable_Ticket_Check {
 		$due = array();
 
 		foreach ( $rows as $row ) {
-			$date = \VulnHub\Core\Tickets::due_date( $row );
-
-			if ( '' === $date || $date > $today ) {
-				continue;
+			if ( $this->plan_ticket( $row, time() ) ) {
+				$due[] = (int) $row['id'];
 			}
-
-			$last = \VulnHub\Core\Tickets::last_check( $row );
-
-			// Already checked on or after its due date: once is the promise.
-			if ( $last && ! empty( $last['checked_at'] ) && wp_date( 'Y-m-d', (int) strtotime( (string) $last['checked_at'] . ' UTC' ) ) >= $date ) {
-				continue;
-			}
-
-			$due[] = (int) $row['id'];
 		}
 
 		if ( $due ) {
-			$this->start( $due, false, 'due' );
+			$this->start( $due, false, 'schedule' );
 		}
+	}
+
+	/**
+	 * Work out when a ticket is next checked automatically and store it.
+	 *
+	 * Two things make a check due, each counted from the ticket's last check
+	 * (or from when it was raised):
+	 *
+	 * - a run of the scan schedule chosen for one of its asset types has
+	 *   finished: checked at 10:00 the next morning
+	 * - its due date has arrived: checked at 10:00 that day
+	 *
+	 * @param array<string,mixed> $ticket Ticket row.
+	 * @return bool Whether a check is due now.
+	 */
+	public function plan_ticket( array $ticket, int $now ): bool {
+		$last   = \VulnHub\Core\Tickets::last_check( $ticket );
+		$anchor = max(
+			(int) strtotime( (string) $ticket['created_at'] . ' UTC' ),
+			$last && ! empty( $last['checked_at'] ) ? (int) strtotime( (string) $last['checked_at'] . ' UTC' ) : 0
+		);
+
+		$due      = false;
+		$upcoming = array();
+		$reasons  = array();
+
+		$date = \VulnHub\Core\Tickets::due_date( $ticket );
+
+		if ( '' !== $date ) {
+			$at = VulnHub_Tenable_Schedules::morning_of( $date );
+
+			if ( $at && $at > $anchor ) {
+				if ( $now >= $at ) {
+					$due = true;
+				} else {
+					/* translators: %s: date. */
+					$upcoming[ $at ][] = sprintf( __( 'due date %s', 'vulnhub' ), $date );
+				}
+			}
+		}
+
+		$connector = $this->connector();
+
+		if ( $connector ) {
+			foreach ( $this->asset_types( (int) $ticket['id'] ) as $type ) {
+				$scan = VulnHub_Tenable_Schedules::for_type( $connector, $type );
+				$plan = $scan ? VulnHub_Tenable_Schedules::check_after( $scan, $anchor, $now ) : null;
+
+				if ( ! $plan ) {
+					continue;
+				}
+
+				if ( $plan['due'] ) {
+					$due = true;
+				} else {
+					/* translators: 1: scan name, 2: date and time. */
+					$upcoming[ $plan['at'] ][] = sprintf( __( 'after %1$s on %2$s', 'vulnhub' ), (string) $scan['name'], wp_date( 'D j M H:i', $plan['start'] ) );
+				}
+			}
+		}
+
+		ksort( $upcoming );
+		$next = $upcoming ? array( 'at' => gmdate( 'Y-m-d H:i:s', (int) array_key_first( $upcoming ) ), 'reason' => implode( '; ', reset( $upcoming ) ) ) : null;
+
+		if ( $next !== \VulnHub\Core\Tickets::next_check( $ticket ) ) {
+			\VulnHub\Core\Tickets::set_next_check( (int) $ticket['id'], $next );
+		}
+
+		return $due;
+	}
+
+	/**
+	 * Asset types a ticket covers, through its findings or its asset list.
+	 *
+	 * @return string[]
+	 */
+	private function asset_types( int $ticket_id ): array {
+		global $wpdb;
+
+		return array_values(
+			array_intersect(
+				VulnHub_Tenable_Schedules::TYPES,
+				(array) $wpdb->get_col(
+					$wpdb->prepare(
+						'SELECT DISTINCT a.asset_type FROM ' . vh_table( 'ticket_findings' ) . ' tf
+						 JOIN ' . vh_table( 'findings' ) . ' f ON f.id = tf.finding_id
+						 JOIN ' . vh_table( 'assets' ) . ' a ON a.id = f.asset_id
+						 WHERE tf.ticket_id = %d
+						 UNION
+						 SELECT DISTINCT a.asset_type FROM ' . vh_table( 'ticket_assets' ) . ' ta
+						 JOIN ' . vh_table( 'assets' ) . ' a ON a.id = ta.asset_id
+						 WHERE ta.ticket_id = %d', // phpcs:ignore WordPress.DB.PreparedSQL
+						$ticket_id,
+						$ticket_id
+					)
+				)
+			)
+		);
 	}
 
 	/* =================================================================
@@ -478,11 +597,14 @@ final class VulnHub_Tenable_Ticket_Check {
 	}
 
 	/**
-	 * Network-scanned hosts behind the tickets' findings: not agent-based,
-	 * known to Tenable, with an address to aim a scan at.
+	 * Machines a Verify may rescan, by asset id: network-scanned (not
+	 * agent-based) workstations behind the tickets' findings, known to
+	 * Tenable, with an address to hand Tenable as the target.
+	 *
+	 * Servers are never included, whatever the ticket covers.
 	 *
 	 * @param int[] $ticket_ids Tickets.
-	 * @return string[]
+	 * @return array<int,string> Asset id => scan target.
 	 */
 	private function network_targets( array $ticket_ids ): array {
 		global $wpdb;
@@ -493,26 +615,60 @@ final class VulnHub_Tenable_Ticket_Check {
 			return array();
 		}
 
+		$asset_ids = array_map(
+			'intval',
+			(array) $wpdb->get_col(
+				'SELECT DISTINCT f.asset_id FROM ' . vh_table( 'ticket_findings' ) . ' tf
+				 JOIN ' . vh_table( 'findings' ) . ' f ON f.id = tf.finding_id
+				 WHERE tf.ticket_id IN (' . implode( ',', $ids ) . ')' // phpcs:ignore WordPress.DB.PreparedSQL
+			)
+		);
+
+		return $this->guard_assets( $asset_ids )['allowed'];
+	}
+
+	/**
+	 * The rescan guard rail, decided by each asset's own type.
+	 *
+	 * Runs when targets are gathered and again immediately before the launch,
+	 * reading the assets fresh by id: an asset is allowed only if its
+	 * asset_type (synced from Tenable) is one of
+	 * VulnHub_Tenable_Schedules::RESCAN_ASSET_TYPES, it is not agent-based, and
+	 * it has an address. Everything else is refused.
+	 *
+	 * @param int[] $asset_ids Assets.
+	 * @return array{allowed:array<int,string>,refused:array<int,string>} Asset id => target (or hostname when refused).
+	 */
+	public function guard_assets( array $asset_ids ): array {
+		global $wpdb;
+
+		$out = array( 'allowed' => array(), 'refused' => array() );
+		$ids = array_values( array_unique( array_filter( array_map( 'intval', $asset_ids ) ) ) );
+
+		if ( ! $ids ) {
+			return $out;
+		}
+
 		$rows = (array) $wpdb->get_results(
-			'SELECT DISTINCT a.ipv4, a.fqdn, a.hostname
-			 FROM ' . vh_table( 'ticket_findings' ) . ' tf
-			 JOIN ' . vh_table( 'findings' ) . ' f ON f.id = tf.finding_id
-			 JOIN ' . vh_table( 'assets' ) . " a ON a.id = f.asset_id
-			 WHERE tf.ticket_id IN (" . implode( ',', $ids ) . ") AND a.has_agent = 0 AND a.tenable_uuid <> ''", // phpcs:ignore WordPress.DB.PreparedSQL
+			'SELECT id, hostname, asset_type, has_agent, tenable_uuid, ipv4, fqdn FROM ' . vh_table( 'assets' ) . ' WHERE id IN (' . implode( ',', $ids ) . ')', // phpcs:ignore WordPress.DB.PreparedSQL
 			ARRAY_A
 		);
 
-		$targets = array();
-
 		foreach ( $rows as $row ) {
-			$target = '' !== (string) $row['ipv4'] ? (string) $row['ipv4'] : ( '' !== (string) $row['fqdn'] ? (string) $row['fqdn'] : '' );
+			$target = '' !== (string) $row['fqdn'] ? (string) $row['fqdn'] : (string) $row['ipv4'];
+			$ok     = in_array( (string) $row['asset_type'], VulnHub_Tenable_Schedules::RESCAN_ASSET_TYPES, true )
+				&& 0 === (int) $row['has_agent']
+				&& '' !== (string) $row['tenable_uuid']
+				&& '' !== $target;
 
-			if ( '' !== $target ) {
-				$targets[ $target ] = true;
+			if ( $ok ) {
+				$out['allowed'][ (int) $row['id'] ] = $target;
+			} elseif ( ! in_array( (string) $row['asset_type'], VulnHub_Tenable_Schedules::RESCAN_ASSET_TYPES, true ) ) {
+				$out['refused'][ (int) $row['id'] ] = (string) $row['hostname'];
 			}
 		}
 
-		return array_keys( $targets );
+		return $out;
 	}
 
 	/**

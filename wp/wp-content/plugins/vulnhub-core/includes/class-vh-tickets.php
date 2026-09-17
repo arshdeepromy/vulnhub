@@ -180,9 +180,11 @@ final class Tickets {
 
 			// A sync replaces the provider's fields, not the record of the last
 			// check, which only this site knows.
-			$last = $existing ? self::last_check( $existing ) : null;
-			if ( $last && ! isset( $payload['last_check'] ) ) {
-				$payload['last_check'] = $last;
+			$kept = $existing ? json_decode( (string) $existing['payload_json'], true ) : null;
+			foreach ( array( 'last_check', 'next_check' ) as $own ) {
+				if ( is_array( $kept ) && is_array( $kept[ $own ] ?? null ) && ! isset( $payload[ $own ] ) ) {
+					$payload[ $own ] = $kept[ $own ];
+				}
 			}
 
 			$row['payload_json'] = (string) wp_json_encode( $payload );
@@ -705,6 +707,37 @@ final class Tickets {
 	 * @param array<string,mixed> $summary state, fixed, open, unknown, headline…
 	 */
 	public static function set_last_check( int $ticket_id, array $summary ): void {
+		unset( $summary['findings'] );
+		$summary['checked_at'] = vh_now();
+
+		self::set_payload_value( $ticket_id, 'last_check', $summary );
+	}
+
+	/**
+	 * The next automatic check planned for a ticket, or null.
+	 *
+	 * @param array<string,mixed> $ticket Ticket row.
+	 * @return array{at:string,reason:string}|null `at` is UTC.
+	 */
+	public static function next_check( array $ticket ): ?array {
+		$payload = json_decode( (string) ( $ticket['payload_json'] ?? '' ), true );
+
+		return is_array( $payload ) && is_array( $payload['next_check'] ?? null ) ? $payload['next_check'] : null;
+	}
+
+	/**
+	 * Record (or clear, with null) the next automatic check.
+	 *
+	 * @param array{at:string,reason:string}|null $next Plan.
+	 */
+	public static function set_next_check( int $ticket_id, ?array $next ): void {
+		self::set_payload_value( $ticket_id, 'next_check', $next );
+	}
+
+	/**
+	 * Set one key of a ticket's payload without touching the rest.
+	 */
+	private static function set_payload_value( int $ticket_id, string $key, mixed $value ): void {
 		global $wpdb;
 
 		$table   = vh_table( 'tickets' );
@@ -712,9 +745,11 @@ final class Tickets {
 		$payload = json_decode( $raw, true );
 		$payload = is_array( $payload ) ? $payload : array();
 
-		unset( $summary['findings'] );
-		$summary['checked_at'] = vh_now();
-		$payload['last_check'] = $summary;
+		if ( null === $value ) {
+			unset( $payload[ $key ] );
+		} else {
+			$payload[ $key ] = $value;
+		}
 
 		$wpdb->update( $table, array( 'payload_json' => (string) wp_json_encode( $payload ) ), array( 'id' => $ticket_id ) );
 	}

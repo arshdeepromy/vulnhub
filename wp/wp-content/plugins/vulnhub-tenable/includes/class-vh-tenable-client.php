@@ -291,7 +291,7 @@ final class VulnHub_Tenable_Client {
 	 * GET /scans — the scans this key can see, reduced to what a picker and
 	 * a launch need.
 	 *
-	 * @return array<int,array{id:int,name:string,type:string,status:string,can_launch:bool}>
+	 * @return array<int,array{id:int,name:string,type:string,status:string,can_launch:bool,enabled:bool,rrules:string,starttime:string,timezone:string}>
 	 */
 	public function scans(): array {
 		$response = $this->http->get( $this->url( '/scans' ), array(), $this->headers(), array( 'retries' => 2 ) );
@@ -314,7 +314,46 @@ final class VulnHub_Tenable_Client {
 				'type'       => (string) ( $scan['type'] ?? '' ),
 				'status'     => (string) ( $scan['status'] ?? '' ),
 				'can_launch' => ! empty( $scan['control'] ),
+				'enabled'    => ! empty( $scan['enabled'] ),
+				'rrules'     => (string) ( $scan['rrules'] ?? '' ),
+				'starttime'  => (string) ( $scan['starttime'] ?? '' ),
+				'timezone'   => (string) ( $scan['timezone'] ?? '' ),
+				'schedule_uuid' => (string) ( $scan['schedule_uuid'] ?? '' ),
 			);
+		}
+
+		return $out;
+	}
+
+	/**
+	 * GET /scans/{scan_id}/history — the scan's latest runs, newest first.
+	 *
+	 * @return array<int,array{uuid:string,status:string,start:int,end:int}>|null Null when it cannot be read.
+	 */
+	public function scan_history( int $scan_id, int $limit = 20 ): ?array {
+		$response = $this->http->get(
+			$this->url( '/scans/' . $scan_id . '/history' ),
+			array( 'limit' => max( 1, min( 50, $limit ) ) ),
+			$this->headers(),
+			array( 'retries' => 2 )
+		);
+
+		if ( ! $response->ok() ) {
+			$this->trace( sprintf( 'Scan %d history failed (HTTP %d): %s', $scan_id, $response->status, vh_trim( $response->error_message(), 160 ) ) );
+			return null;
+		}
+
+		$out = array();
+
+		foreach ( (array) ( $response->data()['history'] ?? array() ) as $run ) {
+			if ( is_array( $run ) ) {
+				$out[] = array(
+					'uuid'   => (string) ( $run['scan_uuid'] ?? '' ),
+					'status' => strtolower( (string) ( $run['status'] ?? '' ) ),
+					'start'  => (int) ( $run['time_start'] ?? 0 ),
+					'end'    => (int) ( $run['time_end'] ?? 0 ),
+				);
+			}
 		}
 
 		return $out;

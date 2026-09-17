@@ -201,7 +201,23 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 				'type'    => 'select',
 				'default' => '',
 				'options' => $this->rescan_scan_options(),
-				'help'    => __( 'The network scan a ticket\'s Verify button runs against just that ticket\'s network-scanned hosts (Tenable launches it with those hosts as its only targets). Agent-based machines are never scanned this way -- an agent scan cannot be narrowed to single machines -- and are checked against their latest agent results instead. Choose a scan with the credentials and policy you want; the list comes from Tenable and refreshes hourly.', 'vulnhub' ),
+				'help'    => __( 'The network scan a ticket\'s Verify button runs against that ticket\'s network-scanned workstations only (Tenable launches it with those hosts as its only targets). Servers are never scanned from here, whatever is chosen: they are checked after their own scheduled scan. Agent-based machines are not scanned this way either -- an agent scan cannot be narrowed to single machines -- and are checked against their latest agent results. The list comes from Tenable and refreshes hourly.', 'vulnhub' ),
+			),
+			array(
+				'key'     => 'schedule_server',
+				'label'   => __( 'Servers are scanned by', 'vulnhub' ),
+				'type'    => 'select',
+				'default' => '',
+				'options' => $this->schedule_options( 'server' ),
+				'help'    => __( 'The repeating Tenable scan that finds vulnerabilities on servers. A ticket covering servers is checked at 10:00 on the morning after each run of this scan, until it is verified fixed. Choose the vulnerability scan, not an inventory scan. The run length is measured from the scan\'s history.', 'vulnhub' ),
+			),
+			array(
+				'key'     => 'schedule_workstation',
+				'label'   => __( 'Workstations are scanned by', 'vulnhub' ),
+				'type'    => 'select',
+				'default' => '',
+				'options' => $this->schedule_options( 'workstation' ),
+				'help'    => __( 'The repeating Tenable scan that finds vulnerabilities on workstations. A ticket covering workstations is checked at 10:00 on the morning after each run, until it is verified fixed. Every ticket is also checked on its due date.', 'vulnhub' ),
 			),
 			array(
 				'key'     => 'chunk_size',
@@ -234,6 +250,38 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 	 */
 	public function rescan_scan_id(): int {
 		return (int) $this->get( 'rescan_scan', 0 );
+	}
+
+	/**
+	 * The schedule id chosen for an asset type, or 0.
+	 */
+	public function schedule_for_type( string $type ): int {
+		return in_array( $type, VulnHub_Tenable_Schedules::TYPES, true ) ? (int) $this->get( 'schedule_' . $type, 0 ) : 0;
+	}
+
+	/**
+	 * Picker options for `schedule_<type>`: repeating scans, from the stored
+	 * list, fetched live only on the Tenable configure screen.
+	 *
+	 * @return array<string,string>
+	 */
+	private function schedule_options( string $type ): array {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$on_screen = isset( $_GET['connector'] ) && 'tenable' === sanitize_key( wp_unslash( (string) $_GET['connector'] ) );
+
+		if ( $on_screen && ! $this->is_mock() && $this->client()->has_credentials() ) {
+			VulnHub_Tenable_Schedules::data( $this, true );
+		}
+
+		$options = array( '' => __( 'None — do not check after scans', 'vulnhub' ) ) + VulnHub_Tenable_Schedules::options();
+		$current = (string) $this->get( 'schedule_' . $type, '' );
+
+		if ( '' !== $current && ! isset( $options[ $current ] ) ) {
+			/* translators: %s: scan id. */
+			$options[ $current ] = sprintf( __( 'Scan %s (no longer a repeating scan)', 'vulnhub' ), $current );
+		}
+
+		return $options;
 	}
 
 	/**

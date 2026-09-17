@@ -250,18 +250,29 @@ never launched twice. The steps are:
 1. **Refresh.** Each ticket's status is read through `vulnhub_refresh_ticket`.
    This only reads from Jira. A ticket recorded by hand keeps its recorded
    status.
-2. **Rescan (Verify only).** The network-scanned hosts behind the tickets'
-   findings are collected: `has_agent = 0`, known to Tenable, with an IPv4
-   address or FQDN. The Tenable connector's **Rescan with** scan is launched
-   once with those hosts as `alt_targets`. The job then polls
-   `/scans/{id}/latest-status` every two minutes and moves on when the scan
-   finishes or after four hours.
-   - **Agent-based machines are never rescanned,** because an agent scan cannot
-     be narrowed to single machines. They are judged on their latest agent
-     results.
-   - The step is skipped with no scan chosen, no network hosts, or when Tenable
-     refuses the launch (for example, the scan is already running). The panel
-     says which.
+2. **Rescan (Verify only, workstations only).** The rescan guard rail is
+   decided by **each asset's own `asset_type`**, the server/workstation
+   classification synced from Tenable, never by address.
+   - **Allowed:** an asset qualifies only if all of these hold:
+     - its type is in `VulnHub_Tenable_Schedules::RESCAN_ASSET_TYPES`
+       (`workstation`). This is a constant, not a setting.
+     - it is not agent-based (`has_agent = 0`)
+     - it is known to Tenable and has an FQDN or IPv4
+   - **Checked twice** by `VulnHub_Tenable_Ticket_Check::guard_assets()`: once
+     when the job gathers asset ids, and again, re-reading those assets by id,
+     immediately before the launch. A refused asset is audited as
+     `ticket.rescan_refused`.
+   - **Servers are never rescanned from VulnHub,** whatever the ticket covers.
+     They are checked after their own scheduled scans (see below).
+   - **Agent-based machines are not rescanned either,** because an agent scan
+     cannot be narrowed to single machines.
+   - **The launch.** The Tenable connector's **Rescan with** scan is launched
+     once, with the allowed assets' addresses as `alt_targets`. That is the only
+     place an address is used, because Tenable needs one to aim the scan. The
+     job then polls `/scans/{id}/latest-status` every two minutes and moves on
+     when the scan finishes, or after four hours.
+   - **Skipped** with no scan chosen, no qualifying workstation, or when Tenable
+     refuses the launch. The panel says which.
 3. **Verify.**
    - **Finding tickets** go through `VulnHub_Tenable_Verifier::check_ticket()`.
      Scan freshness is read live from `GET /assets/{uuid}`, so a scan that
@@ -275,11 +286,41 @@ The result is stored on the ticket as `payload_json.last_check`
 replaces the rest of the payload. The list shows it in **Last check**, with
 the due date.
 
-**On the due date.** An hourly event (`vulnhub_ticket_check_due`) starts a job
-with no rescan for every ticket whose due date (`payload_json.duedate`) has
-arrived and that has not been checked on or after that date. There is no fixed
-settling period: a ticket is checked on its due date, or whenever someone
-presses Verify.
+## Automatic checks: after scheduled scans, and on the due date
+
+Automatic checks never launch a scan. Once an hour (`vulnhub_ticket_check_due`),
+`VulnHub_Tenable_Ticket_Check::run_due()`:
+
+1. Refreshes Tenable's scan list and recent run history into the option
+   `vh_tenable_schedules` (`VulnHub_Tenable_Schedules::refresh()`). Only
+   enabled scans with a repeating rule are kept.
+2. Plans every ticket that is not yet verified fixed (`plan_ticket()`),
+   counting from its last check, or from when it was raised:
+   - **After scans:** for each asset type the ticket covers, it takes the
+     schedule chosen on the Tenable connector (**Servers are scanned by** and
+     **Workstations are scanned by**). The ticket is checked at **10:00 site
+     time on the morning after** that schedule's next run. For example, a
+     Tuesday 09:00 run is checked on Wednesday at 10:00.
+   - **On the due date:** at 10:00 on that date.
+3. Starts one job, with no rescan, for every ticket whose moment has come.
+4. Stores the next planned check as `payload_json.next_check` (`at` in UTC,
+   plus the reason), which the list shows. Sync preserves it the same way it
+   preserves `last_check`. A ticket is planned again after every check, so it
+   keeps being checked after each scheduled run until it is verified fixed.
+
+**Run times** come from the schedule's recurrence rule (`rrules`, `starttime`,
+`timezone`; daily, weekly with `BYDAY` and `INTERVAL`, and monthly with
+`BYMONTHDAY` or an ordinal `BYDAY`).
+- **Run length** is the median of completed history runs. With no real runs to
+  measure, it is taken as three hours. Agent-scan histories list rolling
+  windows under placeholder ids (`00000000-…`), and those are not measured.
+- **A real run still in progress** holds the check until it finishes.
+
+**Why the schedules are chosen rather than detected.** Two sources were tried
+and neither is reliable:
+- A machine's `last_schedule_id` names whatever scan touched it last,
+  inventory scans included, so workstations split across several schedules.
+- Agent-scan histories carry placeholder run ids that findings never carry.
 
 A check does not write to Jira itself. Whether a verification comments on or
 reopens an issue is still the Jira connector's own setting.

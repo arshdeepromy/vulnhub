@@ -39,6 +39,7 @@ add_action(
 		require_once VULNHUB_TENABLE_DIR . 'includes/class-vh-tenable-mock.php';
 		require_once VULNHUB_TENABLE_DIR . 'includes/class-vh-tenable-connector.php';
 		require_once VULNHUB_TENABLE_DIR . 'includes/class-vh-tenable-verifier.php';
+		require_once VULNHUB_TENABLE_DIR . 'includes/class-vh-tenable-schedules.php';
 		require_once VULNHUB_TENABLE_DIR . 'includes/class-vh-tenable-ticket-check.php';
 
 		$connectors->register( new VulnHub_Tenable_Connector() );

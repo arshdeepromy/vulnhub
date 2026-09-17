@@ -2768,7 +2768,7 @@ document.addEventListener( 'click', function ( e ) {
 		if ( one ) {
 			start( { ids: [ parseInt( one.getAttribute( 'data-vh-check' ), 10 ) ], rescan: true }, 'Starting the check…' );
 		} else if ( all ) {
-			if ( ! window.confirm( 'Verify every ticket that is not yet verified fixed? This launches one Tenable rescan of their network-scanned hosts.' ) ) {
+			if ( ! window.confirm( 'Verify every ticket that is not yet verified fixed? This launches one Tenable rescan of their network-scanned workstations; servers are never rescanned.' ) ) {
 				return;
 			}
 			start( { all: true, rescan: true }, 'Starting the check…' );
