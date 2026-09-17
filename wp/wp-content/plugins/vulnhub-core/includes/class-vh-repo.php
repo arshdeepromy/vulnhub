@@ -2888,7 +2888,13 @@ final class Repo {
 	 * Needs findings (`$f`) and vulns (`$v`) joined.
 	 */
 	public static function component_sql( string $f = 'f', string $v = 'v' ): string {
-		return "( {$v}.product_kind IN ( 'library', 'application' ) AND {$f}.bundle_app_slug <> '' AND {$f}.bundle_app_slug <> {$v}.product_slug )";
+		// One slug containing the other is the same product under a shorter
+		// name, not a bundle: "chrome" / google-chrome, "java" / oracle-java-se,
+		// "adobe" / adobe-acrobat. Slugs under four characters never count as
+		// contained, so a stray short name cannot swallow a real bundle.
+		return "( {$v}.product_kind IN ( 'library', 'application' ) AND {$f}.bundle_app_slug <> '' AND {$f}.bundle_app_slug <> {$v}.product_slug"
+			. " AND NOT ( CHAR_LENGTH( {$f}.bundle_app_slug ) >= 4 AND LOCATE( {$f}.bundle_app_slug, {$v}.product_slug ) > 0 )"
+			. " AND NOT ( CHAR_LENGTH( {$v}.product_slug ) >= 4 AND LOCATE( {$v}.product_slug, {$f}.bundle_app_slug ) > 0 ) )";
 	}
 
 	/**
@@ -2907,7 +2913,12 @@ final class Repo {
 		$app  = (string) ( $row['bundle_app_slug'] ?? '' );
 		$own  = (string) ( $row['product_slug'] ?? \VH_Product::slug( (string) ( $row['product'] ?? '' ) ) );
 
-		return in_array( $kind, array( 'library', 'application' ), true ) && '' !== $app && $app !== $own;
+		if ( ! in_array( $kind, array( 'library', 'application' ), true ) || '' === $app || $app === $own ) {
+			return false;
+		}
+
+		// Same containment rule as component_sql().
+		return ! ( strlen( $app ) >= 4 && str_contains( $own, $app ) ) && ! ( strlen( $own ) >= 4 && str_contains( $app, $own ) );
 	}
 
 	/**
@@ -2961,6 +2972,7 @@ final class Repo {
 
 		if ( 'none' === $route ) {
 			return array(
+				'verdict' => '',
 				'route' => 'none',
 				'label' => self::fix_route_labels()['none'],
 				'short' => __( 'No fix known', 'vulnhub' ),
@@ -2972,6 +2984,7 @@ final class Repo {
 
 		if ( 'direct' === $route ) {
 			return array(
+				'verdict' => '',
 				'route' => 'direct',
 				'label' => self::fix_route_labels()['direct'],
 				'short' => __( 'Patch available', 'vulnhub' ),
@@ -2981,7 +2994,7 @@ final class Repo {
 		}
 
 		$installed = preg_match( '/Installed version\s*:\s*([^\r\n]+)/i', $output, $m ) ? trim( $m[1] ) : '';
-		$fixed     = preg_match( '/Fixed version\s*:\s*([^\r\n]+)/i', $output, $m ) ? trim( $m[1] ) : '';
+		$fixed     = preg_match( '/Fixed version\s*:\s*[^\r\n]*?(\d+(?:\.\d+)+)/i', $output, $m ) ? $m[1] : '';
 		$path      = \VH_Product::install_path( $output );
 		$copies    = preg_match_all( '/^\s*Path\s*:/mi', $output );
 
@@ -2999,7 +3012,18 @@ final class Repo {
 			$why .= sprintf( __( "Tenable's fix is for %1\$s itself: %2\$s", 'vulnhub' ), '' !== $product ? $product : __( 'the component', 'vulnhub' ), implode( ' · ', $tenable ) ) . ( '' !== $fixed ? sprintf( /* translators: %s: version. */ __( ' (fixed in %s)', 'vulnhub' ), $fixed ) : '' ) . '. ';
 		}
 		/* translators: %s: application. */
-		$why .= sprintf( __( 'That release only reaches this machine through an update to %s. If it is already on the latest version, its vendor has not shipped the fixed component yet: remove the component or record an exception.', 'vulnhub' ), $app );
+		$why .= sprintf( __( 'That release only reaches this machine through an update to %s.', 'vulnhub' ), $app );
+
+		// Whether that application's vendor has shipped it, from the estate
+		// (App_Fix: a fixed copy seen at the same path, or resolved in place).
+		$verdict = (string) ( $row['app_fix'] ?? '' );
+		$note    = trim( (string) ( $row['app_fix_note'] ?? '' ) );
+
+		if ( '' !== $note ) {
+			$why .= ' ' . $note;
+		} else {
+			$why .= ' ' . __( 'If it is already on the latest version, its vendor has not shipped the fixed component yet: remove the component or record an exception.', 'vulnhub' );
+		}
 
 		if ( $copies > 1 ) {
 			/* translators: %d: number of copies. */
@@ -3007,11 +3031,18 @@ final class Repo {
 		}
 
 		return array(
-			'route' => 'app',
-			'label' => self::fix_route_labels()['app'],
-			/* translators: %s: application. */
-			'short' => sprintf( __( 'Update %s', 'vulnhub' ), $app ),
-			'why'   => $why,
+			'route'   => 'app',
+			'verdict' => $verdict,
+			'label'   => self::fix_route_labels()['app'],
+			'short'   => match ( $verdict ) {
+				/* translators: %s: application. */
+				App_Fix::SHIPPED  => sprintf( __( 'Update %s (fixed build seen)', 'vulnhub' ), $app ),
+				/* translators: %s: application. */
+				App_Fix::NOT_SEEN => sprintf( __( 'Update %s: no fixed build seen yet', 'vulnhub' ), $app ),
+				/* translators: %s: application. */
+				default           => sprintf( __( 'Update %s', 'vulnhub' ), $app ),
+			},
+			'why'     => $why,
 		);
 	}
 
@@ -3879,6 +3910,10 @@ final class Repo {
 				$where[] = '( ' . self::patch_sql( 'v' ) . ' AND NOT ' . self::component_sql( 'f', 'v' ) . ' )';
 			} elseif ( 'app' === $pa ) {
 				$where[] = '( ' . self::patch_sql( 'v' ) . ' AND ' . self::component_sql( 'f', 'v' ) . ' )';
+			} elseif ( in_array( $pa, array( 'app_shipped', 'app_waiting', 'app_unknown' ), true ) ) {
+				// The app route narrowed by the vendor-fix evidence (App_Fix).
+				$verdict = array( 'app_shipped' => App_Fix::SHIPPED, 'app_waiting' => App_Fix::NOT_SEEN, 'app_unknown' => App_Fix::UNKNOWN )[ $pa ];
+				$where[] = '( ' . self::patch_sql( 'v' ) . ' AND ' . self::component_sql( 'f', 'v' ) . " AND f.app_fix = '" . $verdict . "' )";
 			} else {
 				$want    = in_array( $pa, array( '1', 'yes', 'true' ), true );
 				$where[] = ( $want ? '' : 'NOT ' ) . self::patch_sql( 'v' );

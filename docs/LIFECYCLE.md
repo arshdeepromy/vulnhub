@@ -59,6 +59,69 @@ So findings with a fix are split by route (`Repo::fix_route_sql()` / `fix_route(
 OS packages are not components: their `bundle_app` is the source package, which
 is the thing to update.
 
+**Same product, shorter name.** If either slug contains the other, the finding
+is the same product under a shorter name, not a bundle: `chrome` and
+`google-chrome`, `java` and `oracle-java-se`, `adobe` and `adobe-acrobat`,
+`curl` and `libcurl`. Slugs shorter than four characters never count as
+contained. That moved 1,989 open findings from "update the app" to "patch
+available".
+
+### Has the application's vendor shipped it? (`VulnHub\Core\App_Fix`)
+
+"Update the app" still leaves one question open: will updating fix it? Tenable
+knows the component's fixed release, not whether the application's vendor has
+shipped a build carrying it. The estate knows, from two signals.
+
+1. **A newer copy at the same place.** Every open library or application
+   finding lists the copies Tenable found, each with a path and an installed
+   version (`App_Fix::copies()`).
+   - **Path key** (`path_key()`): the path is lower-cased, with the user
+     profile folder and version-number folders wildcarded. It identifies "this
+     component inside this application" across machines.
+   - If any machine has the copy at that key at or above the finding's fixed
+     version, a fixed build exists.
+2. **Resolved in place.** The same vulnerability, at the same path key (read
+   from the resolved finding's last output), was fixed in the last 365 days on
+   a machine that:
+   - is still in the reporting estate, and
+   - still has open findings in the same application, so the application was
+     updated rather than removed.
+
+   Resolutions where the application no longer shows are mentioned in the note
+   but prove nothing.
+
+**Verdicts,** stored on each open component finding in `findings.app_fix`,
+with the reason in `app_fix_note`:
+
+| `app_fix` | Chip | Meaning |
+|---|---|---|
+| `shipped` | Update X (fixed build seen) | signal 1 or 2: updating the application fixes it |
+| `not_seen` | Update X: no fixed build seen yet | the newest copy at that path is below the fixed version and nothing was resolved there: remove the component, add a control, or record an exception |
+| `unknown` | Update X | no version at that path to compare and nothing resolved |
+
+`not_seen` means *not seen*, not *does not exist*. A copy with no vulnerability
+at all never appears in a finding, so signal 1 cannot observe a clean build;
+signal 2 is what catches that case.
+
+- **When:** recomputed in the background two minutes after every Tenable sync
+  (`vulnhub_app_fix_recompute`), or on demand with `wp vulnhub app-fix
+  [--dry-run]`. It takes about 5 seconds on this estate.
+- **Clean-up:** it clears the verdict on anything that is no longer an open
+  component finding, and busts the findings widgets when anything changed.
+- **Filter:** `patch_available=app_shipped | app_waiting | app_unknown` narrows
+  the app route. The three add up to `app`, and each agrees between the list
+  and the export.
+- **Evidence:** `Repo::fix_evidence()` appends the note to the "why" text, so
+  it appears on the finding row, in the CSV's *Why* column and in the chip
+  colour (green, red or amber).
+- **Jira:** the remediation bullets say, per application, whether a fixed build
+  has been seen, not seen, or seen for some of the findings.
+
+On this estate: 7,738 shipped, 5,182 not seen, 2,719 unknown. For example,
+Power BI Desktop's BigQuery ODBC driver still carries libcurl 7.84.0 on every
+machine (not seen), while its DocumentDB driver is at 8.4.0 or later on 27
+machines (shipped).
+
 **How big the split is.** On this estate, 457 of 1,787 "patchable" critical
 findings, and 818 of 3,019 high, go through another application's update.
 

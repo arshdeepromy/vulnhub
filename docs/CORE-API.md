@@ -442,7 +442,7 @@ Seven classes, and **the first one that matches wins**:
 | Class | Means | Rule |
 |---|---|---|
 | `excepted` | Accepted risk | the finding carries an `exception_id` |
-| `update_app` | Update the application that ships it | as `patch`, and the finding is a component shipped inside another application (`Repo::component_sql()`; see `docs/LIFECYCLE.md`) |
+| `update_app` | Update the application that ships it | as `patch`, and the finding is a component shipped inside another application (`Repo::component_sql()`; whether its vendor has shipped the fix is `findings.app_fix`, see `App_Fix` in `docs/LIFECYCLE.md`) |
 | `patch` | Schedule it | a patch publication date, or solution text instructing an upgrade |
 | `remove` | Uninstall it | no vendor fix; the solution says remove or uninstall |
 | `config` | A setting or GPO | no vendor fix; the solution says disable, registry, group policy, configure or setting |

@@ -2133,11 +2133,13 @@ final class VulnHub_Jira_Ticketer {
 		 * which applications carry them, so the fix is asked of the right
 		 * vendor.
 		 */
-		$bundled = array();
+		$bundled  = array();
+		$verdicts = array();
 
 		foreach ( $rows as $row ) {
 			if ( 'app' === \VulnHub\Core\Repo::fix_route( $row ) ) {
 				$bundled[ (string) $row['bundle_app'] ][ (string) ( $row['product'] ?? '' ) ] = true;
+				$verdicts[ (string) $row['bundle_app'] ][ (string) ( $row['app_fix'] ?? '' ) ] = true;
 			}
 		}
 
@@ -2152,7 +2154,13 @@ final class VulnHub_Jira_Ticketer {
 						__( 'Update %1$s (ships %2$s)', 'vulnhub' ),
 						$app,
 						implode( ', ', array_filter( array_keys( $components ) ) )
-					),
+					) . match ( true ) {
+						// From the estate: has this application's vendor shipped it?
+						array_keys( $verdicts[ $app ] ?? array() ) === array( \VulnHub\Core\App_Fix::SHIPPED ) => ' ' . __( '— a fixed build has already been seen on other machines', 'vulnhub' ),
+						array_keys( $verdicts[ $app ] ?? array() ) === array( \VulnHub\Core\App_Fix::NOT_SEEN ) => ' ' . __( '— no fixed build seen yet: updating may not resolve this; consider removing the component or an exception', 'vulnhub' ),
+						isset( $verdicts[ $app ][ \VulnHub\Core\App_Fix::SHIPPED ] ) && isset( $verdicts[ $app ][ \VulnHub\Core\App_Fix::NOT_SEEN ] ) => ' ' . __( '— a fixed build has been seen for some of these, not all', 'vulnhub' ),
+						default => '',
+					},
 					array_keys( array_slice( $bundled, 0, 15, true ) ),
 					array_values( array_slice( $bundled, 0, 15, true ) )
 				)
@@ -2659,7 +2667,7 @@ final class VulnHub_Jira_Ticketer {
 		$sql = 'SELECT
 				f.id, f.severity, f.state, f.port, f.protocol, f.service, f.risk_score,
 				f.first_found, f.last_found, f.due_at, f.ticket_id, f.exception_id,
-				f.bundle_app, f.bundle_app_slug,
+				f.bundle_app, f.bundle_app_slug, f.app_fix,
 				a.id AS asset_id, a.hostname, a.fqdn, a.ipv4, a.asset_type,
 				a.operating_system, a.os_version, a.criticality, a.environment,
 				a.business_service, a.team_id, a.owner_person_id, a.location_id, a.tags_json,

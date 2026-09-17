@@ -20,7 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 define( 'VULNHUB_VERSION', '1.0.0' );
-define( 'VULNHUB_DB_VERSION', '28' );
+define( 'VULNHUB_DB_VERSION', '29' );
 define( 'VULNHUB_FILE', __FILE__ );
 define( 'VULNHUB_DIR', plugin_dir_path( __FILE__ ) );
 define( 'VULNHUB_URL', plugin_dir_url( __FILE__ ) );
@@ -128,6 +128,7 @@ final class VulnHub_Core {
 
 		$this->scheduler->hooks();
 		( new \VulnHub\Core\Mapping() )->hooks();
+		( new \VulnHub\Core\App_Fix() )->hooks();
 	}
 
 	public function on_plugins_loaded(): void {
@@ -192,6 +193,15 @@ register_deactivation_hook(
  * is how existing data catches up with a new alias.
  */
 if ( defined( 'WP_CLI' ) && WP_CLI ) {
+	WP_CLI::add_command(
+		'vulnhub app-fix',
+		static function ( array $args, array $assoc ): void {
+			$stats = \VulnHub\Core\App_Fix::recompute( ! isset( $assoc['dry-run'] ) );
+			unset( $stats['samples'] );
+			WP_CLI::success( wp_json_encode( $stats ) );
+		}
+	);
+
 	WP_CLI::add_command(
 		'vulnhub classify-apps',
 		static function ( array $args, array $assoc ): void {

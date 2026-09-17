@@ -2754,3 +2754,6 @@ dialog.vh-review[open] { display: flex; }
 .vh-fixroute--direct { color: var(--vh-good); border-color: color-mix(in srgb, var(--vh-good) 45%, transparent); }
 .vh-fixroute--app { color: var(--vh-sev-medium); border-color: color-mix(in srgb, var(--vh-sev-medium) 45%, transparent); }
 .vh-fixroute--none { color: var(--vh-muted); }
+/* ...and whether the application's vendor has shipped the fix (App_Fix) */
+.vh-fixroute--app.vh-fixroute--shipped { color: var(--vh-good); border-color: color-mix(in srgb, var(--vh-good) 45%, transparent); }
+.vh-fixroute--app.vh-fixroute--not_seen { color: var(--vh-bad); border-color: color-mix(in srgb, var(--vh-bad) 45%, transparent); }

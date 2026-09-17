@@ -1281,6 +1281,9 @@ final class VulnHub_Dash_App {
 					match ( true ) {
 						'direct' === $vh_patch => __( 'Showing only findings with a vendor update for the vulnerable software itself.', 'vulnhub' ),
 						'app' === $vh_patch    => __( 'Showing only findings in components shipped inside another application (such as a library in a driver folder). Tenable\'s fix is for the component; it arrives through an update to that application, if its vendor has shipped one.', 'vulnhub' ),
+						'app_shipped' === $vh_patch => __( 'Showing components shipped inside another application where a fixed build has been seen in the estate (a fixed copy at the same path, or resolved on machines that kept the application): updating the application fixes these.', 'vulnhub' ),
+						'app_waiting' === $vh_patch => __( 'Showing components shipped inside another application where no fixed build has been seen: the newest copy at that path is still vulnerable and nothing has been resolved. Updating will likely not help yet; remove the component, add a compensating control or record an exception.', 'vulnhub' ),
+						'app_unknown' === $vh_patch => __( 'Showing components shipped inside another application where the estate gives no evidence either way.', 'vulnhub' ),
 						in_array( $vh_patch, array( '1', 'yes', 'true' ), true ) => __( 'Showing findings with a fix: a direct vendor update, or an update to the application that ships the component.', 'vulnhub' ),
 						default                => __( 'Showing only findings with no known fix. These cannot be patched; they need a compensating control, an exception or a decommission.', 'vulnhub' ),
 					}
@@ -1369,6 +1372,9 @@ final class VulnHub_Dash_App {
 					<option value=""><?php esc_html_e( 'Any', 'vulnhub' ); ?></option>
 					<option value="direct" <?php selected( self::q( 'patch_available' ), 'direct' ); ?>><?php esc_html_e( 'Patch available', 'vulnhub' ); ?></option>
 					<option value="app" <?php selected( self::q( 'patch_available' ), 'app' ); ?>><?php esc_html_e( 'Update the app that ships it', 'vulnhub' ); ?></option>
+					<option value="app_shipped" <?php selected( self::q( 'patch_available' ), 'app_shipped' ); ?>><?php esc_html_e( '… and a fixed build has been seen', 'vulnhub' ); ?></option>
+					<option value="app_waiting" <?php selected( self::q( 'patch_available' ), 'app_waiting' ); ?>><?php esc_html_e( '… but no fixed build seen yet', 'vulnhub' ); ?></option>
+					<option value="app_unknown" <?php selected( self::q( 'patch_available' ), 'app_unknown' ); ?>><?php esc_html_e( '… not enough evidence', 'vulnhub' ); ?></option>
 					<option value="1" <?php selected( self::q( 'patch_available' ), '1' ); ?>><?php esc_html_e( 'Any fix (either of the above)', 'vulnhub' ); ?></option>
 					<option value="0" <?php selected( self::q( 'patch_available' ), '0' ); ?>><?php esc_html_e( 'No fix known', 'vulnhub' ); ?></option>
 				</select>
@@ -2347,7 +2353,7 @@ final class VulnHub_Dash_App {
 					<?php if ( ! empty( $f['exploit_available'] ) ) : ?>· <span class="vh-flag"><?php esc_html_e( 'exploit available', 'vulnhub' ); ?></span><?php endif; ?>
 				</span>
 				<?php $vh_ev = Repo::fix_evidence( $f ); ?>
-				<span class="vh-fixroute vh-fixroute--<?php echo esc_attr( $vh_ev['route'] ); ?>" data-vh-tip="<?php echo esc_attr( $vh_ev['why'] ); ?>"><?php echo esc_html( $vh_ev['short'] ); ?></span>
+				<span class="vh-fixroute vh-fixroute--<?php echo esc_attr( $vh_ev['route'] ); ?><?php echo '' !== $vh_ev['verdict'] ? ' vh-fixroute--' . esc_attr( $vh_ev['verdict'] ) : ''; ?>" data-vh-tip="<?php echo esc_attr( $vh_ev['why'] ); ?>"><?php echo esc_html( $vh_ev['short'] ); ?></span>
 				<?php
 				/*
 				 * What the scanner actually says, in the row rather than a
