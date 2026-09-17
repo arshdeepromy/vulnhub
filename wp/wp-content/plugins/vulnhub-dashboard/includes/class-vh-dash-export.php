@@ -1060,6 +1060,8 @@ final class VulnHub_Dash_Export {
 				 */
 				'ids'             => self::get( 'ids' ),
 				'patch_available' => self::get( 'patch_available' ),
+				// On a ticket or not, from the "raised vs not raised" report.
+				'has_ticket'      => self::get( 'has_ticket' ),
 				// The action class and the exception scope, for the same
 				// reason as every other filter here: read them back or the
 				// file quietly holds more rows than the screen counted.
@@ -1300,6 +1302,8 @@ final class VulnHub_Dash_Export {
 				'route'           => self::get( 'route' ),
 				'poc'             => self::get( 'poc' ),
 				'patch_available' => self::get( 'patch_available' ),
+				// On a ticket or not, from the "raised vs not raised" report.
+				'has_ticket'      => self::get( 'has_ticket' ),
 				// The action class and the exception scope, for the same
 				// reason as every other filter here: read them back or the
 				// file quietly holds more rows than the screen counted.

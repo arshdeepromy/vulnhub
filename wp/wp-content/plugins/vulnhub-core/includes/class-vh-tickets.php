@@ -345,6 +345,10 @@ final class Tickets {
 		if ( isset( $args['open'] ) && $args['open'] ) {
 			$where[] = "status_category <> 'done'";
 		}
+		if ( isset( $args['ids'] ) && is_array( $args['ids'] ) ) {
+			$ids     = array_values( array_filter( array_map( 'intval', $args['ids'] ) ) );
+			$where[] = $ids ? 'id IN (' . implode( ',', $ids ) . ')' : '1=0';
+		}
 
 		$where_sql = implode( ' AND ', $where );
 

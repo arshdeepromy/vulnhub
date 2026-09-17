@@ -13,6 +13,74 @@ Two kinds of ticket share `vulnhub_tickets`:
 The kinds come from `Tickets::kinds()` (filter `vulnhub_ticket_kinds`). Each one
 names the test that decides whether an asset's ask has been met.
 
+## The report at the top of the Tickets page
+
+`VulnHub_Dash_Ticket_Report` draws two panels above the ticket list.
+
+### Raised vs not raised
+
+This panel covers open findings (`open`, `reopened`) on reporting-scope assets,
+with accepted risk excluded. They are grouped by severity, patch availability
+(`Repo::patch_sql()`) and whether the finding is on a ticket (`ticket_id > 0`).
+
+- **Controls:**
+  - Severity checkboxes: `cov_c`, `cov_h`, `cov_m`, `cov_l`, plus `cov=1`.
+    The default is critical and high.
+  - Patch: `cov_patch` = `yes`, `no` or `both`.
+
+  Both apply on change, and a `<noscript>` button covers browsers without
+  scripting.
+- **Every number is a link** to the Vulnerabilities list holding exactly those
+  rows: `severity`, `state=open_any`, `excepted=exclude`, `patch_available`,
+  and `ticketed=yes|no`.
+- **The `ticketed` filter** is new on that list. It has a *Ticket* select and a
+  banner, travels as `has_ticket` in `Repo::findings()`, and is on both export
+  allow-lists. The CSV export and "Select all matching" (which drafts a ticket)
+  therefore hold the same rows the number counted.
+- **Checked:** all 24 severity × patch × raised combinations were compared
+  between the widget, the list total and the export scope. They agree.
+- **Raising from it:** open a *not raised* number, select rows (or all
+  matching, up to 500), then **Raise ticket for selected**.
+- **Caching:** counts are cached for an hour. The cache key includes the widget
+  epoch (moved by syncs and imports) and the size of `ticket_findings` (moved by
+  every raise).
+- **Asset counts:** when *Both* is chosen, the asset count is shown as "≤",
+  because a machine can have patchable and unpatchable findings.
+
+### Ticket report
+
+Built from `facts()`: one row per ticket that has a key.
+
+- **Severity:** the finding ticket's severity from its payload, otherwise the
+  highest severity among its findings. Asset requests are grouped separately.
+- **SLA:** the ticket's due date, ending at 23:59 site time on that day.
+  - **Met:** closed by then.
+  - **Closed late:** closed after it.
+  - **Overdue:** still open after it.
+  - **On track:** open and not yet due.
+- **Time to resolve:** from when the ticket was recorded to its closure in Jira
+  (`remote_closed_at`).
+
+The panel shows:
+- **Tiles:** failed SLA (overdue plus closed late), median time to resolve, and
+  the critical median against the critical SLA.
+- **SLA outcome by severity.** Each segment links to the Tickets list with
+  `sla` and `tsev`. That filter is applied by id (`Tickets::query( ids )`) and
+  explained in a banner.
+- **Time to resolve** by severity, in the bands ≤7, 8–30, 31–90 and >90 days,
+  with the median and average.
+- **Critical tickets:** days taken, with the SLA marked. Open tickets and those
+  closed in the last 90 days are included, longest first, top 25.
+- **Raised vs resolved per week** for the last 12 weeks.
+
+**CSV:** `admin-post.php?action=vulnhub_ticket_report_csv&set=coverage|tickets`
+needs a nonce and `vulnhub_view`, and is audited as `export.ticket_report`.
+- `coverage` has one row per severity × patch × raised, with its list link.
+- `tickets` has one row per ticket: dates, SLA days, days open or to resolve,
+  SLA outcome, days past due, verification, and counts.
+- Both files have a BOM, and cells that could be read as formulas are
+  neutralised.
+
 ## Raising a vulnerability ticket: review, then send
 
 A person pressing **Ticket** or **Raise ticket for selected** gets **exactly one

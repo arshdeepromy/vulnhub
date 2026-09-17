@@ -1109,7 +1109,7 @@ final class VulnHub_Dash_App {
 		 */
 		$vh_tab       = in_array( self::q( 'tab' ), array( 'products', 'vuln_assets' ), true ) ? self::q( 'tab' ) : 'findings';
 		$vh_tab_carry = self::current_filters( array(
-			'search', 'patch_available', 'support', 'severity', 'asset_type', 'team_id', 'department',
+			'search', 'patch_available', 'ticketed', 'support', 'severity', 'asset_type', 'team_id', 'department',
 			'age', 'overdue', 'life', 'product', 'zone', 'platform', 'sev_not', 'route',
 			'delivery', 'poc', 'hosting', 'asset', 'state', 'orderby', 'order', 'location_id',
 		) );
@@ -1216,7 +1216,7 @@ final class VulnHub_Dash_App {
 			);
 			?>
 			<?php if ( 'all' !== $vh_vscope_now ) : ?>
-				<a href="<?php echo esc_url( self::page_url( 'vulnerabilities', array_merge( self::current_filters( array( 'search', 'patch_available', 'severity', 'asset_type', 'team_id', 'age', 'overdue' ) ), array( 'life' => 'all' ) ) ) ); ?>">
+				<a href="<?php echo esc_url( self::page_url( 'vulnerabilities', array_merge( self::current_filters( array( 'search', 'patch_available', 'ticketed', 'severity', 'asset_type', 'team_id', 'age', 'overdue' ) ), array( 'life' => 'all' ) ) ) ); ?>">
 					<?php esc_html_e( 'Include every asset', 'vulnhub' ); ?>
 				</a>
 			<?php endif; ?>
@@ -1286,6 +1286,19 @@ final class VulnHub_Dash_App {
 				<a href="<?php echo esc_url( remove_query_arg( 'patch_available' ) ); ?>"><?php esc_html_e( 'Clear this filter', 'vulnhub' ); ?></a>
 			</div>
 		<?php endif; ?>
+		<?php $vh_ticketed = self::q( 'ticketed' ); ?>
+		<?php if ( in_array( $vh_ticketed, array( 'yes', 'no' ), true ) ) : ?>
+			<div class="vh-notice vh-notice--info">
+				<?php
+				echo esc_html(
+					'no' === $vh_ticketed
+						? __( 'Showing only findings not yet on a ticket. Select them (or "Select all matching") and raise a ticket.', 'vulnhub' )
+						: __( 'Showing only findings already on a ticket.', 'vulnhub' )
+				);
+				?>
+				<a href="<?php echo esc_url( remove_query_arg( 'ticketed' ) ); ?>"><?php esc_html_e( 'Clear this filter', 'vulnhub' ); ?></a>
+			</div>
+		<?php endif; ?>
 		<?php $vh_support = self::q( 'support' ); ?>
 		<?php if ( in_array( $vh_support, array( 'eol', 'insupport' ), true ) ) : ?>
 			<div class="vh-notice vh-notice--info">
@@ -1313,7 +1326,7 @@ final class VulnHub_Dash_App {
 			 * servers threw the libcurl part away.
 			 */
 			self::hidden_filters(
-				array( 'search', 'fix', 'excepted', 'patch_available', 'support', 'severity', 'asset_type', 'team_id', 'department', 'age', 'overdue', 'life' )
+				array( 'search', 'fix', 'excepted', 'patch_available', 'ticketed', 'support', 'severity', 'asset_type', 'team_id', 'department', 'age', 'overdue', 'life' )
 			);
 			?>
 			<label><?php esc_html_e( 'Search', 'vulnhub' ); ?>
@@ -1340,6 +1353,13 @@ final class VulnHub_Dash_App {
 					<option value=""><?php esc_html_e( 'Any', 'vulnhub' ); ?></option>
 					<option value="1" <?php selected( self::q( 'patch_available' ), '1' ); ?>><?php esc_html_e( 'Patch available', 'vulnhub' ); ?></option>
 					<option value="0" <?php selected( self::q( 'patch_available' ), '0' ); ?>><?php esc_html_e( 'No patch available', 'vulnhub' ); ?></option>
+				</select>
+			</label>
+			<label><?php esc_html_e( 'Ticket', 'vulnhub' ); ?>
+				<select name="ticketed">
+					<option value=""><?php esc_html_e( 'Raised or not', 'vulnhub' ); ?></option>
+					<option value="no" <?php selected( self::q( 'ticketed' ), 'no' ); ?>><?php esc_html_e( 'Not raised', 'vulnhub' ); ?></option>
+					<option value="yes" <?php selected( self::q( 'ticketed' ), 'yes' ); ?>><?php esc_html_e( 'On a ticket', 'vulnhub' ); ?></option>
 				</select>
 			</label>
 			<label><?php esc_html_e( 'Lifecycle support', 'vulnhub' ); ?>
@@ -1422,7 +1442,7 @@ final class VulnHub_Dash_App {
 				<?php
 				$vh_pmax = max( 1, (int) $vh_prows[0]['assets'] );
 				$vh_pcar = self::current_filters( array(
-					'search', 'patch_available', 'severity', 'asset_type', 'team_id', 'department',
+					'search', 'patch_available', 'ticketed', 'severity', 'asset_type', 'team_id', 'department',
 					'age', 'overdue', 'life', 'zone', 'platform', 'sev_not', 'route', 'delivery',
 					'poc', 'hosting', 'asset', 'state',
 				) );
@@ -2192,6 +2212,13 @@ final class VulnHub_Dash_App {
 			'search'     => self::q( 'search' ),
 			'overdue'    => self::q( 'overdue' ),
 			'patch_available' => self::q( 'patch_available' ),
+			// On a ticket or not: `ticketed` on the wire (yes|no), because
+			// `ticket` already names the ticket page's own parameter.
+			'has_ticket' => match ( self::q( 'ticketed' ) ) {
+				'yes'   => '1',
+				'no'    => '0',
+				default => '',
+			},
 			/*
 			 * `fix` on the wire, `action` in the repository. `action` is
 			 * WordPress's own parameter on admin-post.php, and the export
@@ -3628,12 +3655,16 @@ final class VulnHub_Dash_App {
 			return;
 		}
 
-		$s     = Repo::summary();
-		$per   = 25;
-		$paged = max( 1, self::qi( 'tp', 1 ) );
-		$q     = Tickets::query(
+		$s       = Repo::summary();
+		$per     = 25;
+		$paged   = max( 1, self::qi( 'tp', 1 ) );
+		$vh_sla  = in_array( self::q( 'sla' ), array( 'met', 'on_track', 'breached', 'overdue', 'no_due' ), true ) ? self::q( 'sla' ) : '';
+		$vh_tsev = in_array( self::q( 'tsev' ), array( 'critical', 'high', 'medium', 'low', 'asset' ), true ) ? self::q( 'tsev' ) : '';
+		$vh_ids  = VulnHub_Dash_Ticket_Report::ids_for( $vh_sla, $vh_tsev );
+		$q       = Tickets::query(
 			array_filter(
 				array(
+					'ids'                => $vh_ids,
 					'status_category'    => self::q( 'status_category' ),
 					'verification_state' => self::q( 'verification_state' ),
 					'kind'               => self::q( 'kind' ),
@@ -3641,7 +3672,7 @@ final class VulnHub_Dash_App {
 					'limit'              => $per,
 					'offset'             => ( $paged - 1 ) * $per,
 				),
-				static fn( $v ): bool => '' !== $v
+				static fn( $v ): bool => '' !== $v && null !== $v
 			)
 		);
 		$pages = max( 1, (int) ceil( (int) $q['total'] / $per ) );
@@ -3653,6 +3684,10 @@ final class VulnHub_Dash_App {
 			</div>
 		</div>
 
+		<?php VulnHub_Dash_Ticket_Report::render_coverage(); ?>
+		<?php VulnHub_Dash_Ticket_Report::render_report(); ?>
+
+		<h2 class="vh-trep__listhead" id="vh-ticket-list"><?php esc_html_e( 'All tickets', 'vulnhub' ); ?></h2>
 		<section class="vh-tiles">
 			<?php
 			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Open', 'vulnhub' ), 'value' => (int) $s['tickets_open'], 'tone' => 'neutral' ) ); // phpcs:ignore
@@ -3661,6 +3696,23 @@ final class VulnHub_Dash_App {
 			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Closed but still detected', 'vulnhub' ), 'value' => (int) $s['verify_failed'], 'tone' => (int) $s['verify_failed'] > 0 ? 'critical' : 'good', 'meta' => __( 'the scanner disagrees', 'vulnhub' ) ) ); // phpcs:ignore
 			?>
 		</section>
+
+		<?php if ( '' !== $vh_sla || '' !== $vh_tsev ) : ?>
+			<div class="vh-notice vh-notice--info">
+				<?php
+				$vh_parts = array();
+				if ( '' !== $vh_tsev ) {
+					$vh_parts[] = 'asset' === $vh_tsev ? __( 'asset requests', 'vulnhub' ) : sprintf( /* translators: %s: severity. */ __( '%s tickets', 'vulnhub' ), strtolower( vh_severity_label( $vh_tsev ) ) );
+				}
+				if ( '' !== $vh_sla ) {
+					$vh_parts[] = strtolower( VulnHub_Dash_Ticket_Report::sla_label( $vh_sla ) );
+				}
+				/* translators: %s: description of the filter. */
+				echo esc_html( sprintf( __( 'Showing %s.', 'vulnhub' ), implode( ', ', $vh_parts ) ) );
+				?>
+				<a href="<?php echo esc_url( remove_query_arg( array( 'sla', 'tsev', 'tp' ) ) ); ?>"><?php esc_html_e( 'Clear this filter', 'vulnhub' ); ?></a>
+			</div>
+		<?php endif; ?>
 
 		<form class="vh-filters" method="get">
 			<?php self::hidden_filters( array( 'search', 'status_category', 'verification_state', 'kind' ) ); ?>

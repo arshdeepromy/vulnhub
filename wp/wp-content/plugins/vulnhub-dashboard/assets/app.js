@@ -2783,3 +2783,19 @@ document.addEventListener( 'click', function ( e ) {
 		poll( recalled() );
 	}
 }() );
+
+/* =====================================================================
+ * Report controls that apply on change (the Tickets page's "raised vs not
+ * raised" severity and patch choices). A <noscript> button covers no-JS.
+ * ===================================================================== */
+( function () {
+	'use strict';
+
+	document.addEventListener( 'change', function ( e ) {
+		var form = e.target.closest && e.target.closest( 'form[data-vh-autosubmit]' );
+
+		if ( form ) {
+			form.submit();
+		}
+	} );
+}() );
