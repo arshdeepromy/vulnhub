@@ -342,6 +342,144 @@ final class App_Fix {
 	}
 
 	/**
+	 * The machines behind a verdict, for a person to check: where the same copy
+	 * (same path key) is already at or above the fixed version, and where this
+	 * vulnerability at that path was resolved while the application stayed
+	 * installed. Reads the same evidence recompute() does, for one finding.
+	 *
+	 * @param array<string,mixed> $row Finding row: output, vuln_id, title, product_slug, bundle_app_slug.
+	 * @return array{path:string,installed:string,fixed:string,max:string,observed:int,newer:array<int,array<string,string>>,newer_total:int,resolved:array<int,array<string,string>>,resolved_total:int}
+	 */
+	public static function references( array $row, int $limit = 3 ): array {
+		global $wpdb;
+
+		$copy  = self::copies( (string) ( $row['output'] ?? '' ) )[0] ?? null;
+		$fixed = $copy && '' !== $copy['fixed'] ? $copy['fixed'] : self::version( \VH_Product::latest_fixed_version( array( (string) ( $row['vuln_title'] ?? $row['title'] ?? '' ) ) ) );
+		$out   = array(
+			'path'           => $copy ? $copy['path'] : '',
+			'installed'      => $copy ? $copy['installed'] : '',
+			'fixed'          => $fixed,
+			'max'            => '',
+			'observed'       => 0,
+			'newer'          => array(),
+			'newer_total'    => 0,
+			'resolved'       => array(),
+			'resolved_total' => 0,
+		);
+
+		if ( ! $copy ) {
+			return $out;
+		}
+
+		// The longest literal folder name in the key narrows the read to
+		// outputs that can contain this copy; the key itself decides.
+		$parts = array_filter( preg_split( '#[\\\\/]#', $copy['key'] ) ?: array(), static fn( string $p ): bool => '' !== $p && ! str_contains( $p, '*' ) && ! str_contains( $p, ':' ) );
+		usort( $parts, static fn( string $x, string $y ): int => strlen( $y ) <=> strlen( $x ) );
+		$needle = (string) ( $parts[0] ?? '' );
+
+		if ( '' === $needle ) {
+			return $out;
+		}
+
+		$f  = vh_table( 'findings' );
+		$v  = vh_table( 'vulns' );
+		$a  = vh_table( 'assets' );
+		$lo = vh_table( 'locations' );
+
+		$asset_cols = 'a.hostname, a.fqdn, a.ipv4, a.operating_system, a.asset_type, l.name AS location';
+
+		/* ---- same copy, other machines ---- */
+		$best = array();
+
+		foreach ( (array) $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT f.asset_id, f.output, f.last_found, {$asset_cols}
+				 FROM {$f} f
+				 INNER JOIN {$v} v ON v.id = f.vuln_id
+				 INNER JOIN {$a} a ON a.id = f.asset_id
+				 LEFT JOIN {$lo} l ON l.id = a.location_id
+				 WHERE v.product_slug = %s AND f.state IN ('open','reopened') AND LOCATE( %s, f.output ) > 0", // phpcs:ignore WordPress.DB.PreparedSQL
+				(string) ( $row['product_slug'] ?? '' ),
+				$needle
+			),
+			ARRAY_A
+		) as $r ) {
+			foreach ( self::copies( (string) $r['output'] ) as $c ) {
+				if ( $c['key'] !== $copy['key'] || '' === $c['installed'] ) {
+					continue;
+				}
+
+				$aid = (int) $r['asset_id'];
+
+				if ( ! isset( $best[ $aid ] ) || version_compare( $c['installed'], $best[ $aid ]['version'], '>' ) ) {
+					$best[ $aid ] = self::asset_ref( $r ) + array( 'version' => $c['installed'], 'path' => $c['path'], 'when' => substr( (string) $r['last_found'], 0, 10 ) );
+				}
+			}
+		}
+
+		$out['observed'] = count( $best );
+
+		foreach ( $best as $ref ) {
+			if ( '' === $out['max'] || version_compare( $ref['version'], $out['max'], '>' ) ) {
+				$out['max'] = $ref['version'];
+			}
+		}
+
+		if ( '' !== $fixed ) {
+			$newer = array_values( array_filter( $best, static fn( array $ref ): bool => version_compare( $ref['version'], $fixed, '>=' ) ) );
+			usort( $newer, static fn( array $x, array $y ): int => strcmp( $y['when'], $x['when'] ) );
+			$out['newer_total'] = count( $newer );
+			$out['newer']       = array_slice( $newer, 0, $limit );
+		}
+
+		/* ---- resolved at this path, application still installed ---- */
+		$resolved = array();
+
+		foreach ( (array) $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT f.asset_id, f.output, f.last_fixed, {$asset_cols}
+				 FROM {$f} f
+				 INNER JOIN {$a} a ON a.id = f.asset_id
+				 LEFT JOIN {$lo} l ON l.id = a.location_id
+				 WHERE f.vuln_id = %d AND f.bundle_app_slug = %s AND f.state = 'fixed' AND f.last_fixed >= %s
+				   AND a.lifecycle_status IN (" . vh_reportable_sql() . ")
+				   AND EXISTS ( SELECT 1 FROM {$f} o WHERE o.asset_id = f.asset_id AND o.bundle_app_slug = f.bundle_app_slug AND o.state IN ('open','reopened') )
+				 ORDER BY f.last_fixed DESC", // phpcs:ignore WordPress.DB.PreparedSQL
+				(int) ( $row['vuln_id'] ?? 0 ),
+				(string) ( $row['bundle_app_slug'] ?? '' ),
+				gmdate( 'Y-m-d H:i:s', time() - self::RESOLVED_DAYS * DAY_IN_SECONDS )
+			),
+			ARRAY_A
+		) as $r ) {
+			$c = self::copies( (string) $r['output'] )[0] ?? null;
+
+			if ( $c && $c['key'] === $copy['key'] && ! isset( $resolved[ (int) $r['asset_id'] ] ) ) {
+				$resolved[ (int) $r['asset_id'] ] = self::asset_ref( $r ) + array( 'version' => $c['installed'], 'path' => $c['path'], 'when' => substr( (string) $r['last_fixed'], 0, 10 ) );
+			}
+		}
+
+		$out['resolved_total'] = count( $resolved );
+		$out['resolved']       = array_slice( array_values( $resolved ), 0, $limit );
+
+		return $out;
+	}
+
+	/**
+	 * @param array<string,mixed> $r Row with asset columns.
+	 * @return array<string,string>
+	 */
+	private static function asset_ref( array $r ): array {
+		return array(
+			'hostname' => (string) $r['hostname'],
+			'fqdn'     => (string) $r['fqdn'],
+			'ipv4'     => (string) $r['ipv4'],
+			'os'       => (string) $r['operating_system'],
+			'type'     => vh_asset_type_label( (string) $r['asset_type'] ),
+			'location' => (string) ( $r['location'] ?? '' ),
+		);
+	}
+
+	/**
 	 * The copies a scanner output lists: path key, installed and fixed version.
 	 *
 	 * Tenable writes one block per copy -- "Path : …", "Installed version : …",

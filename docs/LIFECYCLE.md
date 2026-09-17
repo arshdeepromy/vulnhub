@@ -114,8 +114,23 @@ signal 2 is what catches that case.
 - **Evidence:** `Repo::fix_evidence()` appends the note to the "why" text, so
   it appears on the finding row, in the CSV's *Why* column and in the chip
   colour (green, red or amber).
-- **Jira:** the remediation bullets say, per application, whether a fixed build
-  has been seen, not seen, or seen for some of the findings.
+- **Jira:** the remediation section groups the ticket's component findings by
+  application, then by copy (component plus path key). Each copy gets one
+  bullet with:
+  - the exact path, the installed version, the fixed version and how many of
+    the ticket's findings it covers
+  - the verdict, with one reference machine as evidence:
+    - **fixed build seen:** a machine with that copy at or above the fixed
+      version, giving hostname, FQDN, IP, OS, type, site, the version at that
+      path and when it was last scanned
+    - **resolved:** a machine where it was resolved with the application still
+      installed, and the date
+    - **not seen:** the newest version at that path and how many machines carry
+      it
+
+  `App_Fix::references( $row, 1 )` reads the same evidence `recompute()` does,
+  for one finding, so the machine count in the description matches the stored
+  verdict. The description stays within 10 applications and 8 copies each.
 
 On this estate: 7,738 shipped, 5,182 not seen, 2,719 unknown. For example,
 Power BI Desktop's BigQuery ODBC driver still carries libcurl 7.84.0 on every
