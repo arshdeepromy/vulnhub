@@ -58,21 +58,27 @@ final class VulnHub_Dash_Ticket_Report {
 
 	/**
 	 * Open, non-excepted findings on reporting-scope assets, by severity,
-	 * patch availability and whether they are on a ticket.
+	 * patch availability, whether they are on a ticket, and whether the host's
+	 * operating system is end of life (Eol::eol_os_asset_ids(), the list the
+	 * Vulnerabilities page's `os_eol` filter uses).
 	 *
-	 * Cached against the widget epoch (moves on every sync and import) and
-	 * the ticket-link table (moves on every raise).
+	 * Cached against the widget epoch (moves on every sync and import), the
+	 * ticket-link table (moves on every raise) and the EOL OS list.
 	 *
-	 * @return array<string,array<int,array<int,array{findings:int,assets:int}>>> severity => patchable(1|0) => raised(1|0) => counts.
+	 * @return array<string,array<int,array<int,array<int,array{findings:int,assets:int}>>>> severity => patchable(1|0) => raised(1|0) => eol_os(1|0) => counts.
 	 */
 	public static function coverage(): array {
 		global $wpdb;
+
+		$eol_ids = array_map( 'intval', \VulnHub\Core\Eol::eol_os_asset_ids() );
+		sort( $eol_ids );
 
 		$sig = implode(
 			'|',
 			array(
 				class_exists( 'VulnHub_Dash_Widgets' ) ? VulnHub_Dash_Widgets::epoch() : '',
 				(string) $wpdb->get_var( 'SELECT CONCAT(COUNT(*), ":", COALESCE(MAX(id),0)) FROM ' . vh_table( 'ticket_findings' ) ), // phpcs:ignore WordPress.DB.PreparedSQL
+				md5( implode( ',', $eol_ids ) ),
 			)
 		);
 		$key    = 'vh_ticket_cov_' . md5( $sig );
@@ -87,6 +93,7 @@ final class VulnHub_Dash_Ticket_Report {
 			'SELECT f.severity AS severity,
 				CASE WHEN ' . $patch . ' THEN 1 ELSE 0 END AS patchable,
 				CASE WHEN f.ticket_id > 0 THEN 1 ELSE 0 END AS raised,
+				' . ( $eol_ids ? 'CASE WHEN f.asset_id IN (' . implode( ',', $eol_ids ) . ') THEN 1 ELSE 0 END' : '0' ) . ' AS eol_os,
 				COUNT(*) AS findings,
 				COUNT(DISTINCT f.asset_id) AS assets
 			 FROM ' . vh_table( 'findings' ) . ' f
@@ -94,7 +101,7 @@ final class VulnHub_Dash_Ticket_Report {
 			 INNER JOIN ' . vh_table( 'assets' ) . " a ON a.id = f.asset_id
 			 WHERE f.state IN ('open','reopened') AND f.exception_id = 0
 			   AND a.lifecycle_status IN (" . vh_reportable_sql() . ')
-			 GROUP BY f.severity, patchable, raised', // phpcs:ignore WordPress.DB.PreparedSQL
+			 GROUP BY f.severity, patchable, raised, eol_os', // phpcs:ignore WordPress.DB.PreparedSQL
 			ARRAY_A
 		);
 
@@ -103,7 +110,9 @@ final class VulnHub_Dash_Ticket_Report {
 		foreach ( self::SEVERITIES as $sev ) {
 			foreach ( array( 1, 0 ) as $p ) {
 				foreach ( array( 1, 0 ) as $r ) {
-					$out[ $sev ][ $p ][ $r ] = array( 'findings' => 0, 'assets' => 0 );
+					foreach ( array( 1, 0 ) as $e ) {
+						$out[ $sev ][ $p ][ $r ][ $e ] = array( 'findings' => 0, 'assets' => 0 );
+					}
 				}
 			}
 		}
@@ -112,7 +121,7 @@ final class VulnHub_Dash_Ticket_Report {
 			$sev = (string) $row['severity'];
 
 			if ( isset( $out[ $sev ] ) ) {
-				$out[ $sev ][ (int) $row['patchable'] ][ (int) $row['raised'] ] = array(
+				$out[ $sev ][ (int) $row['patchable'] ][ (int) $row['raised'] ][ (int) $row['eol_os'] ] = array(
 					'findings' => (int) $row['findings'],
 					'assets'   => (int) $row['assets'],
 				);
@@ -140,6 +149,13 @@ final class VulnHub_Dash_Ticket_Report {
 		// phpcs:enable
 	}
 
+	public static function chosen_os(): string {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$o = isset( $_GET['cov_os'] ) ? sanitize_key( wp_unslash( (string) $_GET['cov_os'] ) ) : 'any';
+
+		return in_array( $o, array( 'any', 'eol', 'supported' ), true ) ? $o : 'any';
+	}
+
 	public static function chosen_patch(): string {
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		$p = isset( $_GET['cov_patch'] ) ? sanitize_key( wp_unslash( (string) $_GET['cov_patch'] ) ) : 'both';
@@ -152,16 +168,20 @@ final class VulnHub_Dash_Ticket_Report {
 	 *
 	 * @return array{raised:array{findings:int,assets:int},not:array{findings:int,assets:int}}
 	 */
-	private static function cell( array $cov, string $sev, string $patch ): array {
+	private static function cell( array $cov, string $sev, string $patch, string $os = 'any' ): array {
 		$pick = 'both' === $patch ? array( 1, 0 ) : array( 'yes' === $patch ? 1 : 0 );
+		$oses = 'any' === $os ? array( 1, 0 ) : array( 'eol' === $os ? 1 : 0 );
 		$out  = array( 'raised' => array( 'findings' => 0, 'assets' => 0 ), 'not' => array( 'findings' => 0, 'assets' => 0 ) );
 
 		foreach ( $pick as $p ) {
 			foreach ( array( 1 => 'raised', 0 => 'not' ) as $r => $side ) {
-				$out[ $side ]['findings'] += $cov[ $sev ][ $p ][ $r ]['findings'];
-				// Assets can sit in both halves; summed, this is an upper bound
-				// and the tooltip says "up to" when both are counted.
-				$out[ $side ]['assets'] += $cov[ $sev ][ $p ][ $r ]['assets'];
+				foreach ( $oses as $e ) {
+					$out[ $side ]['findings'] += $cov[ $sev ][ $p ][ $r ][ $e ]['findings'];
+					// An asset is either EOL or not, so summing across the OS split
+					// is exact; across the patch split it is an upper bound, which
+					// is why the count says "≤" when both are counted.
+					$out[ $side ]['assets'] += $cov[ $sev ][ $p ][ $r ][ $e ]['assets'];
+				}
 			}
 		}
 
@@ -173,7 +193,7 @@ final class VulnHub_Dash_Ticket_Report {
 	 *
 	 * @param bool|null $raised True: on a ticket; false: not; null: either.
 	 */
-	public static function list_url( string $severity, string $patch, ?bool $raised ): string {
+	public static function list_url( string $severity, string $patch, ?bool $raised, string $os = 'any' ): string {
 		$args = array(
 			'severity' => $severity,
 			'state'    => 'open_any',
@@ -186,6 +206,9 @@ final class VulnHub_Dash_Ticket_Report {
 		if ( null !== $raised ) {
 			$args['ticketed'] = $raised ? 'yes' : 'no';
 		}
+		if ( 'any' !== $os ) {
+			$args['os_eol'] = 'eol' === $os ? 'yes' : 'no';
+		}
 
 		return VulnHub_Dash_Portal::portal_url( 'vulnerabilities', $args );
 	}
@@ -194,9 +217,10 @@ final class VulnHub_Dash_Ticket_Report {
 		$cov    = self::coverage();
 		$chosen = self::chosen_severities();
 		$patch  = self::chosen_patch();
+		$os     = self::chosen_os();
 		$can    = current_user_can( Caps::RAISE_TICKET );
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		$keep   = array_diff_key( is_array( $_GET ) ? wp_unslash( $_GET ) : array(), array_flip( array_merge( array_values( self::SEV_PARAM ), array( 'cov', 'cov_patch', 'tp' ) ) ) );
+		$keep   = array_diff_key( is_array( $_GET ) ? wp_unslash( $_GET ) : array(), array_flip( array_merge( array_values( self::SEV_PARAM ), array( 'cov', 'cov_patch', 'cov_os', 'tp' ) ) ) );
 		?>
 		<section class="vh-panel vh-trep" aria-labelledby="vh-trep-cov">
 			<div class="vh-trep__head">
@@ -232,6 +256,15 @@ final class VulnHub_Dash_Ticket_Report {
 						</label>
 					<?php endforeach; ?>
 				</fieldset>
+				<fieldset class="vh-trep__chips">
+					<legend><?php esc_html_e( 'Operating system', 'vulnhub' ); ?></legend>
+					<?php foreach ( array( 'any' => __( 'Any', 'vulnhub' ), 'eol' => __( 'End of life', 'vulnhub' ), 'supported' => __( 'Supported', 'vulnhub' ) ) as $val => $label ) : ?>
+						<label class="vh-chipcheck">
+							<input type="radio" name="cov_os" value="<?php echo esc_attr( $val ); ?>" <?php checked( $os, $val ); ?>>
+							<span><?php echo esc_html( $label ); ?></span>
+						</label>
+					<?php endforeach; ?>
+				</fieldset>
 				<noscript><button class="vh-btn vh-btn--sm"><?php esc_html_e( 'Show', 'vulnhub' ); ?></button></noscript>
 			</form>
 
@@ -241,7 +274,7 @@ final class VulnHub_Dash_Ticket_Report {
 				<div class="vh-trep__bars">
 					<?php foreach ( $chosen as $sev ) : ?>
 						<?php
-						$c     = self::cell( $cov, $sev, $patch );
+						$c     = self::cell( $cov, $sev, $patch, $os );
 						$r     = $c['raised']['findings'];
 						$n     = $c['not']['findings'];
 						$total = $r + $n;
@@ -250,7 +283,7 @@ final class VulnHub_Dash_Ticket_Report {
 						<div class="vh-trep__row">
 							<div class="vh-trep__label">
 								<span class="vh-sevdot vh-sevdot--<?php echo esc_attr( $sev ); ?>"></span>
-								<a href="<?php echo esc_url( self::list_url( $sev, $patch, null ) ); ?>"><?php echo esc_html( vh_severity_label( $sev ) ); ?></a>
+								<a href="<?php echo esc_url( self::list_url( $sev, $patch, null, $os ) ); ?>"><?php echo esc_html( vh_severity_label( $sev ) ); ?></a>
 								<span class="vh-meta">
 									<?php
 									/* translators: 1: total findings, 2: percent raised. */
@@ -260,12 +293,12 @@ final class VulnHub_Dash_Ticket_Report {
 							</div>
 							<div class="vh-trep__track" role="img" aria-label="<?php echo esc_attr( sprintf( '%s: %s raised, %s not raised', vh_severity_label( $sev ), number_format_i18n( $r ), number_format_i18n( $n ) ) ); ?>">
 								<?php if ( $total ) : ?>
-									<a class="vh-trep__seg vh-trep__seg--raised" style="flex:<?php echo (int) $r; ?>" href="<?php echo esc_url( self::list_url( $sev, $patch, true ) ); ?>" data-vh-tip="<?php echo esc_attr( sprintf( __( '%s raised', 'vulnhub' ), number_format_i18n( $r ) ) ); ?>"></a>
-									<a class="vh-trep__seg vh-trep__seg--not vh-trep__seg--<?php echo esc_attr( $sev ); ?>" style="flex:<?php echo (int) $n; ?>" href="<?php echo esc_url( self::list_url( $sev, $patch, false ) ); ?>" data-vh-tip="<?php echo esc_attr( sprintf( __( '%s not raised', 'vulnhub' ), number_format_i18n( $n ) ) ); ?>"></a>
+									<?php if ( $r > 0 ) : ?><a class="vh-trep__seg vh-trep__seg--raised" style="flex:<?php echo (int) $r; ?>" href="<?php echo esc_url( self::list_url( $sev, $patch, true, $os ) ); ?>" data-vh-tip="<?php echo esc_attr( sprintf( __( '%s raised', 'vulnhub' ), number_format_i18n( $r ) ) ); ?>"></a><?php endif; ?>
+									<?php if ( $n > 0 ) : ?><a class="vh-trep__seg vh-trep__seg--not vh-trep__seg--<?php echo esc_attr( $sev ); ?>" style="flex:<?php echo (int) $n; ?>" href="<?php echo esc_url( self::list_url( $sev, $patch, false, $os ) ); ?>" data-vh-tip="<?php echo esc_attr( sprintf( __( '%s not raised', 'vulnhub' ), number_format_i18n( $n ) ) ); ?>"></a><?php endif; ?>
 								<?php endif; ?>
 							</div>
 							<div class="vh-trep__nums">
-								<a class="vh-trep__num vh-trep__num--not" href="<?php echo esc_url( self::list_url( $sev, $patch, false ) ); ?>">
+								<a class="vh-trep__num vh-trep__num--not" href="<?php echo esc_url( self::list_url( $sev, $patch, false, $os ) ); ?>">
 									<strong><?php echo esc_html( number_format_i18n( $n ) ); ?></strong>
 									<span>
 										<?php
@@ -274,7 +307,7 @@ final class VulnHub_Dash_Ticket_Report {
 										?>
 									</span>
 								</a>
-								<a class="vh-trep__num vh-trep__num--raised" href="<?php echo esc_url( self::list_url( $sev, $patch, true ) ); ?>">
+								<a class="vh-trep__num vh-trep__num--raised" href="<?php echo esc_url( self::list_url( $sev, $patch, true, $os ) ); ?>">
 									<strong><?php echo esc_html( number_format_i18n( $r ) ); ?></strong>
 									<span><?php esc_html_e( 'raised', 'vulnhub' ); ?></span>
 								</a>
@@ -760,20 +793,23 @@ final class VulnHub_Dash_Ticket_Report {
 			foreach ( self::SEVERITIES as $sev ) {
 				foreach ( array( 1 => 'yes', 0 => 'no' ) as $p => $pl ) {
 					foreach ( array( 1 => 'yes', 0 => 'no' ) as $r => $rl ) {
-						$rows[] = array(
-							vh_severity_label( $sev ),
-							$pl,
-							$rl,
-							(string) $cov[ $sev ][ $p ][ $r ]['findings'],
-							(string) $cov[ $sev ][ $p ][ $r ]['assets'],
-							self::list_url( $sev, $pl, 'yes' === $rl ),
-						);
+						foreach ( array( 1 => 'eol', 0 => 'supported' ) as $e => $el ) {
+							$rows[] = array(
+								vh_severity_label( $sev ),
+								$pl,
+								$rl,
+								1 === $e ? 'End of life' : 'Supported',
+								(string) $cov[ $sev ][ $p ][ $r ][ $e ]['findings'],
+								(string) $cov[ $sev ][ $p ][ $r ][ $e ]['assets'],
+								self::list_url( $sev, $pl, 'yes' === $rl, $el ),
+							);
+						}
 					}
 				}
 			}
 
 			return array(
-				'headers' => array( 'Severity', 'Patch available', 'Raised', 'Open findings', 'Assets', 'List' ),
+				'headers' => array( 'Severity', 'Patch available', 'Raised', 'Operating system', 'Open findings', 'Assets', 'List' ),
 				'rows'    => $rows,
 			);
 		}

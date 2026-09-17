@@ -3749,6 +3749,23 @@ final class Repo {
 		}
 
 		/*
+		 * The machine's operating system is past vendor support (`eol`) or not
+		 * (`supported`), whatever the finding is about.
+		 *
+		 * Not the same question as `support` above, which asks whether the
+		 * FINDING is end of life (an OS update on a dead OS, or a discontinued
+		 * product). This one asks about the host, so "EOL OS + patch
+		 * available" is every finding a patch still fixes on machines whose
+		 * platform is retired -- the browser, the agent, the runtime that can
+		 * be updated today even though the OS cannot.
+		 */
+		if ( ! empty( $args['os_support'] ) && in_array( (string) $args['os_support'], array( 'eol', 'supported' ), true ) ) {
+			$os_assets = array_map( 'intval', Eol::eol_os_asset_ids() );
+			$os_expr   = $os_assets ? 'f.asset_id IN ( ' . implode( ',', $os_assets ) . ' )' : '1=0';
+			$where[]   = 'eol' === $args['os_support'] ? $os_expr : 'NOT ' . $os_expr;
+		}
+
+		/*
 		 * Age band, in the same three buckets the severity-by-age table on
 		 * the dashboard draws -- and aged the same way it ages them, by the
 		 * vulnerability's OLDEST open instance rather than by each finding

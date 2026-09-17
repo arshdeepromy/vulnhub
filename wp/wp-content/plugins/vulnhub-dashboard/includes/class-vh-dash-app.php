@@ -1109,7 +1109,7 @@ final class VulnHub_Dash_App {
 		 */
 		$vh_tab       = in_array( self::q( 'tab' ), array( 'products', 'vuln_assets' ), true ) ? self::q( 'tab' ) : 'findings';
 		$vh_tab_carry = self::current_filters( array(
-			'search', 'patch_available', 'ticketed', 'support', 'severity', 'asset_type', 'team_id', 'department',
+			'search', 'patch_available', 'ticketed', 'os_eol', 'support', 'severity', 'asset_type', 'team_id', 'department',
 			'age', 'overdue', 'life', 'product', 'zone', 'platform', 'sev_not', 'route',
 			'delivery', 'poc', 'hosting', 'asset', 'state', 'orderby', 'order', 'location_id',
 		) );
@@ -1216,7 +1216,7 @@ final class VulnHub_Dash_App {
 			);
 			?>
 			<?php if ( 'all' !== $vh_vscope_now ) : ?>
-				<a href="<?php echo esc_url( self::page_url( 'vulnerabilities', array_merge( self::current_filters( array( 'search', 'patch_available', 'ticketed', 'severity', 'asset_type', 'team_id', 'age', 'overdue' ) ), array( 'life' => 'all' ) ) ) ); ?>">
+				<a href="<?php echo esc_url( self::page_url( 'vulnerabilities', array_merge( self::current_filters( array( 'search', 'patch_available', 'ticketed', 'os_eol', 'severity', 'asset_type', 'team_id', 'age', 'overdue' ) ), array( 'life' => 'all' ) ) ) ); ?>">
 					<?php esc_html_e( 'Include every asset', 'vulnhub' ); ?>
 				</a>
 			<?php endif; ?>
@@ -1286,6 +1286,19 @@ final class VulnHub_Dash_App {
 				<a href="<?php echo esc_url( remove_query_arg( 'patch_available' ) ); ?>"><?php esc_html_e( 'Clear this filter', 'vulnhub' ); ?></a>
 			</div>
 		<?php endif; ?>
+		<?php $vh_os_eol = self::q( 'os_eol' ); ?>
+		<?php if ( in_array( $vh_os_eol, array( 'yes', 'no' ), true ) ) : ?>
+			<div class="vh-notice vh-notice--info">
+				<?php
+				echo esc_html(
+					'yes' === $vh_os_eol
+						? __( 'Showing only findings on machines whose operating system is past vendor support. Add "Patch available" to see what can still be patched on them.', 'vulnhub' )
+						: __( 'Showing only findings on machines whose operating system is still supported.', 'vulnhub' )
+				);
+				?>
+				<a href="<?php echo esc_url( remove_query_arg( 'os_eol' ) ); ?>"><?php esc_html_e( 'Clear this filter', 'vulnhub' ); ?></a>
+			</div>
+		<?php endif; ?>
 		<?php $vh_ticketed = self::q( 'ticketed' ); ?>
 		<?php if ( in_array( $vh_ticketed, array( 'yes', 'no' ), true ) ) : ?>
 			<div class="vh-notice vh-notice--info">
@@ -1326,7 +1339,7 @@ final class VulnHub_Dash_App {
 			 * servers threw the libcurl part away.
 			 */
 			self::hidden_filters(
-				array( 'search', 'fix', 'excepted', 'patch_available', 'ticketed', 'support', 'severity', 'asset_type', 'team_id', 'department', 'age', 'overdue', 'life' )
+				array( 'search', 'fix', 'excepted', 'patch_available', 'ticketed', 'os_eol', 'support', 'severity', 'asset_type', 'team_id', 'department', 'age', 'overdue', 'life' )
 			);
 			?>
 			<label><?php esc_html_e( 'Search', 'vulnhub' ); ?>
@@ -1353,6 +1366,13 @@ final class VulnHub_Dash_App {
 					<option value=""><?php esc_html_e( 'Any', 'vulnhub' ); ?></option>
 					<option value="1" <?php selected( self::q( 'patch_available' ), '1' ); ?>><?php esc_html_e( 'Patch available', 'vulnhub' ); ?></option>
 					<option value="0" <?php selected( self::q( 'patch_available' ), '0' ); ?>><?php esc_html_e( 'No patch available', 'vulnhub' ); ?></option>
+				</select>
+			</label>
+			<label><?php esc_html_e( 'Operating system', 'vulnhub' ); ?>
+				<select name="os_eol">
+					<option value=""><?php esc_html_e( 'Any OS', 'vulnhub' ); ?></option>
+					<option value="yes" <?php selected( self::q( 'os_eol' ), 'yes' ); ?>><?php esc_html_e( 'End-of-life OS', 'vulnhub' ); ?></option>
+					<option value="no" <?php selected( self::q( 'os_eol' ), 'no' ); ?>><?php esc_html_e( 'Supported OS', 'vulnhub' ); ?></option>
 				</select>
 			</label>
 			<label><?php esc_html_e( 'Ticket', 'vulnhub' ); ?>
@@ -1442,7 +1462,7 @@ final class VulnHub_Dash_App {
 				<?php
 				$vh_pmax = max( 1, (int) $vh_prows[0]['assets'] );
 				$vh_pcar = self::current_filters( array(
-					'search', 'patch_available', 'ticketed', 'severity', 'asset_type', 'team_id', 'department',
+					'search', 'patch_available', 'ticketed', 'os_eol', 'severity', 'asset_type', 'team_id', 'department',
 					'age', 'overdue', 'life', 'zone', 'platform', 'sev_not', 'route', 'delivery',
 					'poc', 'hosting', 'asset', 'state',
 				) );
@@ -2214,6 +2234,12 @@ final class VulnHub_Dash_App {
 			'patch_available' => self::q( 'patch_available' ),
 			// On a ticket or not: `ticketed` on the wire (yes|no), because
 			// `ticket` already names the ticket page's own parameter.
+			// The host's operating system: `os_eol` = yes|no on the wire.
+			'os_support' => match ( self::q( 'os_eol' ) ) {
+				'yes'   => 'eol',
+				'no'    => 'supported',
+				default => '',
+			},
 			'has_ticket' => match ( self::q( 'ticketed' ) ) {
 				'yes'   => '1',
 				'no'    => '0',

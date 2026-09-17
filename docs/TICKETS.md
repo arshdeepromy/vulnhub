@@ -27,23 +27,33 @@ with accepted risk excluded. They are grouped by severity, patch availability
   - Severity checkboxes: `cov_c`, `cov_h`, `cov_m`, `cov_l`, plus `cov=1`.
     The default is critical and high.
   - Patch: `cov_patch` = `yes`, `no` or `both`.
+  - Operating system: `cov_os` = `any`, `eol` or `supported`. This is whether
+    the host's OS is past vendor support (`Eol::eol_os_asset_ids()`). For
+    example, End of life plus Patchable is what a patch can still fix on
+    retired platforms.
 
   Both apply on change, and a `<noscript>` button covers browsers without
   scripting.
 - **Every number is a link** to the Vulnerabilities list holding exactly those
   rows: `severity`, `state=open_any`, `excepted=exclude`, `patch_available`,
-  and `ticketed=yes|no`.
+  `ticketed=yes|no`, and `os_eol=yes|no` when an OS is chosen.
 - **The `ticketed` filter** is new on that list. It has a *Ticket* select and a
   banner, travels as `has_ticket` in `Repo::findings()`, and is on both export
   allow-lists. The CSV export and "Select all matching" (which drafts a ticket)
   therefore hold the same rows the number counted.
-- **Checked:** all 24 severity × patch × raised combinations were compared
-  between the widget, the list total and the export scope. They agree.
+- **The `os_eol` filter** is also new on that list: an *Operating system*
+  select (End-of-life OS / Supported OS) with a banner. It travels as
+  `os_support` (`eol` | `supported`) in `Repo::findings()` and is on both
+  export allow-lists. It asks about the host, unlike `support=eol`, which asks
+  whether the finding itself is end of life.
+- **Checked:** all 72 severity × patch × raised × OS combinations were
+  compared between the widget, the list total and the export scope. They
+  agree.
 - **Raising from it:** open a *not raised* number, select rows (or all
   matching, up to 500), then **Raise ticket for selected**.
 - **Caching:** counts are cached for an hour. The cache key includes the widget
-  epoch (moved by syncs and imports) and the size of `ticket_findings` (moved by
-  every raise).
+  epoch (moved by syncs and imports), the size of `ticket_findings` (moved by
+  every raise) and the EOL OS asset list.
 - **Asset counts:** when *Both* is chosen, the asset count is shown as "≤",
   because a machine can have patchable and unpatchable findings.
 
