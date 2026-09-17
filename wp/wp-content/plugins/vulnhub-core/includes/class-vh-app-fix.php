@@ -138,6 +138,7 @@ final class App_Fix {
 
 					if ( '' === $old || version_compare( $copy['installed'], $old, '>' ) ) {
 						$seen[ $key ]['assets'][ $aid ] = $copy['installed'];
+						$seen[ $key ]['apps'][ $aid ]   = self::app_version( $copy['path'] );
 					}
 				}
 			}
@@ -285,6 +286,7 @@ final class App_Fix {
 		$gone    = count( $resolved[ $rkey ]['gone'] ?? array() );
 
 		$newer = $obs && '' !== $fixed && '' !== (string) $obs['max'] && version_compare( (string) $obs['max'], $fixed, '>=' );
+		$span  = $obs && '' !== $fixed ? self::app_span( (array) $obs['assets'], (array) ( $obs['apps'] ?? array() ), $fixed ) : array( 'fixed_from' => '', 'newest_vulnerable' => '', 'newest' => '' );
 
 		if ( $newer || $done > 0 ) {
 			$bits = array();
@@ -292,7 +294,9 @@ final class App_Fix {
 			if ( $newer ) {
 				$at_max = count( array_filter( $obs['assets'], static fn( string $ver ): bool => version_compare( $ver, $fixed, '>=' ) ) );
 				/* translators: 1: component, 2: version, 3: machines, 4: application. */
-				$bits[] = sprintf( _n( '%1$s %2$s or later is already in %4$s on %3$d machine', '%1$s %2$s or later is already in %4$s on %3$d machines', $at_max, 'vulnhub' ), $product, $fixed, $at_max, $app );
+				$bits[] = sprintf( _n( '%1$s %2$s or later is already in %4$s on %3$d machine', '%1$s %2$s or later is already in %4$s on %3$d machines', $at_max, 'vulnhub' ), $product, $fixed, $at_max, $app )
+					/* translators: 1: application, 2: application version. */
+					. ( '' !== $span['fixed_from'] ? sprintf( __( ' (from %1$s %2$s)', 'vulnhub' ), $app, $span['fixed_from'] ) : '' );
 			}
 			if ( $done > 0 ) {
 				/* translators: 1: machines, 2: application. */
@@ -321,7 +325,14 @@ final class App_Fix {
 						count( $obs['assets'] ),
 						$app,
 						$fixed
-					) . $gone_note,
+					)
+					// When the install folder names the application's version, say
+					// that even the newest version seen still ships the old copy.
+					. ( '' !== $span['newest_vulnerable'] && $span['newest_vulnerable'] === $span['newest']
+						/* translators: 1: application, 2: application version. */
+						? ' ' . sprintf( __( 'That includes %1$s %2$s, the newest version seen.', 'vulnhub' ), $app, $span['newest'] )
+						: '' )
+					. $gone_note,
 					390
 				),
 			);
@@ -368,6 +379,7 @@ final class App_Fix {
 		);
 
 		if ( ! $copy ) {
+			$out += array( 'fixed_from' => '', 'newest_vulnerable' => '', 'newest' => '' );
 			return $out;
 		}
 
@@ -378,7 +390,7 @@ final class App_Fix {
 		$needle = (string) ( $parts[0] ?? '' );
 
 		if ( '' === $needle ) {
-			return $out;
+			return $out + array( 'fixed_from' => '', 'newest_vulnerable' => '', 'newest' => '' );
 		}
 
 		$f  = vh_table( 'findings' );
@@ -412,12 +424,15 @@ final class App_Fix {
 				$aid = (int) $r['asset_id'];
 
 				if ( ! isset( $best[ $aid ] ) || version_compare( $c['installed'], $best[ $aid ]['version'], '>' ) ) {
-					$best[ $aid ] = self::asset_ref( $r ) + array( 'version' => $c['installed'], 'path' => $c['path'], 'when' => substr( (string) $r['last_found'], 0, 10 ) );
+					$best[ $aid ] = self::asset_ref( $r ) + array( 'version' => $c['installed'], 'path' => $c['path'], 'app_version' => self::app_version( $c['path'] ), 'when' => substr( (string) $r['last_found'], 0, 10 ) );
 				}
 			}
 		}
 
 		$out['observed'] = count( $best );
+		$out            += '' !== $fixed
+			? self::app_span( array_map( static fn( array $b ): string => $b['version'], $best ), array_map( static fn( array $b ): string => $b['app_version'], $best ), $fixed )
+			: array( 'fixed_from' => '', 'newest_vulnerable' => '', 'newest' => '' );
 
 		foreach ( $best as $ref ) {
 			if ( '' === $out['max'] || version_compare( $ref['version'], $out['max'], '>' ) ) {
@@ -454,7 +469,7 @@ final class App_Fix {
 			$c = self::copies( (string) $r['output'] )[0] ?? null;
 
 			if ( $c && $c['key'] === $copy['key'] && ! isset( $resolved[ (int) $r['asset_id'] ] ) ) {
-				$resolved[ (int) $r['asset_id'] ] = self::asset_ref( $r ) + array( 'version' => $c['installed'], 'path' => $c['path'], 'when' => substr( (string) $r['last_fixed'], 0, 10 ) );
+				$resolved[ (int) $r['asset_id'] ] = self::asset_ref( $r ) + array( 'version' => $c['installed'], 'path' => $c['path'], 'app_version' => self::app_version( $c['path'] ), 'when' => substr( (string) $r['last_fixed'], 0, 10 ) );
 			}
 		}
 
@@ -505,6 +520,14 @@ final class App_Fix {
 			}
 
 			$installed = preg_match( '/Installed version\s*:\s*([^\r\n]+)/i', $block, $m ) ? self::version( $m[1] ) : '';
+
+			// For some packaged apps the scanner reports the package's version
+			// as the component's ("SQLite 1.26071.84.0" inside a Store app of
+			// that version). That is not the component's version and cannot be
+			// compared with its fixed release, so it is not used.
+			if ( '' !== $installed && $installed === self::app_version( $path ) ) {
+				$installed = '';
+			}
 			$fixed     = preg_match( '/Fixed version\s*:\s*([^\r\n]+)/i', $block, $m ) ? self::version( $m[1] ) : '';
 
 			$out[] = array(
@@ -532,6 +555,58 @@ final class App_Fix {
 		$p = (string) preg_replace( '#(?<=\\\\)([a-z0-9.]+)_\d+(?:\.\d+)+_[a-z0-9]+__[a-z0-9]+(?=\\\\)#', '$1_*', $p );
 
 		return $p;
+	}
+
+	/**
+	 * The application's own version, when its install folder carries one:
+	 * a Microsoft Store package (`…\WindowsApps\MSTeams_26213.1006.5014.9784_x64__…`)
+	 * or a version-numbered folder (`…\Edge\Application\152.0.4191.66\…`).
+	 * Most classic installs (`Program Files\App\bin\…`) carry none: ''.
+	 */
+	public static function app_version( string $path ): string {
+		$p = str_replace( '/', '\\', (string) preg_replace( '#\\\\{2,}#', '\\', $path ) );
+
+		if ( preg_match( '#\\\\WindowsApps\\\\[^\\\\_]+_(\d+(?:\.\d+)+)_#i', $p, $m ) ) {
+			return $m[1];
+		}
+		if ( preg_match( '#\\\\(\d+(?:\.\d+){2,})\\\\#', $p, $m ) ) {
+			return $m[1];
+		}
+
+		return '';
+	}
+
+	/**
+	 * Across machines with one copy: the lowest application version whose copy
+	 * is fixed, the highest whose copy is still vulnerable, and the highest
+	 * seen at all. Machines whose path names no version are left out.
+	 *
+	 * @param array<int,string> $copy_versions Component version by asset.
+	 * @param array<int,string> $app_versions  Application version by asset.
+	 * @return array{fixed_from:string,newest_vulnerable:string,newest:string}
+	 */
+	private static function app_span( array $copy_versions, array $app_versions, string $fixed ): array {
+		$out = array( 'fixed_from' => '', 'newest_vulnerable' => '', 'newest' => '' );
+
+		foreach ( $app_versions as $aid => $app ) {
+			if ( '' === (string) $app || ! isset( $copy_versions[ $aid ] ) ) {
+				continue;
+			}
+
+			if ( '' === $out['newest'] || version_compare( $app, $out['newest'], '>' ) ) {
+				$out['newest'] = $app;
+			}
+
+			if ( version_compare( (string) $copy_versions[ $aid ], $fixed, '>=' ) ) {
+				if ( '' === $out['fixed_from'] || version_compare( $app, $out['fixed_from'], '<' ) ) {
+					$out['fixed_from'] = $app;
+				}
+			} elseif ( '' === $out['newest_vulnerable'] || version_compare( $app, $out['newest_vulnerable'], '>' ) ) {
+				$out['newest_vulnerable'] = $app;
+			}
+		}
+
+		return $out;
 	}
 
 	/**

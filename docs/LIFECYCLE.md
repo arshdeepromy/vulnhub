@@ -137,6 +137,35 @@ signal 2 is what catches that case.
   contradicts the instruction. `App_Fix::references( $row, 1 )` reads the same
   evidence as the stored verdict. The section stays within 10 applications.
 
+  **The application's own version, when its folder carries one**
+  (`App_Fix::app_version()`):
+  - a Microsoft Store package: `…\WindowsApps\MSTeams_26213.1006.5014.9784_x64__…`
+  - a version-numbered folder: `…\Edge\Application\152.0.4191.66\…`
+
+  Across the machines with a copy, `app_span()` finds three versions:
+  - the lowest application version whose copy is fixed
+  - the highest whose copy is still vulnerable
+  - the highest seen at all
+
+  They sharpen the wording:
+  - **Fixed:** "updating Microsoft Edge to 152.0.4191.66 or later fixes 3
+    findings", and the stored note says "(from Microsoft Edge 152.0.4191.66)".
+  - **Not seen:** "…including Microsoft Teams 26225.1806.5074.1452, the newest
+    version seen". The latest build still ships the old copy.
+
+  Classic installs (`Program Files\App\bin\…`) name no version, so there the
+  text falls back to "the version on that machine". Of the 30 Power BI
+  machines, 29 are classic installs. On this estate, 384 fixed and 1,234
+  not-seen notes carry an application version.
+
+  **A package version reported as the component's is ignored.** For some Store
+  apps Tenable's *Installed version* is the package's version ("SQLite
+  1.26071.84.0" inside a Store app of that version). When a copy's installed
+  version equals the application version in its path, it is treated as
+  unknown rather than compared with the component's fixed release. That moved
+  144 findings, including every Microsoft Phone Link SQLite finding, from "no
+  fixed build seen" to "not enough evidence".
+
   **Store installs:** `path_key()` also wildcards the version and publisher in
   Microsoft Store (MSIX) folder names
   (`Microsoft.MicrosoftPowerBIDesktop_2.157.1354.0_x64__8wekyb3d8bbwe` becomes

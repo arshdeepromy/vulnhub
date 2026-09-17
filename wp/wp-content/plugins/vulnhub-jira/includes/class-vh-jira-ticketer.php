@@ -2003,9 +2003,18 @@ final class VulnHub_Jira_Ticketer {
 				'newer_n'   => 0,
 				'resolved'  => null,
 				'resolved_n' => 0,
+				'fixed_from' => '',
+				'newest_vulnerable' => '',
+				'newest'     => '',
 			);
 
 			$g['paths'][ $path ] = true;
+
+			foreach ( array( 'fixed_from', 'newest_vulnerable', 'newest' ) as $k ) {
+				if ( '' !== $ref[ $k ] && ( '' === $g[ $k ] || ( 'fixed_from' === $k ? version_compare( $ref[ $k ], $g[ $k ], '<' ) : version_compare( $ref[ $k ], $g[ $k ], '>' ) ) ) ) {
+					$g[ $k ] = $ref[ $k ];
+				}
+			}
 			$g['findings']      += count( $rows );
 			$g['observed']       = max( $g['observed'], $ref['observed'] );
 			if ( '' !== $ref['max'] && ( '' === $g['max'] || version_compare( $ref['max'], $g['max'], '>' ) ) ) {
@@ -2048,13 +2057,20 @@ final class VulnHub_Jira_Ticketer {
 
 			$sentences[] = null !== $best['newer']
 				? sprintf(
-					/* translators: 1: hostname, 2: component, 3: version, 4: application, 5: vulnerable version, 6: findings. */
-					_n( '%1$s already has %2$s %3$s inside %4$s (the vulnerable copy is %5$s), so updating %4$s to the version on that machine fixes %6$d finding on this ticket.', '%1$s already has %2$s %3$s inside %4$s (the vulnerable copies are %5$s), so updating %4$s to the version on that machine fixes %6$d findings on this ticket.', $count( $fixable ), 'vulnhub' ),
+					/* translators: 1: hostname, 2: component, 3: version, 4: application (with its version when known), 5: vulnerable version, 6: application, 7: target version, 8: findings. */
+					_n( '%1$s already has %2$s %3$s inside %4$s (the vulnerable copy is %5$s), so updating %6$s to %7$s fixes %8$d finding on this ticket.', '%1$s already has %2$s %3$s inside %4$s (the vulnerable copies are %5$s), so updating %6$s to %7$s fixes %8$d findings on this ticket.', $count( $fixable ), 'vulnhub' ),
 					$m['hostname'],
 					$best['product'],
 					$m['version'],
-					$app,
+					'' !== (string) ( $m['app_version'] ?? '' ) ? $app . ' ' . $m['app_version'] : $app,
 					$best['installed'],
+					$app,
+					// The lowest application version seen with the fixed copy, when
+					// install folders name versions; otherwise the reference's.
+					'' !== $best['fixed_from']
+						/* translators: %s: application version. */
+						? sprintf( __( '%s or later', 'vulnhub' ), $best['fixed_from'] )
+						: __( 'the version on that machine', 'vulnhub' ),
 					$count( $fixable )
 				)
 				: sprintf(
@@ -2070,13 +2086,17 @@ final class VulnHub_Jira_Ticketer {
 		foreach ( $waiting as $g ) {
 			$sentences[] = sprintf(
 				/* translators: 1: "Except:" or "", 2: component, 3: location inside the app, 4: version, 5: machines, 6: findings. */
-				_n( '%1$s%2$s in %3$s is still %4$s on every machine it was seen on (%5$d), so updating will not fix %6$d finding yet: remove that component if it is not used, or record an exception.', '%1$s%2$s in %3$s is still %4$s on every machine it was seen on (%5$d), so updating will not fix %6$d findings yet: remove that component if it is not used, or record an exception.', $g['findings'], 'vulnhub' ),
+				_n( '%1$s%2$s in %3$s is still %4$s on every machine it was seen on (%5$d)%7$s, so updating will not fix %6$d finding yet: remove that component if it is not used, or record an exception.', '%1$s%2$s in %3$s is still %4$s on every machine it was seen on (%5$d)%7$s, so updating will not fix %6$d findings yet: remove that component if it is not used, or record an exception.', $g['findings'], 'vulnhub' ),
 				$fixable ? __( 'Except: ', 'vulnhub' ) : '',
 				$g['product'],
 				$g['tail'],
 				$g['max'],
 				max( 1, $g['observed'] ),
-				$g['findings']
+				$g['findings'],
+				'' !== $g['newest_vulnerable'] && $g['newest_vulnerable'] === $g['newest']
+					/* translators: 1: application, 2: application version. */
+					? sprintf( __( ', including %1$s %2$s, the newest version seen', 'vulnhub' ), $app, $g['newest'] )
+					: ''
 			);
 		}
 
@@ -2096,7 +2116,7 @@ final class VulnHub_Jira_Ticketer {
 			$details[] = sprintf(
 				__( 'Reference machine: %1$s (%2$s) — %3$s %4$s at %5$s, %6$s', 'vulnhub' ),
 				$m['hostname'],
-				self::ref_details( $m ),
+				self::ref_details( $m ) . ( '' !== (string) ( $m['app_version'] ?? '' ) ? ' · ' . $app . ' ' . $m['app_version'] : '' ),
 				$g['product'],
 				null !== $g['newer'] ? $m['version'] : __( 'fixed', 'vulnhub' ),
 				$m['path'],
