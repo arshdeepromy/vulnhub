@@ -2663,3 +2663,123 @@ document.addEventListener( 'click', function ( e ) {
 		if ( 'Escape' === e.key && input.value ) { input.value = ''; apply(); }
 	} );
 }() );
+
+/* =====================================================================
+ * Verify tickets
+ *
+ * Verify (one ticket) and Verify all tickets start a check job
+ * (POST /vulnhub/v1/tickets/check) and poll it until it is done. The job
+ * reads each ticket's status from Jira, rescans the network-scanned hosts in
+ * Tenable, waits for that scan, then re-checks the findings, so a check with a
+ * rescan can take a while. The job id is kept for this tab, so leaving and
+ * coming back picks the progress up again.
+ * ===================================================================== */
+( function () {
+	'use strict';
+
+	var panel = document.querySelector( '[data-vh-check-panel]' );
+
+	if ( ! panel || ! window.wp || ! wp.apiFetch ) {
+		return;
+	}
+
+	var KEY   = 'vh-ticket-check-job';
+	var msg   = panel.querySelector( '[data-vh-check-msg]' );
+	var list  = panel.querySelector( '[data-vh-check-list]' );
+	var close = panel.querySelector( '[data-vh-check-close]' );
+	var timer = null;
+
+	function remember( job ) {
+		try {
+			if ( job ) { window.sessionStorage.setItem( KEY, job ); } else { window.sessionStorage.removeItem( KEY ); }
+		} catch ( e ) {}
+	}
+
+	function recalled() {
+		try { return window.sessionStorage.getItem( KEY ) || ''; } catch ( e ) { return ''; }
+	}
+
+	function buttons( disabled ) {
+		document.querySelectorAll( '[data-vh-check], [data-vh-check-all]' ).forEach( function ( b ) {
+			b.disabled = disabled;
+		} );
+	}
+
+	function show( d ) {
+		panel.hidden = false;
+		msg.textContent = d.message || '';
+		list.textContent = '';
+
+		Object.keys( d.tickets || {} ).forEach( function ( id ) {
+			var t  = d.tickets[ id ];
+			var li = document.createElement( 'li' );
+			var k  = document.createElement( 'strong' );
+			k.className = 'vh-mono';
+			k.textContent = t.key || ( '#' + id );
+			li.appendChild( k );
+			li.appendChild( document.createTextNode( ' ' + ( t.message || '' ) ) );
+			li.className = 'is-' + ( t.result || t.state || '' );
+			list.appendChild( li );
+		} );
+
+		close.hidden = ! d.done;
+		buttons( ! d.done );
+	}
+
+	function poll( job ) {
+		window.clearTimeout( timer );
+
+		wp.apiFetch( { path: '/vulnhub/v1/tickets/check/' + encodeURIComponent( job ) } ).then( function ( d ) {
+			show( d );
+			if ( d.done ) {
+				remember( '' );
+				close.textContent = 'Close and refresh';
+				return;
+			}
+			// A rescan takes minutes; nothing changes faster than the cron loop.
+			timer = window.setTimeout( function () { poll( job ); }, d.scan && d.scan.launched_at ? 30000 : 5000 );
+		} ).catch( function ( e ) {
+			remember( '' );
+			show( { message: ( e && e.message ) || 'The check could not be read.', done: true } );
+		} );
+	}
+
+	function start( data, label ) {
+		buttons( true );
+		show( { message: label, done: false } );
+
+		wp.apiFetch( { path: '/vulnhub/v1/tickets/check', method: 'POST', data: data } ).then( function ( d ) {
+			if ( ! d.ok || ! d.job ) {
+				show( { message: d.message || 'The check did not start.', done: true } );
+				return;
+			}
+			remember( d.job );
+			show( d );
+			poll( d.job );
+		} ).catch( function ( e ) {
+			show( { message: ( e && e.message ) || 'The check did not start.', done: true } );
+		} );
+	}
+
+	document.addEventListener( 'click', function ( e ) {
+		var one = e.target.closest( '[data-vh-check]' );
+		var all = e.target.closest( '[data-vh-check-all]' );
+
+		if ( one ) {
+			start( { ids: [ parseInt( one.getAttribute( 'data-vh-check' ), 10 ) ], rescan: true }, 'Starting the check…' );
+		} else if ( all ) {
+			if ( ! window.confirm( 'Verify every ticket that is not yet verified fixed? This launches one Tenable rescan of their network-scanned hosts.' ) ) {
+				return;
+			}
+			start( { all: true, rescan: true }, 'Starting the check…' );
+		}
+	} );
+
+	close.addEventListener( 'click', function () {
+		window.location.reload();
+	} );
+
+	if ( recalled() ) {
+		poll( recalled() );
+	}
+}() );

@@ -151,6 +151,26 @@ final class Rest {
 
 		register_rest_route(
 			self::NS,
+			'/tickets/check',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'check_tickets' ),
+				'permission_callback' => array( $this, 'can_raise' ),
+			)
+		);
+
+		register_rest_route(
+			self::NS,
+			'/tickets/check/(?P<job>[a-z0-9]{8,32})',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'ticket_check_status' ),
+				'permission_callback' => array( $this, 'can_raise' ),
+			)
+		);
+
+		register_rest_route(
+			self::NS,
 			'/tickets/(?P<id>\d+)/refresh',
 			array(
 				'methods'             => 'POST',
@@ -491,6 +511,52 @@ final class Rest {
 		}
 
 		return new WP_REST_Response( $result );
+	}
+
+	/**
+	 * Start checking tickets: refresh their status, rescan their
+	 * network-scanned hosts when `rescan` is set, then re-check their findings.
+	 * Returns a job to poll.
+	 */
+	public function check_tickets( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$ids    = array_values( array_filter( array_map( 'intval', (array) $request->get_param( 'ids' ) ) ) );
+		$all    = rest_sanitize_boolean( $request->get_param( 'all' ) );
+		$rescan = rest_sanitize_boolean( $request->get_param( 'rescan' ) );
+
+		if ( ! $ids && ! $all ) {
+			return new WP_Error( 'vulnhub_bad_request', __( 'Choose the tickets to check.', 'vulnhub' ), array( 'status' => 400 ) );
+		}
+
+		/**
+		 * Filters starting a ticket check.
+		 *
+		 * @param array<string,mixed>|null $result Result, null when unhandled.
+		 * @param int[]                    $ids    Tickets; empty means every ticket worth checking.
+		 * @param bool                     $rescan Launch a rescan of the tickets' network hosts.
+		 */
+		$result = apply_filters( 'vulnhub_start_ticket_check', null, $all ? array() : $ids, $rescan );
+
+		if ( null === $result ) {
+			return new WP_Error( 'vulnhub_no_scanner', __( 'No scanner integration can check tickets. Enable the Tenable connector first.', 'vulnhub' ), array( 'status' => 409 ) );
+		}
+
+		return new WP_REST_Response( $result, empty( $result['ok'] ) ? 400 : 202 );
+	}
+
+	public function ticket_check_status( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		/**
+		 * Filters a ticket check's progress.
+		 *
+		 * @param array<string,mixed>|null $result Result.
+		 * @param string                   $job    Job id.
+		 */
+		$result = apply_filters( 'vulnhub_ticket_check_status', null, (string) $request['job'] );
+
+		if ( null === $result ) {
+			return new WP_Error( 'vulnhub_not_found', __( 'That check was not found.', 'vulnhub' ), array( 'status' => 404 ) );
+		}
+
+		return new WP_REST_Response( $result, empty( $result['ok'] ) ? 404 : 200 );
 	}
 
 	public function refresh_ticket( WP_REST_Request $request ): WP_REST_Response|WP_Error {

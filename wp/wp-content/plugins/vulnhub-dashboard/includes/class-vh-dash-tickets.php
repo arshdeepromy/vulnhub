@@ -858,6 +858,83 @@ final class VulnHub_Dash_Tickets {
 	}
 
 	/* =================================================================
+	 * Checking tickets
+	 * ============================================================== */
+
+	/**
+	 * Whether this person can start a check, and something can answer it.
+	 */
+	public static function can_check(): bool {
+		return current_user_can( Caps::RAISE_TICKET ) && has_filter( 'vulnhub_start_ticket_check' );
+	}
+
+	/**
+	 * The Verify button for one ticket.
+	 *
+	 * @param array<string,mixed> $t Ticket row.
+	 */
+	public static function verify_button( array $t, string $extra_class = '' ): string {
+		if ( ! self::can_check() ) {
+			return '';
+		}
+
+		return sprintf(
+			'<button type="button" class="vh-btn vh-btn--ghost vh-btn--sm %1$s" data-vh-check="%2$d" title="%3$s">%4$s</button>',
+			esc_attr( $extra_class ),
+			(int) $t['id'],
+			esc_attr__( 'Read the status from Jira, rescan this ticket\'s network-scanned hosts in Tenable, then re-check. Agent-based machines are checked on their latest agent results.', 'vulnhub' ),
+			esc_html__( 'Verify', 'vulnhub' )
+		);
+	}
+
+	/**
+	 * The last check, in a line.
+	 *
+	 * @param array<string,mixed> $t Ticket row.
+	 */
+	public static function last_check_html( array $t ): string {
+		$last = Tickets::last_check( $t );
+		$due  = Tickets::due_date( $t );
+		$out  = '';
+
+		if ( $last ) {
+			$state = (string) ( $last['state'] ?? '' );
+			$tone  = match ( $state ) {
+				Tickets::VERIFY_CONFIRMED  => 'good',
+				Tickets::VERIFY_STILL_OPEN => 'bad',
+				default                    => 'neutral',
+			};
+			$out .= '<span class="vh-check-last__head vh-tone--' . esc_attr( $tone ) . '">' . esc_html( vh_trim( (string) ( $last['headline'] ?? '' ), 110 ) ) . '</span>';
+			/* translators: %s: time ago. */
+			$out .= '<span class="vh-meta">' . esc_html( sprintf( __( 'checked %s', 'vulnhub' ), vh_ago( (string) ( $last['checked_at'] ?? '' ) ) ) ) . '</span>';
+		} else {
+			$out .= '<span class="vh-meta">' . esc_html__( 'Not checked yet', 'vulnhub' ) . '</span>';
+		}
+
+		if ( '' !== $due ) {
+			/* translators: %s: date. */
+			$out .= '<span class="vh-meta">' . esc_html( sprintf( __( 'due %s, checked automatically then', 'vulnhub' ), $due ) ) . '</span>';
+		}
+
+		return '<div class="vh-check-last" data-vh-check-last="' . (int) $t['id'] . '">' . $out . '</div>';
+	}
+
+	/**
+	 * The progress panel a check reports into.
+	 */
+	public static function check_panel(): string {
+		if ( ! self::can_check() ) {
+			return '';
+		}
+
+		return '<div class="vh-check-panel" data-vh-check-panel hidden role="status" aria-live="polite">'
+			. '<div class="vh-check-panel__head"><strong data-vh-check-msg></strong>'
+			. '<button type="button" class="vh-btn vh-btn--ghost vh-btn--sm" data-vh-check-close hidden>' . esc_html__( 'Close', 'vulnhub' ) . '</button></div>'
+			. '<ul class="vh-check-panel__list" data-vh-check-list></ul>'
+			. '</div>';
+	}
+
+	/* =================================================================
 	 * The ticket page
 	 * ============================================================== */
 
@@ -882,14 +959,17 @@ final class VulnHub_Dash_Tickets {
 				<h1 class="vh-mono"><?php echo esc_html( (string) $t['external_key'] ); ?></h1>
 				<p class="vh-sub"><?php echo esc_html( (string) $t['summary'] ); ?></p>
 			</div>
-			<?php if ( '' !== (string) $t['url'] ) : ?>
-				<div class="vh-page-head__actions">
+			<div class="vh-page-head__actions">
+				<?php echo self::verify_button( $t ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
+				<?php if ( '' !== (string) $t['url'] ) : ?>
 					<a class="vh-btn vh-btn--ghost vh-btn--sm" href="<?php echo esc_url( (string) $t['url'] ); ?>" target="_blank" rel="noopener noreferrer">
 						<?php echo esc_html( Tickets::PROVIDER_JSM === (string) $t['provider'] ? __( 'Open in JSM', 'vulnhub' ) : __( 'Open in Jira', 'vulnhub' ) ); ?> &nearr;
 					</a>
-				</div>
-			<?php endif; ?>
+				<?php endif; ?>
+			</div>
 		</div>
+		<?php echo self::check_panel(); // phpcs:ignore WordPress.Security.EscapeOutput ?>
+		<?php echo self::last_check_html( $t ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
 
 		<?php if ( '' !== $msg ) : ?>
 			<p class="vh-flash vh-flash--good" role="status"><?php echo esc_html( $msg ); ?></p>

@@ -3695,6 +3695,14 @@ final class VulnHub_Dash_App {
 			<a class="vh-btn vh-btn--ghost" href="<?php echo esc_url( self::page_url( 'tickets' ) ); ?>"><?php esc_html_e( 'Reset', 'vulnhub' ); ?></a>
 		</form>
 
+		<?php if ( VulnHub_Dash_Tickets::can_check() ) : ?>
+			<div class="vh-check-bar">
+				<button type="button" class="vh-btn vh-btn--sm" data-vh-check-all><?php esc_html_e( 'Verify all tickets', 'vulnhub' ); ?></button>
+				<span class="vh-meta"><?php esc_html_e( 'Verify reads each ticket\'s status from Jira, rescans its network-scanned hosts in Tenable and re-checks its findings. Agent-based machines are not rescanned; they are checked on their latest agent results. Tickets that are already verified fixed are skipped. Every ticket is also checked automatically on its due date, without a rescan.', 'vulnhub' ); ?></span>
+			</div>
+			<?php echo VulnHub_Dash_Tickets::check_panel(); // phpcs:ignore WordPress.Security.EscapeOutput ?>
+		<?php endif; ?>
+
 		<?php if ( ! $q['rows'] ) : ?>
 			<p class="vh-chart-empty"><?php esc_html_e( 'No tickets match. Raise one from the Vulnerabilities screen, or from a filtered list on Assets & owners.', 'vulnhub' ); ?></p>
 		<?php else : ?>
@@ -3708,6 +3716,8 @@ final class VulnHub_Dash_App {
 						<th><?php esc_html_e( 'Assignee', 'vulnhub' ); ?></th>
 						<th><?php esc_html_e( 'Covers', 'vulnhub' ); ?></th>
 						<th><?php esc_html_e( 'Verification', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Last check', 'vulnhub' ); ?></th>
+						<?php if ( VulnHub_Dash_Tickets::can_check() ) : ?><th><span class="screen-reader-text"><?php esc_html_e( 'Verify', 'vulnhub' ); ?></span></th><?php endif; ?>
 					</tr></thead>
 					<tbody>
 					<?php foreach ( $q['rows'] as $t ) : ?>
@@ -3743,6 +3753,8 @@ final class VulnHub_Dash_App {
 								?>
 							</td>
 							<td><span class="vh-chip vh-chip--<?php echo esc_attr( $vtone ); ?>"><?php echo esc_html( Tickets::verification_labels()[ $vstate ] ?? '—' ); ?></span></td>
+							<td><?php echo VulnHub_Dash_Tickets::last_check_html( $t ); // phpcs:ignore WordPress.Security.EscapeOutput ?></td>
+							<?php if ( VulnHub_Dash_Tickets::can_check() ) : ?><td><?php echo VulnHub_Dash_Tickets::verify_button( $t ); // phpcs:ignore WordPress.Security.EscapeOutput ?></td><?php endif; ?>
 						</tr>
 					<?php endforeach; ?>
 					</tbody>

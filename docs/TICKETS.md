@@ -228,6 +228,62 @@ linking to `&outcome=`, and a table of every asset with its state then and now.
 Outcomes are always calculated at read time, never stored, so they follow the
 latest sync without a job to keep them current.
 
+## Checking tickets: Verify
+
+The Tickets list has **Verify all tickets** and a **Verify** button on each
+row, and the ticket page has one too. They are shown to people who can raise
+tickets, when a scanner integration answers the check
+(`VulnHub_Dash_Tickets::can_check()`).
+
+- **Start:** `POST /vulnhub/v1/tickets/check` with `ids[]` or `all`, plus
+  `rescan` (filter `vulnhub_start_ticket_check`). `all` takes every ticket
+  that has a key and is not yet verified fixed, at most 200.
+- **Progress:** the browser polls `GET /vulnhub/v1/tickets/check/{job}` (filter
+  `vulnhub_ticket_check_status`). The job id is kept for the tab, so leaving
+  the page and coming back picks it up again.
+
+`VulnHub_Tenable_Ticket_Check` runs the job one step per cron event and stores
+it in the option `vh_ticket_check_<job>` (removed a day after it finishes). A
+lock option stops two workers from running the same step, so the scan is
+never launched twice. The steps are:
+
+1. **Refresh.** Each ticket's status is read through `vulnhub_refresh_ticket`.
+   This only reads from Jira. A ticket recorded by hand keeps its recorded
+   status.
+2. **Rescan (Verify only).** The network-scanned hosts behind the tickets'
+   findings are collected: `has_agent = 0`, known to Tenable, with an IPv4
+   address or FQDN. The Tenable connector's **Rescan with** scan is launched
+   once with those hosts as `alt_targets`. The job then polls
+   `/scans/{id}/latest-status` every two minutes and moves on when the scan
+   finishes or after four hours.
+   - **Agent-based machines are never rescanned,** because an agent scan cannot
+     be narrowed to single machines. They are judged on their latest agent
+     results.
+   - The step is skipped with no scan chosen, no network hosts, or when Tenable
+     refuses the launch (for example, the scan is already running). The panel
+     says which.
+3. **Verify.**
+   - **Finding tickets** go through `VulnHub_Tenable_Verifier::check_ticket()`.
+     Scan freshness is read live from `GET /assets/{uuid}`, so a scan that
+     finished a minute ago counts before the next sync. Only a *resolved*
+     ticket's findings are stamped verified or still detected. An open ticket
+     gets a progress line and nothing changes.
+   - **Asset tickets** are summarised from their live outcomes.
+
+The result is stored on the ticket as `payload_json.last_check`
+(`Tickets::set_last_check()`). `Tickets::upsert()` keeps it when a sync
+replaces the rest of the payload. The list shows it in **Last check**, with
+the due date.
+
+**On the due date.** An hourly event (`vulnhub_ticket_check_due`) starts a job
+with no rescan for every ticket whose due date (`payload_json.duedate`) has
+arrived and that has not been checked on or after that date. There is no fixed
+settling period: a ticket is checked on its due date, or whenever someone
+presses Verify.
+
+A check does not write to Jira itself. Whether a verification comments on or
+reopens an issue is still the Jira connector's own setting.
+
 ## Status
 
 Nothing polls `jsm` rows: `VulnHub_Jira_Connector::tickets_to_poll()` selects

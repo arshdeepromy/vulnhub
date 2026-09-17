@@ -770,6 +770,10 @@ final class VulnHub_Jira_Ticketer {
 				'source_view'     => 'assets',
 				'notes'           => (string) ( $draft['notes'] ?? '' ),
 				'scope'           => (array) ( $draft['scope'] ?? array() ),
+				'payload'         => array(
+					'duedate' => (string) ( $fields['duedate'] ?? '' ),
+					'labels'  => (array) ( $fields['labels'] ?? array() ),
+				),
 			)
 		);
 

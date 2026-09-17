@@ -127,15 +127,61 @@ final class VulnHub_Tenable_Verifier {
 			return 'waiting';
 		}
 
-		$ready_at = $closed_ts + $delay_hours * HOUR_IN_SECONDS;
+		/*
+		 * Checked automatically once the ticket's due date arrives, not a fixed
+		 * number of hours after it closed: the due date is when the work was
+		 * promised, so that is when an unprompted check is fair. A ticket with
+		 * no due date keeps the configured settling delay. Anyone can check
+		 * earlier with Verify on the Tickets page.
+		 */
+		$due      = \VulnHub\Core\Tickets::due_date( $ticket );
+		$ready_at = '' !== $due
+			? (int) strtotime( $due . ' 00:00:00 ' . wp_timezone_string() )
+			: $closed_ts + $delay_hours * HOUR_IN_SECONDS;
 
 		if ( time() < $ready_at ) {
 			return 'waiting';
 		}
 
+		return (string) $this->check_ticket( $connector, $ticket )['state'];
+	}
+
+	/**
+	 * Check one ticket against Tenable now.
+	 *
+	 * Each asset's last scan is read live from Tenable (not from the last
+	 * sync), the findings' current states come from an export narrowed to the
+	 * ticket's plugins, and every finding is judged against the moment that
+	 * matters: when the ticket was resolved, or -- for a ticket still open --
+	 * when it was raised.
+	 *
+	 * A resolved ticket gets a verification verdict (and a still-detected
+	 * finding is reopened in VulnHub). An open ticket only gets a progress
+	 * report: nothing about it or its findings is changed. Either way the
+	 * summary is saved as the ticket's last check.
+	 *
+	 * @param array<string,mixed> $ticket Ticket row.
+	 * @return array{state:string,resolved:bool,fixed:int,open:int,unknown:int,headline:string,findings:array<int,array<string,mixed>>}
+	 */
+	public function check_ticket( VulnHub_Tenable_Connector $connector, array $ticket ): array {
+		$ticket_id = (int) $ticket['id'];
+		$key       = (string) ( $ticket['external_key'] ?: $ticket_id );
+		$resolved  = 'done' === (string) ( $ticket['status_category'] ?? '' );
+		$closed    = (string) ( $ticket['remote_closed_at'] ?: $ticket['updated_at'] ?? '' );
+		$closed_ts = $resolved && $closed ? (int) strtotime( $closed . ' UTC' ) : (int) strtotime( (string) $ticket['created_at'] . ' UTC' );
+		$delay_hours = vh_verification_delay_hours();
+
 		$findings = \VulnHub\Core\Tickets::findings_for( $ticket_id );
 
 		if ( ! $findings ) {
+			$empty = array( 'state' => \VulnHub\Core\Tickets::VERIFY_UNKNOWN, 'resolved' => $resolved, 'fixed' => 0, 'open' => 0, 'unknown' => 0, 'headline' => __( 'Ticket covers no findings.', 'vulnhub' ), 'findings' => array() );
+
+			\VulnHub\Core\Tickets::set_last_check( $ticket_id, $empty );
+
+			if ( ! $resolved ) {
+				return $empty;
+			}
+
 			\VulnHub\Core\Tickets::record_verification(
 				$ticket_id,
 				\VulnHub\Core\Tickets::VERIFY_UNKNOWN,
@@ -149,11 +195,13 @@ final class VulnHub_Tenable_Verifier {
 
 			$this->remember( $ticket, \VulnHub\Core\Tickets::VERIFY_UNKNOWN, 0, 0, 0, __( 'Ticket covers no findings.', 'vulnhub' ) );
 
-			return \VulnHub\Core\Tickets::VERIFY_UNKNOWN;
+			return $empty;
 		}
 
-		// 2. Resolve the Tenable identity and scan freshness of every asset.
-		$assets      = $this->assets_for( $findings );
+		// 2. Resolve the Tenable identity and scan freshness of every asset --
+		//    freshness live from Tenable, so a scan that finished a minute ago
+		//    counts even though no sync has run since.
+		$assets      = $this->live_scan_times( $connector, $this->assets_for( $findings ) );
 		$asset_uuids = array();
 		$plugin_ids  = array();
 
@@ -182,7 +230,7 @@ final class VulnHub_Tenable_Verifier {
 		$unknown    = 0;
 
 		foreach ( $findings as $finding ) {
-			$verdict = $this->judge_finding( $finding, $assets, $states, $closed_ts );
+			$verdict = $this->judge_finding( $finding, $assets, $states, $closed_ts, $resolved );
 
 			$notes[]  = $verdict['note'];
 			$detail[] = array(
@@ -193,22 +241,49 @@ final class VulnHub_Tenable_Verifier {
 				'note'       => $verdict['note'],
 			);
 
+			// Only a resolved ticket's findings are stamped: an open ticket's
+			// check is a progress report and changes nothing.
 			switch ( $verdict['verdict'] ) {
 				case 'fixed':
 					++$confirmed;
-					$this->stamp_finding( (int) $finding['id'], \VulnHub\Core\Tickets::VERIFY_CONFIRMED, false );
+					$resolved && $this->stamp_finding( (int) $finding['id'], \VulnHub\Core\Tickets::VERIFY_CONFIRMED, false );
 					break;
 
 				case 'open':
 					++$still_open;
 					// The ticket claimed this was done. It is not. Reopen it.
-					$this->stamp_finding( (int) $finding['id'], \VulnHub\Core\Tickets::VERIFY_STILL_OPEN, true );
+					$resolved && $this->stamp_finding( (int) $finding['id'], \VulnHub\Core\Tickets::VERIFY_STILL_OPEN, true );
 					break;
 
 				default:
 					++$unknown;
-					$this->stamp_finding( (int) $finding['id'], \VulnHub\Core\Tickets::VERIFY_UNKNOWN, false );
+					$resolved && $this->stamp_finding( (int) $finding['id'], \VulnHub\Core\Tickets::VERIFY_UNKNOWN, false );
 			}
+		}
+
+		$summary = array(
+			'resolved' => $resolved,
+			'fixed'    => $confirmed,
+			'open'     => $still_open,
+			'unknown'  => $unknown,
+			'findings' => $detail,
+		);
+
+		if ( ! $resolved ) {
+			$summary['state']    = 'progress';
+			$summary['headline'] = sprintf(
+				/* translators: 1: ticket key, 2: fixed, 3: total, 4: still detected, 5: not rescanned. */
+				__( '%1$s is still open: Tenable shows %2$d of %3$d findings fixed, %4$d still detected, %5$d not rescanned since it was raised.', 'vulnhub' ),
+				$key,
+				$confirmed,
+				count( $findings ),
+				$still_open,
+				$unknown
+			);
+
+			\VulnHub\Core\Tickets::set_last_check( $ticket_id, $summary );
+
+			return $summary;
 		}
 
 		// 4. Aggregate. Any single still-detected finding invalidates the close.
@@ -260,7 +335,51 @@ final class VulnHub_Tenable_Verifier {
 
 		$this->remember( $ticket, $state, $confirmed, $still_open, $unknown, $headline );
 
-		return $state;
+		$summary['state']    = $state;
+		$summary['headline'] = $headline;
+
+		\VulnHub\Core\Tickets::set_last_check( $ticket_id, $summary );
+
+		return $summary;
+	}
+
+	/**
+	 * Replace each asset's last-seen time with Tenable's current one.
+	 *
+	 * @param array<int,array{tenable_uuid:string,hostname:string,last_seen:string}> $assets From assets_for().
+	 * @return array<int,array{tenable_uuid:string,hostname:string,last_seen:string}>
+	 */
+	private function live_scan_times( VulnHub_Tenable_Connector $connector, array $assets ): array {
+		if ( $connector->is_mock() ) {
+			return $assets;
+		}
+
+		foreach ( $assets as $id => $asset ) {
+			if ( '' === $asset['tenable_uuid'] ) {
+				continue;
+			}
+
+			$info = $connector->client()->asset( $asset['tenable_uuid'] );
+			$seen = '';
+
+			foreach ( array( 'last_seen', 'last_scan_time', 'last_authenticated_scan_date', 'last_licensed_scan_date' ) as $field ) {
+				$value = (string) ( $info[ $field ] ?? '' );
+
+				if ( '' !== $value && ( '' === $seen || strtotime( $value ) > strtotime( $seen ) ) ) {
+					$seen = $value;
+				}
+			}
+
+			if ( '' !== $seen ) {
+				$mysql = (string) vh_to_mysql( $seen );
+
+				if ( '' !== $mysql && ( '' === $asset['last_seen'] || strtotime( $mysql . ' UTC' ) > strtotime( $asset['last_seen'] . ' UTC' ) ) ) {
+					$assets[ $id ]['last_seen'] = $mysql;
+				}
+			}
+		}
+
+		return $assets;
 	}
 
 	/**
@@ -272,7 +391,7 @@ final class VulnHub_Tenable_Verifier {
 	 * @param int                                     $closed_ts When the ticket closed.
 	 * @return array{verdict:string,note:string}
 	 */
-	private function judge_finding( array $finding, array $assets, array $states, int $closed_ts ): array {
+	private function judge_finding( array $finding, array $assets, array $states, int $closed_ts, bool $resolved = true ): array {
 		$asset     = $assets[ (int) $finding['asset_id'] ] ?? null;
 		$hostname  = (string) ( $finding['hostname'] ?? '' );
 		$plugin_id = (string) ( $finding['plugin_id'] ?? '' );
@@ -302,7 +421,9 @@ final class VulnHub_Tenable_Verifier {
 				'verdict' => 'unknown',
 				'note'    => sprintf(
 					/* translators: 1: vulnerability title, 2: hostname, 3: relative time. */
-					__( '"%1$s" on %2$s: no Tenable scan since the ticket closed (last seen %3$s), so remediation is unproven.', 'vulnhub' ),
+					$resolved
+						? __( '"%1$s" on %2$s: no Tenable scan since the ticket closed (last seen %3$s), so remediation is unproven.', 'vulnhub' )
+						: __( '"%1$s" on %2$s: no Tenable scan since the ticket was raised (last seen %3$s).', 'vulnhub' ),
 					$title,
 					$hostname,
 					$asset['last_seen'] ? vh_ago( $asset['last_seen'] ) : __( 'never', 'vulnhub' )
@@ -343,7 +464,9 @@ final class VulnHub_Tenable_Verifier {
 			'verdict' => 'open',
 			'note'    => sprintf(
 				/* translators: 1: vulnerability title, 2: hostname, 3: Tenable state, 4: date. */
-				__( '"%1$s" on %2$s: still %3$s in Tenable, last detected %4$s — reopened.', 'vulnhub' ),
+				$resolved
+					? __( '"%1$s" on %2$s: still %3$s in Tenable, last detected %4$s — reopened.', 'vulnhub' )
+					: __( '"%1$s" on %2$s: still %3$s in Tenable, last detected %4$s.', 'vulnhub' ),
 				$title,
 				$hostname,
 				strtolower( $state['state'] ),

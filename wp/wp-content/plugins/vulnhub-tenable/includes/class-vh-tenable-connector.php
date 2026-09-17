@@ -196,6 +196,14 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 				'help'    => __( 'Syncs are incremental: they fetch only what Tenable has seen since the last successful sync, and only assets scanned in that window. A periodic full resync re-reads the whole inventory, so asset details that changed without a rescan are refreshed and assets Tenable has dropped are retired. The first sync due after this many days runs as a full one. 0 turns the schedule off; "Full resync" on the connector card still works.', 'vulnhub' ),
 			),
 			array(
+				'key'     => 'rescan_scan',
+				'label'   => __( 'Rescan with', 'vulnhub' ),
+				'type'    => 'select',
+				'default' => '',
+				'options' => $this->rescan_scan_options(),
+				'help'    => __( 'The network scan a ticket\'s Verify button runs against just that ticket\'s network-scanned hosts (Tenable launches it with those hosts as its only targets). Agent-based machines are never scanned this way -- an agent scan cannot be narrowed to single machines -- and are checked against their latest agent results instead. Choose a scan with the credentials and policy you want; the list comes from Tenable and refreshes hourly.', 'vulnhub' ),
+			),
+			array(
 				'key'     => 'chunk_size',
 				'label'   => __( 'Export chunk size', 'vulnhub' ),
 				'type'    => 'number',
@@ -219,6 +227,52 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 				'help'           => __( 'The install path of the vulnerable file, the installed version and the fixed version all live in this text and are parsed back out of it, so with this off the Install path and App columns are empty on every finding. It does make the export substantially larger and slower, which is why it is a switch at all - leave it on unless an export is failing to produce chunks.', 'vulnhub' ),
 			),
 		);
+	}
+
+	/**
+	 * The scan the Verify button launches for network-scanned hosts, or 0.
+	 */
+	public function rescan_scan_id(): int {
+		return (int) $this->get( 'rescan_scan', 0 );
+	}
+
+	/**
+	 * Picker options for `rescan_scan`: launchable non-agent scans.
+	 *
+	 * Read from a one-hour cache. The live list is fetched only while the
+	 * Tenable configure screen is being drawn, because fields() is also read
+	 * on every page that asks whether the connector is configured.
+	 *
+	 * @return array<string,string>
+	 */
+	private function rescan_scan_options(): array {
+		$options = array( '' => __( 'None — never launch scans from Verify', 'vulnhub' ) );
+		$scans   = get_transient( 'vh_tenable_scans' );
+
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$on_screen = isset( $_GET['connector'] ) && 'tenable' === sanitize_key( wp_unslash( (string) $_GET['connector'] ) );
+
+		if ( ! is_array( $scans ) && $on_screen && ! $this->is_mock() && $this->client()->has_credentials() ) {
+			$scans = $this->client()->scans();
+			set_transient( 'vh_tenable_scans', $scans, HOUR_IN_SECONDS );
+		}
+
+		foreach ( is_array( $scans ) ? $scans : array() as $scan ) {
+			if ( 'agent' === (string) $scan['type'] || empty( $scan['can_launch'] ) ) {
+				continue;
+			}
+
+			$options[ (string) $scan['id'] ] = (string) $scan['name'];
+		}
+
+		$current = (string) $this->get( 'rescan_scan', '' );
+
+		if ( '' !== $current && ! isset( $options[ $current ] ) ) {
+			/* translators: %s: scan id. */
+			$options[ $current ] = sprintf( __( 'Scan %s (not in the current list)', 'vulnhub' ), $current );
+		}
+
+		return $options;
 	}
 
 	/**

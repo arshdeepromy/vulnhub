@@ -151,7 +151,7 @@ final class Tickets {
 		$key      = (string) ( $data['external_key'] ?? '' );
 
 		$existing = $key
-			? $wpdb->get_row( $wpdb->prepare( "SELECT id FROM {$table} WHERE provider = %s AND external_key = %s", $provider, $key ), ARRAY_A )
+			? $wpdb->get_row( $wpdb->prepare( "SELECT id, payload_json FROM {$table} WHERE provider = %s AND external_key = %s", $provider, $key ), ARRAY_A )
 			: null;
 
 		$row = array( 'provider' => $provider );
@@ -176,7 +176,16 @@ final class Tickets {
 			}
 		}
 		if ( isset( $data['payload'] ) ) {
-			$row['payload_json'] = (string) wp_json_encode( $data['payload'] );
+			$payload = (array) $data['payload'];
+
+			// A sync replaces the provider's fields, not the record of the last
+			// check, which only this site knows.
+			$last = $existing ? self::last_check( $existing ) : null;
+			if ( $last && ! isset( $payload['last_check'] ) ) {
+				$payload['last_check'] = $last;
+			}
+
+			$row['payload_json'] = (string) wp_json_encode( $payload );
 		}
 		if ( isset( $data['scope'] ) ) {
 			$row['scope_json'] = (string) wp_json_encode( $data['scope'] );
@@ -659,6 +668,55 @@ final class Tickets {
 		}
 
 		return false !== $wpdb->update( vh_table( 'tickets' ), $row, array( 'id' => $ticket_id ) );
+	}
+
+	/* =================================================================
+	 * Checks
+	 * ============================================================== */
+
+	/**
+	 * The due date a ticket was raised with (Y-m-d), or ''.
+	 *
+	 * @param array<string,mixed> $ticket Ticket row.
+	 */
+	public static function due_date( array $ticket ): string {
+		$payload = json_decode( (string) ( $ticket['payload_json'] ?? '' ), true );
+		$due     = is_array( $payload ) ? (string) ( $payload['duedate'] ?? '' ) : '';
+
+		return preg_match( '/^\d{4}-\d{2}-\d{2}$/', $due ) ? $due : '';
+	}
+
+	/**
+	 * The last check a ticket had, or null.
+	 *
+	 * @param array<string,mixed> $ticket Ticket row.
+	 * @return array<string,mixed>|null
+	 */
+	public static function last_check( array $ticket ): ?array {
+		$payload = json_decode( (string) ( $ticket['payload_json'] ?? '' ), true );
+
+		return is_array( $payload ) && is_array( $payload['last_check'] ?? null ) ? $payload['last_check'] : null;
+	}
+
+	/**
+	 * Record the outcome of a check on the ticket, without touching anything
+	 * else in its payload.
+	 *
+	 * @param array<string,mixed> $summary state, fixed, open, unknown, headline…
+	 */
+	public static function set_last_check( int $ticket_id, array $summary ): void {
+		global $wpdb;
+
+		$table   = vh_table( 'tickets' );
+		$raw     = (string) $wpdb->get_var( $wpdb->prepare( "SELECT payload_json FROM {$table} WHERE id = %d", $ticket_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL
+		$payload = json_decode( $raw, true );
+		$payload = is_array( $payload ) ? $payload : array();
+
+		unset( $summary['findings'] );
+		$summary['checked_at'] = vh_now();
+		$payload['last_check'] = $summary;
+
+		$wpdb->update( $table, array( 'payload_json' => (string) wp_json_encode( $payload ) ), array( 'id' => $ticket_id ) );
 	}
 }
 

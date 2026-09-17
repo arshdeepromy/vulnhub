@@ -39,10 +39,12 @@ add_action(
 		require_once VULNHUB_TENABLE_DIR . 'includes/class-vh-tenable-mock.php';
 		require_once VULNHUB_TENABLE_DIR . 'includes/class-vh-tenable-connector.php';
 		require_once VULNHUB_TENABLE_DIR . 'includes/class-vh-tenable-verifier.php';
+		require_once VULNHUB_TENABLE_DIR . 'includes/class-vh-tenable-ticket-check.php';
 
 		$connectors->register( new VulnHub_Tenable_Connector() );
 
 		( new VulnHub_Tenable_Verifier() )->hooks();
+		( new VulnHub_Tenable_Ticket_Check() )->hooks();
 
 		// A person deciding an asset's lifecycle overrides the full-resync
 		// prune's decision, so the prune must not later undo theirs.

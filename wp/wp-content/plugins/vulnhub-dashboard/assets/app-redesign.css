@@ -2650,3 +2650,22 @@ dialog.vh-review[open] { display: flex; }
 .vh-sla-day { display: inline-flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--vh-muted); text-transform: none; letter-spacing: 0; }
 .vh-sla-day input { width: 76px; }
 .vh-review__due select { padding: 4px 8px; border-radius: 8px; border: 1px solid var(--vh-line-2, var(--vh-line)); background: var(--vh-bg, transparent); color: var(--vh-ink); }
+
+/* Verify tickets ------------------------------------------------------- */
+.vh-check-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 4px 0 12px; }
+.vh-check-bar .vh-meta { flex: 1 1 320px; line-height: 1.45; }
+.vh-check-panel {
+  border: 1px solid var(--vh-series-1); border-left-width: 3px; border-radius: 8px;
+  background: var(--vh-plane); color: var(--vh-ink-2); padding: 10px 14px; margin: 0 0 14px;
+}
+.vh-check-panel[hidden] { display: none; }
+.vh-check-panel__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.vh-check-panel__list { margin: 8px 0 0; padding: 0; list-style: none; max-height: 260px; overflow: auto; font-size: 12.5px; }
+.vh-check-panel__list li { padding: 3px 0; border-top: 1px solid var(--vh-line, rgba(0,0,0,.06)); overflow-wrap: anywhere; }
+.vh-check-panel__list li.is-confirmed_fixed strong { color: var(--vh-good); }
+.vh-check-panel__list li.is-still_open strong, .vh-check-panel__list li.is-error strong { color: var(--vh-bad); }
+.vh-check-last { display: flex; flex-direction: column; gap: 2px; min-width: 160px; max-width: 280px; }
+.vh-page-head + .vh-check-panel + .vh-check-last, .vh-page-head + .vh-check-last { max-width: none; margin: 0 0 14px; }
+.vh-check-last__head { font-size: 12.5px; }
+.vh-tone--good { color: var(--vh-good); }
+.vh-tone--bad { color: var(--vh-bad); }

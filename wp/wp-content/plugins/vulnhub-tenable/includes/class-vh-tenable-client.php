@@ -284,6 +284,86 @@ final class VulnHub_Tenable_Client {
 	}
 
 	/* -----------------------------------------------------------------
+	 * Scans and single assets (ticket verification)
+	 * --------------------------------------------------------------- */
+
+	/**
+	 * GET /scans — the scans this key can see, reduced to what a picker and
+	 * a launch need.
+	 *
+	 * @return array<int,array{id:int,name:string,type:string,status:string,can_launch:bool}>
+	 */
+	public function scans(): array {
+		$response = $this->http->get( $this->url( '/scans' ), array(), $this->headers(), array( 'retries' => 2 ) );
+
+		if ( ! $response->ok() ) {
+			$this->trace( sprintf( 'Scan list failed (HTTP %d): %s', $response->status, vh_trim( $response->error_message(), 160 ) ) );
+			return array();
+		}
+
+		$out = array();
+
+		foreach ( (array) ( $response->data()['scans'] ?? array() ) as $scan ) {
+			if ( ! is_array( $scan ) || empty( $scan['id'] ) ) {
+				continue;
+			}
+
+			$out[] = array(
+				'id'         => (int) $scan['id'],
+				'name'       => (string) ( $scan['name'] ?? '' ),
+				'type'       => (string) ( $scan['type'] ?? '' ),
+				'status'     => (string) ( $scan['status'] ?? '' ),
+				'can_launch' => ! empty( $scan['control'] ),
+			);
+		}
+
+		return $out;
+	}
+
+	/**
+	 * POST /scans/{scan_id}/launch with `alt_targets` — run an existing scan
+	 * against these hosts only, instead of its configured targets.
+	 *
+	 * One attempt: a retried launch after a slow answer would queue the scan
+	 * twice, and Tenable answers a second launch of a running scan with 409.
+	 *
+	 * @param string[] $targets IP addresses or host names.
+	 */
+	public function launch_scan( int $scan_id, array $targets ): \VulnHub\Core\Http_Response {
+		return $this->http->request(
+			'POST',
+			$this->url( '/scans/' . $scan_id . '/launch' ),
+			array(
+				'headers' => $this->headers(),
+				'body'    => array( 'alt_targets' => array_values( array_unique( array_filter( array_map( 'strval', $targets ) ) ) ) ),
+				'retries' => 1,
+			)
+		);
+	}
+
+	/**
+	 * GET /scans/{scan_id}/latest-status — pending, running, completed,
+	 * canceled, aborted… or '' when it cannot be read.
+	 */
+	public function scan_latest_status( int $scan_id ): string {
+		$response = $this->http->get( $this->url( '/scans/' . $scan_id . '/latest-status' ), array(), $this->headers(), array( 'retries' => 2 ) );
+
+		return $response->ok() ? strtolower( (string) ( $response->data()['status'] ?? '' ) ) : '';
+	}
+
+	/**
+	 * GET /assets/{asset_uuid} — one asset as Tenable holds it now, including
+	 * when it was last seen and last scanned.
+	 *
+	 * @return array<string,mixed> Empty when the asset cannot be read.
+	 */
+	public function asset( string $uuid ): array {
+		$response = $this->http->get( $this->url( '/assets/' . rawurlencode( $uuid ) ), array(), $this->headers(), array( 'retries' => 2 ) );
+
+		return $response->ok() ? (array) ( $response->data()['info'] ?? $response->data() ) : array();
+	}
+
+	/* -----------------------------------------------------------------
 	 * Export lifecycle
 	 * --------------------------------------------------------------- */
 
