@@ -100,8 +100,10 @@ only for automation, which calls `VulnHub_Jira_Ticketer::raise()` directly.
      every finding is already ticketed, nothing is drafted.
    - **The issue.** `build_issue()` produces the exact `fields`: project, issue
      type, summary, priority, due date, labels, assignee, team and the ADF
-     description. When a CSV is attached, the description names the first 30
-     assets and points to the file.
+     description. When a CSV is attached, the description lists no assets:
+     it says how many are affected and points to the file, and each
+     vulnerability shows "Detected on N assets" instead of host names. Without
+     an attachment, every affected asset is listed.
    - **The attachment.** `VulnHub_Dash_Export::findings_csv()` builds the
      findings CSV in memory, with the same cells, escaping and BOM as the
      download. Columns start from `ticket_columns()` and can be changed in the
@@ -177,8 +179,10 @@ only for automation, which calls `VulnHub_Jira_Ticketer::raise()` directly.
      - builds the asset CSV (`VulnHub_Dash_Export::assets_csv()`)
      - has the ticketer build the issue (`build_scope_issue()`), with the same
        routing, issue type and allowlist as finding tickets. The description
-       gives the ask, the notes, the filters in words, the first 30 assets
-       (with owner names, never emails) and how the ticket is tracked. The
+       gives the ask, the notes, the filters in words and how the ticket is
+       tracked. The assets are in the attached file, not the description; only
+       without an attachment does it list the first 30 (with owner names,
+       never emails). The
        label is the request type, for example `tenable-coverage`.
 
      The same review screen and Send as finding tickets are used (see above).

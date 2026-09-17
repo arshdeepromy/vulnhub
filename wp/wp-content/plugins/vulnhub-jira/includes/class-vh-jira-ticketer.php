@@ -642,48 +642,45 @@ final class VulnHub_Jira_Ticketer {
 		);
 		$doc->bullets( array_map( static fn( string $f ): string => $f, (array) $spec['filters'] ) );
 
-		$doc->heading( __( 'Assets', 'vulnhub' ) );
+		if ( '' !== (string) $spec['attachment'] ) {
+			// The assets are in the attached file; the description says so
+			// instead of repeating them.
+			/* translators: %s: file name. */
+			$doc->paragraph( sprintf( __( 'Every asset is listed in the attached %s.', 'vulnhub' ), (string) $spec['attachment'] ) );
+		} else {
+			$doc->heading( __( 'Assets', 'vulnhub' ) );
 
-		$lines = array();
+			$lines = array();
 
-		foreach ( array_slice( $assets, 0, self::DESCRIPTION_ASSETS ) as $a ) {
-			$detail = array_filter(
-				array(
-					(string) ( $a['ipv4'] ?? '' ),
-					vh_asset_type_label( (string) ( $a['asset_type'] ?? '' ) ),
-					(string) ( $a['operating_system'] ?? '' ),
-					(string) ( $a['site'] ?? '' ),
-					'' !== (string) ( $a['owner'] ?? '' ) ? sprintf( /* translators: %s: owner name. */ __( 'owner %s', 'vulnhub' ), (string) $a['owner'] ) : '',
-					'' !== (string) ( $a['team'] ?? '' ) ? sprintf( /* translators: %s: team name. */ __( 'team %s', 'vulnhub' ), (string) $a['team'] ) : '',
-				)
-			);
-
-			$lines[] = array(
-				VulnHub_Jira_Adf::strong( (string) $a['hostname'] ),
-				VulnHub_Jira_Adf::text( $detail ? ' — ' . implode( ' · ', $detail ) : '' ),
-			);
-		}
-
-		$doc->bullets( $lines );
-
-		if ( $total > count( $lines ) ) {
-			$doc->paragraph(
-				'' !== (string) $spec['attachment']
-					? sprintf(
-						/* translators: 1: number of assets not listed, 2: file name. */
-						_n( '… and %1$d more asset, listed in the attached %2$s.', '… and %1$d more assets, listed in the attached %2$s.', $total - count( $lines ), 'vulnhub' ),
-						$total - count( $lines ),
-						(string) $spec['attachment']
+			foreach ( array_slice( $assets, 0, self::DESCRIPTION_ASSETS ) as $a ) {
+				$detail = array_filter(
+					array(
+						(string) ( $a['ipv4'] ?? '' ),
+						vh_asset_type_label( (string) ( $a['asset_type'] ?? '' ) ),
+						(string) ( $a['operating_system'] ?? '' ),
+						(string) ( $a['site'] ?? '' ),
+						'' !== (string) ( $a['owner'] ?? '' ) ? sprintf( /* translators: %s: owner name. */ __( 'owner %s', 'vulnhub' ), (string) $a['owner'] ) : '',
+						'' !== (string) ( $a['team'] ?? '' ) ? sprintf( /* translators: %s: team name. */ __( 'team %s', 'vulnhub' ), (string) $a['team'] ) : '',
 					)
-					: sprintf(
+				);
+
+				$lines[] = array(
+					VulnHub_Jira_Adf::strong( (string) $a['hostname'] ),
+					VulnHub_Jira_Adf::text( $detail ? ' — ' . implode( ' · ', $detail ) : '' ),
+				);
+			}
+
+			$doc->bullets( $lines );
+
+			if ( $total > count( $lines ) ) {
+				$doc->paragraph(
+					sprintf(
 						/* translators: %d: number of assets not listed. */
 						_n( '… and %d more asset.', '… and %d more assets.', $total - count( $lines ), 'vulnhub' ),
 						$total - count( $lines )
 					)
-			);
-		} elseif ( '' !== (string) $spec['attachment'] ) {
-			/* translators: %s: file name. */
-			$doc->paragraph( sprintf( __( 'Every asset is listed in the attached %s.', 'vulnhub' ), (string) $spec['attachment'] ) );
+				);
+			}
 		}
 
 		/* translators: %s: due date. */
@@ -2050,49 +2047,39 @@ final class VulnHub_Jira_Ticketer {
 
 		/* --- 2. Affected assets ------------------------------------- */
 
-		$doc->heading( __( 'Affected assets', 'vulnhub' ) );
-
-		$seen  = array();
-		$items = array();
-
-		foreach ( $rows as $row ) {
-			$asset_id = (int) $row['asset_id'];
-
-			if ( isset( $seen[ $asset_id ] ) ) {
-				continue;
-			}
-			$seen[ $asset_id ] = true;
-
-			$items[] = $this->asset_line( $row );
-		}
-
 		/*
-		 * With the full list attached as a CSV, the description names the
-		 * first assets and points at the file. Jira caps a description's
-		 * size, and a four-hundred-asset bullet list would breach it and be
-		 * unreadable long before that.
+		 * With a CSV attached, the assets are in the file, so the description
+		 * says where they are rather than repeating them: the list made the
+		 * description long, and every host in it was already one click away.
+		 * Without an attachment the list is the only place they appear.
 		 */
-		$listed = ! empty( $options['attachment'] ) ? self::DESCRIPTION_ASSETS : count( $items );
-
-		$doc->bullets( array_slice( $items, 0, $listed ) );
-
-		if ( count( $items ) > $listed ) {
+		if ( ! empty( $options['attachment'] ) ) {
 			$doc->paragraph(
 				sprintf(
-					/* translators: 1: number of assets not listed, 2: attachment file name. */
-					_n( '… and %1$d more asset, listed with every finding in the attached %2$s.', '… and %1$d more assets, listed with every finding in the attached %2$s.', count( $items ) - $listed, 'vulnhub' ),
-					count( $items ) - $listed,
+					/* translators: 1: number of assets, 2: attachment file name. */
+					_n( 'The affected asset and every finding are listed in the attached %2$s.', 'All %1$d affected assets and every finding are listed in the attached %2$s.', count( $assets ), 'vulnhub' ),
+					count( $assets ),
 					(string) $options['attachment']
 				)
 			);
-		} elseif ( ! empty( $options['attachment'] ) ) {
-			$doc->paragraph(
-				sprintf(
-					/* translators: %s: attachment file name. */
-					__( 'Every finding is listed in the attached %s.', 'vulnhub' ),
-					(string) $options['attachment']
-				)
-			);
+		} else {
+			$doc->heading( __( 'Affected assets', 'vulnhub' ) );
+
+			$seen  = array();
+			$items = array();
+
+			foreach ( $rows as $row ) {
+				$asset_id = (int) $row['asset_id'];
+
+				if ( isset( $seen[ $asset_id ] ) ) {
+					continue;
+				}
+				$seen[ $asset_id ] = true;
+
+				$items[] = $this->asset_line( $row );
+			}
+
+			$doc->bullets( $items );
 		}
 
 		/* --- 3. Vulnerability detail -------------------------------- */
@@ -2115,7 +2102,7 @@ final class VulnHub_Jira_Ticketer {
 				)
 			);
 
-			$doc->bullets( $this->vuln_lines( $row, $rows ) );
+			$doc->bullets( $this->vuln_lines( $row, $rows, ! empty( $options['attachment'] ) ) );
 
 			$description = vh_trim( (string) ( $row['vuln_description'] ?? '' ), 900 );
 
@@ -2313,7 +2300,7 @@ final class VulnHub_Jira_Ticketer {
 	 * @param array<int,array<string,mixed>> $rows All rows in the group.
 	 * @return array<int,string>
 	 */
-	private function vuln_lines( array $row, array $rows ): array {
+	private function vuln_lines( array $row, array $rows, bool $attached = false ): array {
 		$lines = array();
 
 		$lines[] = sprintf(
@@ -2383,11 +2370,18 @@ final class VulnHub_Jira_Ticketer {
 
 		$where = array_values( array_unique( $where ) );
 
-		$lines[] = sprintf(
-			/* translators: %s: host:port list. */
-			__( 'Detected on: %s', 'vulnhub' ),
-			implode( ', ', array_slice( $where, 0, 20 ) )
-		);
+		// With the file attached, a count: the hosts are in the file.
+		$lines[] = $attached
+			? sprintf(
+				/* translators: %d: number of hosts. */
+				_n( 'Detected on %d asset (see the attachment).', 'Detected on %d assets (see the attachment).', count( array_unique( array_map( static fn( string $w ): string => explode( ':', $w )[0], $where ) ) ), 'vulnhub' ),
+				count( array_unique( array_map( static fn( string $w ): string => explode( ':', $w )[0], $where ) ) )
+			)
+			: sprintf(
+				/* translators: %s: host:port list. */
+				__( 'Detected on: %s', 'vulnhub' ),
+				implode( ', ', array_slice( $where, 0, 20 ) )
+			);
 
 		$lines[] = sprintf(
 			/* translators: 1: first seen date, 2: last seen date. */
