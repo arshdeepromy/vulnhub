@@ -2740,3 +2740,11 @@ dialog.vh-review[open] { display: flex; }
   .vh-trep__nums { flex-wrap: wrap; }
   .vh-trep__critrow { grid-template-columns: 90px 1fr 80px; }
 }
+
+/* Review: editable description */
+.vh-review__desctools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; }
+.vh-review__desctools .vh-btn:first-of-type { margin-left: auto; }
+.vh-review__editor[hidden], .vh-review__desc[hidden] { display: none; }
+.vh-review__textarea { width: 100%; min-height: 300px; resize: vertical; box-sizing: border-box; padding: 12px 14px; border-radius: 8px; border: 1px solid var(--vh-line); background: var(--vh-bg, rgba(0,0,0,.2)); color: var(--vh-ink); font: 12.5px/1.55 var(--vh-mono, ui-monospace, monospace); }
+.vh-review__textarea:focus { outline: 2px solid var(--vh-series-1); outline-offset: 1px; }
+.vh-review__editbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }

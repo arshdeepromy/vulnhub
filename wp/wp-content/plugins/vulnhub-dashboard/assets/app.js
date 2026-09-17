@@ -536,10 +536,81 @@
 		body.appendChild( fs );
 
 		// Description (server-rendered and escaped from the exact ADF sent).
+		// Editable: the text goes back to the server, which turns it into the
+		// document it stores and sends, and this preview is redrawn from that.
 		var ds = section( 'Description' );
+		var dtools = el( 'div', 'vh-review__desctools' );
 		var desc = el( 'div', 'vh-review__desc' );
 		desc.innerHTML = draft.description.html;
+
+		if ( draft.description.edited ) {
+			dtools.appendChild( el( 'span', 'vh-chip vh-chip--good', 'Edited by you' ) );
+		}
+		if ( draft.description.bytes ) {
+			dtools.appendChild( el( 'span', 'vh-meta', Math.ceil( draft.description.bytes / 1024 ) + ' KB' ) );
+		}
+
+		var editBtn = el( 'button', 'vh-btn vh-btn--ghost vh-btn--sm', 'Edit description' );
+		editBtn.type = 'button';
+		dtools.appendChild( editBtn );
+
+		if ( draft.description.edited ) {
+			var resetBtn = el( 'button', 'vh-btn vh-btn--ghost vh-btn--sm', 'Use the generated description' );
+			resetBtn.type = 'button';
+			resetBtn.addEventListener( 'click', function () {
+				delete request.description;
+				loadDraft( d, request, true );
+			} );
+			dtools.appendChild( resetBtn );
+		}
+
+		var editor = el( 'div', 'vh-review__editor' );
+		editor.hidden = true;
+		var area = el( 'textarea', 'vh-review__textarea' );
+		area.value = draft.description.text || '';
+		area.rows = 16;
+		area.setAttribute( 'aria-label', 'Description' );
+		editor.appendChild( area );
+		editor.appendChild( el( 'p', 'vh-meta', 'Blank line between paragraphs · ## Heading · - bullet · **bold** · `code` · [text](https://link) · --- for a line. Changing the due date afterwards does not rewrite your text.' ) );
+		var eBar = el( 'div', 'vh-review__editbar' );
+		var applyBtn = el( 'button', 'vh-btn vh-btn--primary vh-btn--sm', 'Apply to the ticket' );
+		applyBtn.type = 'button';
+		var cancelEdit = el( 'button', 'vh-btn vh-btn--ghost vh-btn--sm', 'Cancel' );
+		cancelEdit.type = 'button';
+		var count = el( 'span', 'vh-meta' );
+		var recount = function () { count.textContent = area.value.length.toLocaleString() + ' characters'; };
+		recount();
+		area.addEventListener( 'input', recount );
+		eBar.appendChild( applyBtn );
+		eBar.appendChild( cancelEdit );
+		eBar.appendChild( count );
+		editor.appendChild( eBar );
+
+		editBtn.addEventListener( 'click', function () {
+			editor.hidden = false;
+			desc.hidden = true;
+			editBtn.hidden = true;
+			area.focus();
+		} );
+		cancelEdit.addEventListener( 'click', function () {
+			area.value = draft.description.text || '';
+			recount();
+			editor.hidden = true;
+			desc.hidden = false;
+			editBtn.hidden = false;
+		} );
+		applyBtn.addEventListener( 'click', function () {
+			if ( ! area.value.trim() ) {
+				delete request.description;
+			} else {
+				request.description = area.value;
+			}
+			loadDraft( d, request, true );
+		} );
+
+		ds.appendChild( dtools );
 		ds.appendChild( desc );
+		ds.appendChild( editor );
 		body.appendChild( ds );
 
 		// Attachment.

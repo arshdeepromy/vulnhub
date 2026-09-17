@@ -494,6 +494,9 @@ final class Rest {
 			'due_date'    => (string) $request->get_param( 'due_date' ),
 			'priority'    => (string) $request->get_param( 'priority' ),
 			'selects'     => (array) $request->get_param( 'selects' ),
+			// The reviewer's edited description, as editable text; empty keeps
+			// the generated one.
+			'description' => is_string( $request->get_param( 'description' ) ) ? (string) $request->get_param( 'description' ) : '',
 		);
 
 		/**

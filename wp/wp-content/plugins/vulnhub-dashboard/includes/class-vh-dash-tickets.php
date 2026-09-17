@@ -568,6 +568,7 @@ final class VulnHub_Dash_Tickets {
 		// The whole snapshot, for the per-asset tracking the ticket page shows.
 		$built['group_key'] = 'assets:' . md5( implode( ',', $ids ) );
 		$built              = vulnhub_jira_ticketer()->apply_review_selects( vulnhub_jira_connector(), $built, $params );
+		$built              = vulnhub_jira_ticketer()->apply_description_edit( $built, $params );
 
 		$warnings = array();
 

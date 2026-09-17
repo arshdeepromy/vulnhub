@@ -116,6 +116,25 @@ only for automation, which calls `VulnHub_Jira_Ticketer::raise()` directly.
    - every field
    - the description rendered from the ADF that will be sent
      (`VulnHub_Jira_Adf::to_html()`)
+   - **Edit description.** The description is also offered as editable text
+     (`VulnHub_Jira_Adf::to_editable()`):
+     - **Markup:** a blank line between paragraphs, `## Heading`, `- bullet`,
+       `**bold**`, `` `code` ``, `[text](https://link)`, `---` for a rule, and
+       ``` fences.
+     - **Apply** rebuilds the draft with `description`.
+       `VulnHub_Jira_Ticketer::apply_description_edit()` reads the text back
+       into ADF (`from_editable()`, which is lossless for the generated
+       description) and stores it in the draft. The preview, the stored draft
+       and what Send transmits are the same document.
+     - **The edit is kept** while the draft is rebuilt for other changes (due
+       date, priority, columns), so changing the due date afterwards does not
+       rewrite your text.
+     - **Use the generated description** drops the edit, and so does an empty
+       box.
+     - **Length:** edits are capped at 30,000 characters, with a warning when
+       text is cut.
+     - **Both ticket types:** this applies to finding tickets and asset
+       tickets.
    - the file: name, rows, columns and size, the first 8 rows, and a download
      of the exact file (`admin-post.php?action=vulnhub_ticket_draft_csv`)
    - what else is sent: the remote link back to VulnHub

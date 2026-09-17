@@ -69,11 +69,18 @@ final class VulnHub_Jira_Adf {
 	 * @return array<string,mixed>
 	 */
 	public static function text( string $text, array $marks = array() ): array {
+		// clean() trims, which glued inline pieces together ("host— detail"
+		// for a bold host followed by " — detail"). Keep one space at either
+		// edge when the caller put one there.
+		$lead = preg_match( '/^\s/u', $text ) ? ' ' : '';
+		$tail = preg_match( '/\s$/u', $text ) ? ' ' : '';
 		$text = self::clean( $text );
 
 		if ( '' === $text ) {
 			return array();
 		}
+
+		$text = $lead . $text . $tail;
 
 		$node = array(
 			'type' => 'text',
@@ -309,6 +316,209 @@ final class VulnHub_Jira_Adf {
 		}
 
 		return $out;
+	}
+
+	/**
+	 * A document as plain text a person can edit, and read back by
+	 * from_editable() into the same nodes.
+	 *
+	 * The markup is the small set this builder emits: `## Heading`,
+	 * `- bullet`, `---` for a rule, fenced ``` code blocks, and inline
+	 * `**bold**`, `` `code` `` and `[text](https://link)`. Blocks are separated
+	 * by a blank line.
+	 *
+	 * @param array<string,mixed> $doc ADF document.
+	 */
+	public static function to_editable( array $doc ): string {
+		$blocks = array();
+
+		foreach ( (array) ( $doc['content'] ?? array() ) as $node ) {
+			if ( ! is_array( $node ) ) {
+				continue;
+			}
+
+			switch ( (string) ( $node['type'] ?? '' ) ) {
+				case 'heading':
+					$blocks[] = str_repeat( '#', max( 1, min( 6, (int) ( $node['attrs']['level'] ?? 3 ) - 1 ) ) ) . ' ' . self::inline_editable( (array) ( $node['content'] ?? array() ) );
+					break;
+				case 'paragraph':
+					$text = self::inline_editable( (array) ( $node['content'] ?? array() ) );
+					if ( '' !== trim( $text ) ) {
+						$blocks[] = $text;
+					}
+					break;
+				case 'bulletList':
+					$items = array();
+					foreach ( (array) ( $node['content'] ?? array() ) as $item ) {
+						$parts = array();
+						foreach ( (array) ( $item['content'] ?? array() ) as $child ) {
+							$parts[] = self::inline_editable( (array) ( $child['content'] ?? array() ) );
+						}
+						$items[] = '- ' . str_replace( "\n", ' ', trim( implode( ' ', $parts ) ) );
+					}
+					$blocks[] = implode( "\n", $items );
+					break;
+				case 'codeBlock':
+					$blocks[] = "```\n" . self::to_text( $node ) . "\n```";
+					break;
+				case 'rule':
+					$blocks[] = '---';
+					break;
+				default:
+					$text = trim( self::to_text( $node ) );
+					if ( '' !== $text ) {
+						$blocks[] = $text;
+					}
+			}
+		}
+
+		return implode( "\n\n", $blocks );
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $inline Inline nodes.
+	 */
+	private static function inline_editable( array $inline ): string {
+		$out = '';
+
+		foreach ( $inline as $node ) {
+			if ( 'hardBreak' === ( $node['type'] ?? '' ) ) {
+				$out .= "\n";
+				continue;
+			}
+
+			$text = (string) ( $node['text'] ?? '' );
+
+			foreach ( (array) ( $node['marks'] ?? array() ) as $mark ) {
+				$text = match ( (string) ( $mark['type'] ?? '' ) ) {
+					'strong' => '**' . $text . '**',
+					'code'   => '`' . $text . '`',
+					'link'   => '[' . $text . '](' . (string) ( $mark['attrs']['href'] ?? '' ) . ')',
+					default  => $text,
+				};
+			}
+
+			$out .= $text;
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Read edited text (see to_editable()) back into a document.
+	 */
+	public static function from_editable( string $text ): array {
+		$doc   = self::doc();
+		$lines = preg_split( '/\R/', str_replace( "\t", '    ', $text ) ) ?: array();
+		$para  = array();
+		$list  = array();
+		$code  = null;
+
+		$flush = static function () use ( &$para, &$list, $doc ): void {
+			if ( $para ) {
+				$doc->paragraph( self::inline_from_editable( implode( ' ', $para ) ) );
+				$para = array();
+			}
+			if ( $list ) {
+				$doc->bullets( array_map( array( self::class, 'inline_from_editable' ), $list ) );
+				$list = array();
+			}
+		};
+
+		foreach ( $lines as $line ) {
+			if ( null !== $code ) {
+				if ( preg_match( '/^\s*```\s*$/', $line ) ) {
+					$doc->code_block( implode( "\n", $code ) );
+					$code = null;
+				} else {
+					$code[] = $line;
+				}
+				continue;
+			}
+
+			$trim = trim( $line );
+
+			if ( preg_match( '/^```/', $trim ) ) {
+				$flush();
+				$code = array();
+			} elseif ( '' === $trim ) {
+				$flush();
+			} elseif ( preg_match( '/^(#{1,5})\s+(.+)$/', $trim, $m ) ) {
+				$flush();
+				$doc->heading( $m[2], strlen( $m[1] ) + 1 );
+			} elseif ( preg_match( '/^(-{3,}|\*{3,})$/', $trim ) ) {
+				$flush();
+				$doc->rule();
+			} elseif ( preg_match( '/^[-*•]\s+(.+)$/u', $trim, $m ) ) {
+				if ( $para ) {
+					$doc->paragraph( self::inline_from_editable( implode( ' ', $para ) ) );
+					$para = array();
+				}
+				$list[] = $m[1];
+			} elseif ( $list ) {
+				// A line under a bullet continues that bullet.
+				$list[ count( $list ) - 1 ] .= ' ' . $trim;
+			} else {
+				$para[] = $trim;
+			}
+		}
+
+		if ( null !== $code ) {
+			$doc->code_block( implode( "\n", $code ) );
+		}
+
+		$flush();
+
+		return $doc->to_array();
+	}
+
+	/**
+	 * Inline markup to text nodes: **bold**, `code`, [text](https://link).
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	public static function inline_from_editable( string $text ): array {
+		// Built here rather than through text(), which trims: "foo **bar**
+		// baz" must keep the spaces either side of the bold word.
+		$text = trim( (string) preg_replace( '/\s+/u', ' ', (string) preg_replace( '/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $text ) ) );
+		$out  = array();
+		$pos  = 0;
+		$node = static function ( string $chunk, array $marks = array() ): array {
+			if ( '' === $chunk ) {
+				return array();
+			}
+			$n = array( 'type' => 'text', 'text' => mb_substr( $chunk, 0, 8000 ) );
+			if ( $marks ) {
+				$n['marks'] = $marks;
+			}
+			return $n;
+		};
+
+		if ( preg_match_all( '/\*\*(.+?)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/', $text, $matches, PREG_OFFSET_CAPTURE | PREG_SET_ORDER ) ) {
+			foreach ( $matches as $m ) {
+				if ( $m[0][1] > $pos ) {
+					$out[] = $node( substr( $text, $pos, $m[0][1] - $pos ) );
+				}
+
+				if ( isset( $m[4] ) && '' !== $m[4][0] && '' !== esc_url_raw( $m[4][0] ) ) {
+					$out[] = $node( $m[3][0], array( array( 'type' => 'link', 'attrs' => array( 'href' => esc_url_raw( $m[4][0] ) ) ) ) );
+				} elseif ( isset( $m[2] ) && '' !== $m[2][0] ) {
+					$out[] = $node( $m[2][0], array( array( 'type' => 'code' ) ) );
+				} elseif ( '' !== $m[1][0] ) {
+					$out[] = $node( $m[1][0], array( array( 'type' => 'strong' ) ) );
+				} else {
+					$out[] = $node( $m[0][0] );
+				}
+
+				$pos = $m[0][1] + strlen( $m[0][0] );
+			}
+		}
+
+		if ( $pos < strlen( $text ) ) {
+			$out[] = $node( substr( $text, $pos ) );
+		}
+
+		return array_values( array_filter( $out ) );
 	}
 
 	/**

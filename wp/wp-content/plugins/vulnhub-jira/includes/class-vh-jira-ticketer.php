@@ -41,6 +41,9 @@ final class VulnHub_Jira_Ticketer {
 	 */
 	private const MAX_FINDINGS = 500;
 
+	/** Longest edited description accepted, in characters (Jira's field holds 32,767). */
+	private const DESCRIPTION_EDIT_MAX = 30000;
+
 	/** Assets named in a description when the full list is attached. */
 	private const DESCRIPTION_ASSETS = 30;
 
@@ -408,6 +411,7 @@ final class VulnHub_Jira_Ticketer {
 		}
 
 		$built = $this->apply_review_selects( $connector, $built, $params );
+		$built = $this->apply_description_edit( $built, $params );
 
 		return $this->present_draft(
 			$connector,
@@ -463,6 +467,11 @@ final class VulnHub_Jira_Ticketer {
 		}
 
 		$description_bytes = strlen( (string) wp_json_encode( $built['fields']['description'] ) );
+
+		if ( ! empty( $built['description_trimmed'] ) ) {
+			/* translators: %s: characters. */
+			$warnings[] = sprintf( __( 'Your edited description was cut to %s characters.', 'vulnhub' ), number_format_i18n( self::DESCRIPTION_EDIT_MAX ) );
+		}
 
 		if ( $description_bytes > 32000 ) {
 			$warnings[] = sprintf(
@@ -558,8 +567,10 @@ final class VulnHub_Jira_Ticketer {
 				'default' => $allowed_prio['default'],
 			),
 			'description' => array(
-				'html'  => VulnHub_Jira_Adf::to_html( (array) $fields['description'] ),
-				'bytes' => $description_bytes,
+				'html'    => VulnHub_Jira_Adf::to_html( (array) $fields['description'] ),
+				'text'    => VulnHub_Jira_Adf::to_editable( (array) $fields['description'] ),
+				'edited'  => ! empty( $built['description_edited'] ),
+				'bytes'   => $description_bytes,
 			),
 			'attachment'  => $csv ? array(
 				'name'     => $csv['name'],
@@ -925,6 +936,38 @@ final class VulnHub_Jira_Ticketer {
 	 * @param array<string,mixed> $params Draft params (`selects` => slug => option id).
 	 * @return array<string,mixed> The built issue with fields set and `selects` for the review.
 	 */
+	/**
+	 * Replace the generated description with the reviewer's edited text.
+	 *
+	 * The review offers the description as editable text (see
+	 * VulnHub_Jira_Adf::to_editable()); an edit rebuilds the draft with
+	 * `description`, which is read back into ADF here, so the preview, the
+	 * stored draft and what Send transmits are one document. Empty means "use
+	 * the generated description".
+	 *
+	 * @param array<string,mixed> $built  Built issue.
+	 * @param array<string,mixed> $params Draft request.
+	 * @return array<string,mixed>
+	 */
+	public function apply_description_edit( array $built, array $params ): array {
+		$text = trim( str_replace( "\r\n", "\n", (string) ( $params['description'] ?? '' ) ) );
+
+		if ( '' === $text || empty( $built['fields'] ) ) {
+			return $built;
+		}
+
+		$doc = VulnHub_Jira_Adf::from_editable( mb_substr( $text, 0, self::DESCRIPTION_EDIT_MAX ) );
+
+		$built['fields']['description'] = $doc;
+		$built['description_edited']    = true;
+
+		if ( mb_strlen( $text ) > self::DESCRIPTION_EDIT_MAX ) {
+			$built['description_trimmed'] = true;
+		}
+
+		return $built;
+	}
+
 	public function apply_review_selects( VulnHub_Jira_Connector $connector, array $built, array $params ): array {
 		$meta    = $this->create_meta_summary( $connector, (string) $built['project'], (array) ( $built['fields']['issuetype'] ?? array() ) );
 		$chosen  = (array) ( $params['selects'] ?? array() );
