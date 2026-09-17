@@ -1912,63 +1912,203 @@ final class VulnHub_Jira_Ticketer {
 		$hostname = (string) $first['hostname'];
 		$label    = strtoupper( vh_severity_label( $severity ) );
 		$count    = count( $rows );
+		$assets   = count( $this->distinct( $rows, 'asset_id' ) );
+		$where    = $this->summary_platform( $rows );
 
-		$text = match ( $grouping ) {
-			'per_asset'         => sprintf(
-				/* translators: 1: number of vulnerabilities, 2: hostname. */
-				_n( '%1$d vulnerability to remediate on %2$s', '%1$d vulnerabilities to remediate on %2$s', $count, 'vulnhub' ),
-				$count,
-				$hostname
-			),
-			'per_vulnerability' => sprintf(
+		/*
+		 * A queue is read by its summaries, so a ticket covering more than one
+		 * finding says what, of which kind, and where: "Microsoft Office —
+		 * application vulnerability — Windows workstations — 32 vulnerabilities
+		 * on 4 assets". A single finding keeps its title, which already names
+		 * the product, plus the machine and its platform.
+		 */
+		if ( 'per_vulnerability' === $grouping ) {
+			$text = sprintf(
 				/* translators: 1: vulnerability title, 2: number of assets. */
-				_n( '%1$s — %2$d affected asset', '%1$s — %2$d affected assets', count( $this->distinct( $rows, 'asset_id' ) ), 'vulnhub' ),
+				_n( '%1$s — %2$d affected asset', '%1$s — %2$d affected assets', $assets, 'vulnhub' ),
 				vh_trim( (string) $first['vuln_title'], 150 ),
-				count( $this->distinct( $rows, 'asset_id' ) )
-			),
-			'per_selection'     => 1 === $count
-				? sprintf(
-					/* translators: 1: vulnerability title, 2: hostname. */
-					__( '%1$s on %2$s', 'vulnhub' ),
-					vh_trim( (string) $first['vuln_title'], 150 ),
-					$hostname
-				)
-				: ( 1 === count( $this->distinct( $rows, 'asset_id' ) )
-					? sprintf(
-						/* translators: 1: number of vulnerabilities, 2: hostname. */
-						__( '%1$d vulnerabilities to remediate on %2$s', 'vulnhub' ),
-						$count,
-						$hostname
+				$assets
+			);
+
+			return vh_trim( sprintf( '[%s] %s', $label, '' !== $where ? $text . ' — ' . $where : $text ), 250 );
+		}
+
+		if ( $count > 1 ) {
+			$text = implode(
+				' — ',
+				array_filter(
+					array(
+						$this->summary_products( $rows ),
+						$this->summary_kind( $rows ),
+						$where,
+						1 === $assets
+							? sprintf(
+								/* translators: 1: number of vulnerabilities, 2: hostname. */
+								_n( '%1$d vulnerability on %2$s', '%1$d vulnerabilities on %2$s', $count, 'vulnhub' ),
+								$count,
+								$hostname
+							)
+							: sprintf(
+								/* translators: 1: number of vulnerabilities, 2: number of assets. */
+								__( '%1$d vulnerabilities on %2$d assets', 'vulnhub' ),
+								$count,
+								$assets
+							),
 					)
-					: sprintf(
-						/* translators: 1: number of vulnerabilities, 2: number of assets. */
-						__( '%1$d vulnerabilities to remediate across %2$d assets', 'vulnhub' ),
-						$count,
-						count( $this->distinct( $rows, 'asset_id' ) )
-					) ),
-			'per_asset_and_severity' => 1 === $count
-				? sprintf(
-					/* translators: 1: vulnerability title, 2: hostname. */
-					__( '%1$s on %2$s', 'vulnhub' ),
-					vh_trim( (string) $first['vuln_title'], 150 ),
-					$hostname
 				)
-				: sprintf(
-					/* translators: 1: count, 2: severity label, 3: hostname. */
-					__( '%1$d %2$s vulnerabilities on %3$s', 'vulnhub' ),
-					$count,
-					strtolower( vh_severity_label( $severity ) ),
-					$hostname
-				),
-			default             => sprintf(
-				/* translators: 1: vulnerability title, 2: hostname. */
-				__( '%1$s on %2$s', 'vulnhub' ),
-				vh_trim( (string) $first['vuln_title'], 150 ),
-				$hostname
-			),
-		};
+			);
+
+			return vh_trim( sprintf( '[%s] %s', $label, $text ), 250 );
+		}
+
+		/* translators: 1: vulnerability title, 2: hostname, 3: platform and asset type. */
+		$text = '' !== $where
+			? sprintf( __( '%1$s on %2$s (%3$s)', 'vulnhub' ), vh_trim( (string) $first['vuln_title'], 150 ), $hostname, $where )
+			: sprintf( __( '%1$s on %2$s', 'vulnhub' ), vh_trim( (string) $first['vuln_title'], 150 ), $hostname );
 
 		return vh_trim( sprintf( '[%s] %s', $label, $text ), 250 );
+	}
+
+	/**
+	 * The product(s) a set of findings is about, by what someone would update:
+	 * the application that ships a bundled component, otherwise the product.
+	 *
+	 * @param array<int,array<string,mixed>> $rows Finding rows.
+	 */
+	private function summary_products( array $rows ): string {
+		$counts = array();
+
+		foreach ( $rows as $row ) {
+			// A bundled component is named by the application that ships it; an
+			// OS package by its source package ("kernel", "openssl"), which is
+			// what gets updated, rather than the scanner's generic family.
+			$name = \VulnHub\Core\Repo::is_component( $row )
+				|| ( 'os_package' === (string) ( $row['product_kind'] ?? '' ) && '' !== (string) ( $row['bundle_app'] ?? '' ) )
+				? (string) ( $row['bundle_app'] ?? '' )
+				: (string) ( $row['product'] ?? '' );
+			$name = trim( $name );
+
+			if ( '' !== $name ) {
+				$counts[ $name ] = ( $counts[ $name ] ?? 0 ) + 1;
+			}
+		}
+
+		if ( ! $counts ) {
+			return '';
+		}
+
+		arsort( $counts );
+		$names = array_keys( $counts );
+
+		return match ( count( $names ) ) {
+			1       => $names[0],
+			/* translators: 1: product, 2: product. */
+			2       => sprintf( __( '%1$s and %2$s', 'vulnhub' ), $names[0], $names[1] ),
+			/* translators: 1: product, 2: number of other products. */
+			default => sprintf( __( '%1$s and %2$d other products', 'vulnhub' ), $names[0], count( $names ) - 1 ),
+		};
+	}
+
+	/**
+	 * What kind of vulnerability most of the findings are.
+	 *
+	 * @param array<int,array<string,mixed>> $rows Finding rows.
+	 */
+	private function summary_kind( array $rows ): string {
+		$seol   = class_exists( '\VulnHub\Core\Eol' ) ? array_flip( \VulnHub\Core\Eol::seol_vuln_ids() ) : array();
+		$counts = array();
+
+		foreach ( $rows as $row ) {
+			$kind = (string) ( $row['product_kind'] ?? '' );
+			$key  = match ( true ) {
+				isset( $seol[ (int) ( $row['vuln_id'] ?? 0 ) ] ) => 'unsupported',
+				'os_update' === $kind                            => 'os_update',
+				'os_package' === $kind                           => 'os_package',
+				'library' === $kind                              => \VulnHub\Core\Repo::is_component( $row ) ? 'bundled_library' : 'library',
+				'application' === $kind                          => 'application',
+				default                                          => 'other',
+			};
+
+			$counts[ $key ] = ( $counts[ $key ] ?? 0 ) + 1;
+		}
+
+		arsort( $counts );
+
+		return array(
+			'unsupported'     => __( 'unsupported software', 'vulnhub' ),
+			'os_update'       => __( 'OS security update', 'vulnhub' ),
+			'os_package'      => __( 'OS package update', 'vulnhub' ),
+			'bundled_library' => __( 'bundled library vulnerability', 'vulnhub' ),
+			'library'         => __( 'library vulnerability', 'vulnhub' ),
+			'application'     => __( 'application vulnerability', 'vulnhub' ),
+			'other'           => __( 'vulnerability', 'vulnhub' ),
+		)[ (string) array_key_first( $counts ) ] ?? '';
+	}
+
+	/**
+	 * Platform and asset type: "Windows workstations", "Linux servers",
+	 * "Windows servers and workstations", "Windows and Linux servers".
+	 *
+	 * @param array<int,array<string,mixed>> $rows Finding rows.
+	 */
+	private function summary_platform( array $rows ): string {
+		$platforms = array();
+		$types     = array();
+		$assets    = array();
+
+		foreach ( $rows as $row ) {
+			$aid = (int) ( $row['asset_id'] ?? 0 );
+
+			if ( isset( $assets[ $aid ] ) ) {
+				continue;
+			}
+			$assets[ $aid ] = true;
+
+			$platform = \VulnHub\Core\Os::platform( (string) ( $row['operating_system'] ?? '' ) );
+			if ( 'other' !== $platform ) {
+				$platforms[ $platform ] = true;
+			}
+
+			$type = (string) ( $row['asset_type'] ?? '' );
+			if ( '' !== $type && 'unknown' !== $type ) {
+				$types[ $type ] = true;
+			}
+		}
+
+		$many  = count( $assets ) > 1;
+		$plat  = array_map( array( '\VulnHub\Core\Os', 'platform_label' ), array_keys( $platforms ) );
+		$nouns = array(
+			'workstation' => array( __( 'workstation', 'vulnhub' ), __( 'workstations', 'vulnhub' ) ),
+			'server'      => array( __( 'server', 'vulnhub' ), __( 'servers', 'vulnhub' ) ),
+		);
+		$kinds = array();
+
+		foreach ( array_keys( $types ) as $type ) {
+			$kinds[] = isset( $nouns[ $type ] )
+				? $nouns[ $type ][ $many ? 1 : 0 ]
+				: strtolower( (string) ( vh_asset_types()[ $type ] ?? $type ) ) . ( $many ? 's' : '' );
+		}
+		sort( $kinds );
+
+		$plat_text = match ( count( $plat ) ) {
+			0       => '',
+			1       => $plat[0],
+			2       => sprintf( /* translators: 1: platform, 2: platform. */ __( '%1$s and %2$s', 'vulnhub' ), $plat[0], $plat[1] ),
+			default => __( 'mixed-platform', 'vulnhub' ),
+		};
+		$kind_text = match ( count( $kinds ) ) {
+			0       => $many ? __( 'machines', 'vulnhub' ) : __( 'machine', 'vulnhub' ),
+			1       => $kinds[0],
+			2       => sprintf( /* translators: 1: asset type, 2: asset type. */ __( '%1$s and %2$s', 'vulnhub' ), $kinds[0], $kinds[1] ),
+			default => __( 'mixed machine types', 'vulnhub' ),
+		};
+
+		if ( '' === $plat_text && ! $kinds ) {
+			return '';
+		}
+
+		// "Windows servers and workstations": the platform reads once.
+		return trim( $plat_text . ' ' . $kind_text );
 	}
 
 	/**
@@ -2674,7 +2814,7 @@ final class VulnHub_Jira_Ticketer {
 				v.id AS vuln_id, v.source AS vuln_source, v.plugin_id, v.title AS vuln_title,
 				v.family, v.cve_json, v.cvss2_base, v.cvss3_base, v.vpr_score,
 				v.exploit_available, v.description AS vuln_description, v.solution,
-				v.see_also, v.patch_publication_date, v.product, v.product_slug, v.product_kind,
+				v.see_also, v.patch_publication_date, v.product, v.product_slug, v.product_kind, v.component_class,
 				p.display_name AS owner_name, p.upn AS owner_upn, p.email AS owner_email,
 				p.job_title AS owner_title, p.department AS owner_department, p.manager_upn,
 				t.id AS team_row_id, t.name AS team_name, t.manager_email,

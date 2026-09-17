@@ -115,6 +115,23 @@ only for automation, which calls `VulnHub_Jira_Ticketer::raise()` directly.
    - **Selection rules** (`plan()`): findings already on an open ticket are left
      out and named. A finding whose ticket is closed can be raised again. If
      every finding is already ticketed, nothing is drafted.
+   - **The summary** (`summary()`) names what, what kind and where, for
+     example `[CRITICAL] Microsoft Office — application vulnerability — Windows
+     workstations — 32 vulnerabilities on 4 assets`.
+     - **What:** the product someone updates. A bundled component is named by
+       the application that ships it, and an OS package by its source package
+       (`kernel`). Two products are joined with "and"; more reads "X and N
+       other products".
+     - **What kind:** the majority kind across the findings: unsupported
+       software (a SEoL plugin), OS security update, OS package update,
+       bundled library vulnerability, library vulnerability, or application
+       vulnerability.
+     - **Where:** OS platform plus asset type, for example "Windows
+       workstations", "Linux servers", "Windows servers and workstations" or
+       "Windows and Linux servers".
+     - **Variants:** a single finding reads "title on host (Windows
+       workstation)", and automation's per-vulnerability tickets read "title —
+       N affected assets — platform".
    - **The issue.** `build_issue()` produces the exact `fields`: project, issue
      type, summary, priority, due date, labels, assignee, team and the ADF
      description. When a CSV is attached, the description lists no assets:
