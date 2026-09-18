@@ -110,8 +110,11 @@ only for automation, which calls `VulnHub_Jira_Ticketer::raise()` directly.
    - **Selection.** Either `finding_ids`, or `all` plus the findings screen's
      `filters` when "All N matching findings" is selected. Filters are resolved
      on the server through `VulnHub_Dash_Export::findings_scope()`, the same
-     query Export selected uses, so N means the same N. More than 500 is
-     refused, not trimmed, and a short read is refused too.
+     query Export selected uses, so N means the same N. More than
+     `VulnHub_Jira_Ticketer::max_findings()` (5,000; filter
+     `vulnhub_ticket_max_findings`) is refused, not trimmed, and a short read
+     is refused too. Ask for the limit through that method rather than
+     repeating the number on a screen.
    - **Selection rules** (`plan()`): findings already on an open ticket are left
      out and named. A finding whose ticket is closed can be raised again. If
      every finding is already ticketed, nothing is drafted.
@@ -143,8 +146,19 @@ only for automation, which calls `VulnHub_Jira_Ticketer::raise()` directly.
      download. Columns start from `ticket_columns()` and can be changed in the
      review, which builds a fresh draft. A draft whose row count differs from
      its finding count carries a warning.
-   - **Warnings** are shown for a project outside the allowlist and for a
-     description near Jira's size limit.
+   - **The description has a byte budget**, because its section caps (15
+     vulnerability definitions, 10 applications, 8 solution texts, 12 evidence
+     bullets) are counts, and counts multiply: a selection that fills all of
+     them built 36 KB, which Jira refuses outright. Each section that grows
+     with the selection stops at `DESCRIPTION_BYTES` and says what it left
+     out; the attachment carries every finding regardless. The mark sits a
+     whole block below Jira's 32,767 because it is checked *before* a block is
+     appended. Measured worst case across 29 real selections: 30 KB.
+   - **Warnings** are shown for a project outside the allowlist, for a
+     description near Jira's size limit, and for an attachment over what Jira
+     accepts (`vulnhub_ticket_attachment_limit`, 10 MB) — that one matters
+     because the file is uploaded *after* the issue is created, so the ticket
+     would be raised with nothing attached.
    - **Storage.** The draft is stored for 30 minutes under a token
      (`vh_jira_draft_<hmac>`), tied to the user who built it.
 2. **Review.** The dialog shows, from the draft itself:
@@ -197,8 +211,12 @@ only for automation, which calls `VulnHub_Jira_Ticketer::raise()` directly.
 **Raise Jira ticket** sits between the filters and the table on Assets & owners
 (`VulnHub_Dash_Tickets::raise_button()`). It opens a `<dialog>` with two steps:
 
-1. **Download the list.** This uses the same column picker as Export CSV
-   (`VulnHub_Dash_Export::column_picker()`). *Download CSV* posts to
+1. **The list that gets attached.** This uses the same column picker as Export
+   CSV (`VulnHub_Dash_Export::column_picker()`), and those ticks are the
+   columns of the CSV that ends up on the ticket — not just of the optional
+   download. The step said "Download the list" and read as "export it and
+   attach it by hand", which is the one thing it does not mean, so it now says
+   what the ticks are for. *Download CSV* posts to
    `admin-post.php?action=vulnhub_ticket_scope` with `do=download`. That
    redirects to the ordinary export URL, so the file matches Export CSV exactly
    and is audited the same way. `wp_nonce_url()` escapes `&` as `&amp;`, which
@@ -360,24 +378,69 @@ row, and the ticket page has one too. They are shown to people who can raise
 tickets, when a scanner integration answers the check
 (`VulnHub_Dash_Tickets::can_check()`).
 
+- **Asking first.** **Verify all tickets** opens a dialog in the page
+   (`check_dialog()`), not `window.confirm()`. The browser's own box could not
+   say what this site will actually do — it promised "this launches one Tenable
+   rescan" whatever the settings said — and had nowhere to put the per-ticket
+   result that follows. The question comes from
+   `verify_all_question()`, which reads the same `rescan_allowed()` the job
+   enforces.
 - **Start:** `POST /vulnhub/v1/tickets/check` with `ids[]` or `all`, plus
   `rescan` (filter `vulnhub_start_ticket_check`). `all` takes every ticket
-  that has a key and is not yet verified fixed, at most 200.
-- **Progress:** the browser polls `GET /vulnhub/v1/tickets/check/{job}` (filter
+  that has a key and is not yet verified fixed, at most 200. Asking for a
+  rescan does not get one: the server decides.
+- **Progress:** the same dialog becomes the progress view, and the browser
+  polls `GET /vulnhub/v1/tickets/check/{job}` (filter
   `vulnhub_ticket_check_status`). The job id is kept for the tab, so leaving
-  the page and coming back picks it up again.
+  the page and coming back picks it up again — closing the dialog does not
+  stop the run, and it says so.
+  - The bar counts **both stages** a ticket goes through, read-from-Jira and
+    re-checked, not just the second. One step runs per cron tick, so counting
+    only the re-check leaves it at 0% for minutes of real work and reads as a
+    hang. The ticket page keeps the inline panel, and the dialog falls back to
+    it when it is not on the page.
 
 `VulnHub_Tenable_Ticket_Check` runs the job one step per cron event and stores
 it in the option `vh_ticket_check_<job>` (removed a day after it finishes). A
 lock option stops two workers from running the same step, so the scan is
 never launched twice. The steps are:
 
-1. **Refresh.** Each ticket's status is read through `vulnhub_refresh_ticket`.
-   This only reads from Jira. A ticket recorded by hand keeps its recorded
-   status.
-2. **Rescan (Verify only, workstations only).** The rescan guard rail is
-   decided by **each asset's own `asset_type`**, the server/workstation
-   classification synced from Tenable, never by address.
+1. **Refresh.** Each ticket's status, assignee and newest comment are read
+   through `vulnhub_refresh_ticket`. This only reads from Jira. A ticket
+   recorded by hand keeps its recorded status.
+   - **Who it is with.** `assignee` is often null on a service desk that
+     routes by team: the work is carried by the Team field, not a person. So
+     the Team field is requested too — by its id, resolved from the routing
+     directory, never `*navigable`, which would fatten every page of a
+     2,000-ticket sync — and kept as `payload_json.team_name`.
+     `VulnHub_Jira_Connector::assigned_to()` answers with the assignee, or the
+     team labelled as one. A column that reads `assignee` alone reports every
+     ticket as unassigned while people are working them.
+   - **The newest comment** is kept as `payload_json.last_comment` (author,
+     body, created, and whether it is public), preserved across syncs the same
+     way `last_check` is. The list draws it from there rather than reading
+     live, so twenty rows are not twenty calls to Jira; it carries its own
+     `seen_at` for that reason. Jira's timestamps arrive with the site's
+     offset and are stored through `vh_to_mysql()` — left alone, a comment
+     from this morning reads "in 12 hours".
+2. **Rescan (Verify only, workstations only).**
+
+   - **Off unless switched on.** **Scanning from Verify** (`rescan_enabled` on
+     the Tenable connector) is off by default, and off means nothing is
+     launched however Verify is pressed: `start()` turns a requested rescan
+     into `rescan = false` before the job is even stored, so a job that was
+     never allowed to scan cannot be resumed into scanning, and the last step
+     before the launch asks again in case the setting changed while the job
+     queued. A refusal is audited as `ticket.rescan_refused` and the panel
+     says "No scan launched". An agent-based estate should leave this off:
+     there is no network scan to aim, and the agent's own last result is the
+     freshest thing there is. **Rescan with** is ignored while it is off.
+   - Screens ask `vulnhub_ticket_rescan_allowed` rather than reading the
+     setting, so the Verify copy describes what will happen rather than the
+     default.
+
+   The rest of the guard rail is decided by **each asset's own `asset_type`**,
+   the server/workstation classification synced from Tenable, never by address.
    - **Allowed:** an asset qualifies only if all of these hold:
      - its type is in `VulnHub_Tenable_Schedules::RESCAN_ASSET_TYPES`
        (`workstation`). This is a constant, not a setting.
@@ -449,6 +512,39 @@ and neither is reliable:
 
 A check does not write to Jira itself. Whether a verification comments on or
 reopens an issue is still the Jira connector's own setting.
+
+## Comments: reading and replying without leaving VulnHub
+
+**View** on the Tickets list opens a dialog with the whole conversation, and
+the same component is rendered inline on the ticket page — from one function
+(`VulnHub_Dash_Tickets::comments_body()`), so the two cannot drift apart.
+
+- **Reading:** `GET /vulnhub/v1/tickets/{id}/comments` (filter
+  `vulnhub_ticket_comments`, `can_view`). Comments come back newest first and
+  are drawn oldest first, because a conversation reads downwards towards the
+  reply box. A comment body is set as text, never as HTML: it is somebody
+  else's input arriving from another system. Reading also refreshes
+  `last_comment`, since it is the freshest look anyone has had at the ticket.
+- **Replying:** `POST` the same route (filter `vulnhub_post_ticket_comment`,
+  `can_raise`), with `body` and `public`.
+  - **An internal note is the default, everywhere.** A reply notifies whoever
+    raised the request and cannot be taken back, so the quiet option is the
+    one a misclick lands on: the radio is checked, an absent `public`
+    parameter means internal, and the box changes colour before Post is
+    pressed when it is set to reply.
+  - **Visibility needs the service desk API.** Only
+    `POST /servicedeskapi/request/{key}/comment` can say whether the customer
+    sees it; a comment added through the issue API is public. So every comment
+    goes that way, and a 404 — an ordinary project, not a desk — falls back to
+    the issue API *only for a public reply*. An internal note is refused there
+    and says why, rather than being quietly posted where the customer reads
+    it.
+  - Writes are already bounded by the project allowlist, which
+    `VulnHub_Jira_Client::refuse_outside_allowlist()` applies to every
+    non-GET. Posting is audited as `ticket.comment` with its visibility.
+  - A ticket recorded by hand (`provider = jsm`) has no issue to read or
+    comment on, and says so rather than looking like a ticket nobody has
+    commented on.
 
 ## Status
 

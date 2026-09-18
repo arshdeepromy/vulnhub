@@ -181,7 +181,7 @@ final class Tickets {
 			// A sync replaces the provider's fields, not the record of the last
 			// check, which only this site knows.
 			$kept = $existing ? json_decode( (string) $existing['payload_json'], true ) : null;
-			foreach ( array( 'last_check', 'next_check' ) as $own ) {
+			foreach ( array( 'last_check', 'next_check', 'last_comment' ) as $own ) {
 				if ( is_array( $kept ) && is_array( $kept[ $own ] ?? null ) && ! isset( $payload[ $own ] ) ) {
 					$payload[ $own ] = $kept[ $own ];
 				}
@@ -237,36 +237,58 @@ final class Tickets {
 		return $row ?: null;
 	}
 
+	/** Findings linked per statement. Two statements per finding is a stalled Send. */
+	private const ATTACH_BATCH = 500;
+
 	/**
 	 * Attach findings to a ticket and stamp the ticket id onto them.
+	 *
+	 * In batches, because one ticket can legitimately cover thousands of
+	 * findings: a statement per finding turns a raise into a browser that
+	 * looks hung, and the row count is the same either way.
 	 *
 	 * @param int[] $finding_ids Finding ids.
 	 */
 	public static function attach_findings( int $ticket_id, array $finding_ids ): int {
 		global $wpdb;
 
+		$ids = array_values( array_filter( array_unique( array_map( 'intval', $finding_ids ) ) ) );
+
+		if ( ! $ids ) {
+			return 0;
+		}
+
+		$now      = vh_now();
 		$attached = 0;
-		foreach ( array_unique( array_map( 'intval', $finding_ids ) ) as $fid ) {
-			if ( ! $fid ) {
-				continue;
+
+		foreach ( array_chunk( $ids, self::ATTACH_BATCH ) as $chunk ) {
+			$values = array();
+			$args   = array();
+
+			foreach ( $chunk as $fid ) {
+				$values[] = '(%d, %d, %s)';
+				$args[]   = $ticket_id;
+				$args[]   = $fid;
+				$args[]   = $now;
 			}
+
 			$wpdb->query(
 				$wpdb->prepare(
-					'INSERT IGNORE INTO ' . vh_table( 'ticket_findings' ) . ' (ticket_id, finding_id, created_at) VALUES (%d, %d, %s)',
-					$ticket_id,
-					$fid,
-					vh_now()
+					'INSERT IGNORE INTO ' . vh_table( 'ticket_findings' ) . ' (ticket_id, finding_id, created_at) VALUES ' . implode( ', ', $values ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+					...$args
 				)
 			);
-			$wpdb->update(
-				vh_table( 'findings' ),
-				array(
-					'ticket_id'  => $ticket_id,
-					'updated_at' => vh_now(),
-				),
-				array( 'id' => $fid )
+
+			$wpdb->query(
+				$wpdb->prepare(
+					'UPDATE ' . vh_table( 'findings' ) . ' SET ticket_id = %d, updated_at = %s WHERE id IN (' . implode( ', ', array_fill( 0, count( $chunk ), '%d' ) ) . ')', // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+					$ticket_id,
+					$now,
+					...$chunk
+				)
 			);
-			++$attached;
+
+			$attached += count( $chunk );
 		}
 
 		$wpdb->update(
@@ -716,6 +738,36 @@ final class Tickets {
 		$summary['checked_at'] = vh_now();
 
 		self::set_payload_value( $ticket_id, 'last_check', $summary );
+	}
+
+	/**
+	 * The latest comment seen on the ticket at the far end, or null.
+	 *
+	 * Kept on the ticket so the list can say what is happening without a call
+	 * to Jira per row. It is a cache of someone else's system, refreshed every
+	 * time the ticket is verified or refreshed -- so it is shown with its own
+	 * timestamp, never as though it were live.
+	 *
+	 * @param array<string,mixed> $ticket Ticket row.
+	 * @return array<string,mixed>|null author, author_id, body, created, public, seen_at.
+	 */
+	public static function last_comment( array $ticket ): ?array {
+		$payload = json_decode( (string) ( $ticket['payload_json'] ?? '' ), true );
+
+		return is_array( $payload ) && is_array( $payload['last_comment'] ?? null ) ? $payload['last_comment'] : null;
+	}
+
+	/**
+	 * Record the latest comment, or clear it with null.
+	 *
+	 * @param array<string,mixed>|null $comment Normalised comment.
+	 */
+	public static function set_last_comment( int $ticket_id, ?array $comment ): void {
+		if ( is_array( $comment ) ) {
+			$comment['seen_at'] = vh_now();
+		}
+
+		self::set_payload_value( $ticket_id, 'last_comment', $comment );
 	}
 
 	/**

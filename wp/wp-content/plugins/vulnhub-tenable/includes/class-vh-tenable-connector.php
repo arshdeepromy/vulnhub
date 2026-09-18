@@ -196,12 +196,20 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 				'help'    => __( 'Syncs are incremental: they fetch only what Tenable has seen since the last successful sync, and only assets scanned in that window. A periodic full resync re-reads the whole inventory, so asset details that changed without a rescan are refreshed and assets Tenable has dropped are retired. The first sync due after this many days runs as a full one. 0 turns the schedule off; "Full resync" on the connector card still works.', 'vulnhub' ),
 			),
 			array(
+				'key'            => 'rescan_enabled',
+				'label'          => __( 'Scanning from Verify', 'vulnhub' ),
+				'type'           => 'checkbox',
+				'default'        => 0,
+				'checkbox_label' => __( 'Let Verify launch a Tenable scan', 'vulnhub' ),
+				'help'           => __( 'Off by default, and off means off: Verify reads Jira and re-checks findings against whatever Tenable already holds, and launches nothing. Leave it off on an agent-based estate, where there is no network scan to aim and the agent\'s own results are the freshest thing there is. Turn it on only if you run network scans and want pressing Verify to start one; you then also have to choose the scan below. Automatic checks never launch a scan whatever this says.', 'vulnhub' ),
+			),
+			array(
 				'key'     => 'rescan_scan',
 				'label'   => __( 'Rescan with', 'vulnhub' ),
 				'type'    => 'select',
 				'default' => '',
 				'options' => $this->rescan_scan_options(),
-				'help'    => __( 'The network scan a ticket\'s Verify button runs against that ticket\'s network-scanned workstations only (Tenable launches it with those hosts as its only targets). Servers are never scanned from here, whatever is chosen: they are checked after their own scheduled scan. Agent-based machines are not scanned this way either -- an agent scan cannot be narrowed to single machines -- and are checked against their latest agent results. The list comes from Tenable and refreshes hourly.', 'vulnhub' ),
+				'help'    => __( 'Only used when "Let Verify launch a Tenable scan" is on above; with it off this is ignored and nothing is launched. The network scan a ticket\'s Verify button runs against that ticket\'s network-scanned workstations only (Tenable launches it with those hosts as its only targets). Servers are never scanned from here, whatever is chosen: they are checked after their own scheduled scan. Agent-based machines are not scanned this way either -- an agent scan cannot be narrowed to single machines -- and are checked against their latest agent results. The list comes from Tenable and refreshes hourly.', 'vulnhub' ),
 			),
 			array(
 				'key'     => 'schedule_server',
@@ -250,6 +258,22 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 	 */
 	public function rescan_scan_id(): int {
 		return (int) $this->get( 'rescan_scan', 0 );
+	}
+
+	/**
+	 * May pressing Verify launch a Tenable scan at all?
+	 *
+	 * The default is no. An estate scanned by agents has nothing to aim and
+	 * nothing to gain -- the agent's last result is the freshest there is --
+	 * and an operator who presses Verify is asking "what does Tenable know?",
+	 * not "go and scan these machines". Somebody who does want that says so
+	 * here, and still has to choose the scan.
+	 *
+	 * Read through this everywhere rather than testing the setting directly,
+	 * so there is one answer to "can this launch a scan?".
+	 */
+	public function rescan_allowed(): bool {
+		return $this->settings->get_bool( $this->id(), 'rescan_enabled', false );
 	}
 
 	/**

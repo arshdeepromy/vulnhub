@@ -344,12 +344,30 @@ final class VulnHub_Dash_Ticket_Report {
 					<span class="vh-trep__key vh-trep__key--raised"></span><?php esc_html_e( 'On a ticket', 'vulnhub' ); ?>
 					<span class="vh-trep__key vh-trep__key--not"></span><?php esc_html_e( 'Not raised', 'vulnhub' ); ?>
 					<?php if ( $can ) : ?>
-						&nbsp;·&nbsp;<?php esc_html_e( 'To raise: open a "not raised" number, choose "Select all matching" (up to 500) or tick rows, then "Raise ticket for selected".', 'vulnhub' ); ?>
+						&nbsp;·&nbsp;<?php echo esc_html( self::raise_hint() ); ?>
 					<?php endif; ?>
 				</p>
 			<?php endif; ?>
 		</section>
 		<?php
+	}
+
+	/**
+	 * How to raise from this report, naming the real ceiling.
+	 *
+	 * The limit belongs to the ticketer, so ask it rather than repeating a
+	 * number here that a filter can change underneath us.
+	 */
+	private static function raise_hint(): string {
+		$max = class_exists( 'VulnHub_Jira_Ticketer' ) ? VulnHub_Jira_Ticketer::max_findings() : 0;
+
+		return $max > 0
+			? sprintf(
+				/* translators: %s: the most findings one ticket can cover. */
+				__( 'To raise: open a "not raised" number, choose "Select all matching" (up to %s) or tick rows, then "Raise ticket for selected".', 'vulnhub' ),
+				number_format_i18n( $max )
+			)
+			: __( 'To raise: open a "not raised" number, choose "Select all matching" or tick rows, then "Raise ticket for selected".', 'vulnhub' );
 	}
 
 	/* =================================================================

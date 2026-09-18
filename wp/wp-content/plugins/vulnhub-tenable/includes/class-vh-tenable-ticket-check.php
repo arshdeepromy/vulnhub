@@ -59,6 +59,7 @@ final class VulnHub_Tenable_Ticket_Check {
 
 	public function hooks(): void {
 		add_filter( 'vulnhub_start_ticket_check', array( $this, 'start_filter' ), 10, 3 );
+		add_filter( 'vulnhub_ticket_rescan_allowed', array( $this, 'rescan_allowed_filter' ) );
 		add_filter( 'vulnhub_ticket_check_status', array( $this, 'status_filter' ), 10, 2 );
 		add_action( self::STEP_HOOK, array( $this, 'step' ), 10, 1 );
 		add_action( self::DUE_HOOK, array( $this, 'run_due' ), 10, 0 );
@@ -90,6 +91,14 @@ final class VulnHub_Tenable_Ticket_Check {
 	}
 
 	/**
+	 * Answer `vulnhub_ticket_rescan_allowed`, so a screen can say whether
+	 * pressing Verify will start a scan without knowing what a scanner is.
+	 */
+	public function rescan_allowed_filter( bool $allowed ): bool {
+		return $allowed || $this->rescan_allowed();
+	}
+
+	/**
 	 * @param array<string,mixed>|null $result Result so far.
 	 * @return array<string,mixed>|null
 	 */
@@ -104,6 +113,12 @@ final class VulnHub_Tenable_Ticket_Check {
 	 * @return array<string,mixed>
 	 */
 	public function start( array $ticket_ids, bool $rescan, string $trigger ): array {
+		// Asked for is not granted. The setting decides, here, before the job
+		// exists -- so no later step has to remember to ask, and a job that
+		// was never allowed to scan cannot be resumed into scanning.
+		$asked  = $rescan;
+		$rescan = $rescan && $this->rescan_allowed();
+
 		$ids = array_values( array_unique( array_filter( array_map( 'intval', $ticket_ids ) ) ) );
 		$ids = $ids ? $ids : $this->worth_checking();
 		$ids = array_slice( $ids, 0, self::MAX_TICKETS );
@@ -151,7 +166,7 @@ final class VulnHub_Tenable_Ticket_Check {
 			sprintf( 'Ticket check started for %d ticket(s)%s', count( $tickets ), $rescan ? ' with a rescan' : '' ),
 			'ticket',
 			0,
-			array( 'job' => $job['id'], 'trigger' => $trigger, 'tickets' => array_keys( $tickets ), 'rescan' => $rescan )
+			array( 'job' => $job['id'], 'trigger' => $trigger, 'tickets' => array_keys( $tickets ), 'rescan' => $rescan, 'rescan_asked' => $asked )
 		);
 
 		return array_merge( array( 'ok' => true ), $this->public_view( $job ) );
@@ -293,22 +308,40 @@ final class VulnHub_Tenable_Ticket_Check {
 			$job['tickets'][ $id ]['message'] = $message;
 		}
 
-		$targets = $job['rescan'] ? $this->network_targets( array_keys( $job['tickets'] ) ) : array();
+		$targets = $job['rescan'] && $this->rescan_allowed() ? $this->network_targets( array_keys( $job['tickets'] ) ) : array();
 		$scan_id = $this->connector() ? $this->connector()->rescan_scan_id() : 0;
 
-		if ( $job['rescan'] && $targets && $scan_id ) {
+		if ( $job['rescan'] && $targets && $scan_id && $this->rescan_allowed() ) {
 			$job['phase']   = 'scan';
 			$job['scan']    = array( 'id' => $scan_id, 'assets' => $targets, 'targets' => array_values( array_unique( $targets ) ), 'launched_at' => 0, 'status' => 'launching' );
 			/* translators: %d: number of hosts. */
 			$job['message'] = sprintf( _n( 'Launching a Tenable rescan of %d workstation…', 'Launching a Tenable rescan of %d workstations…', count( $targets ), 'vulnhub' ), count( $targets ) );
 		} else {
 			$job['phase']   = 'verify';
-			$job['message'] = $job['rescan'] && $targets && ! $scan_id
-				? __( 'No rescan scan is chosen in the Tenable settings, so workstations are checked on their latest scan. Checking…', 'vulnhub' )
-				: __( 'Checking findings against Tenable…', 'vulnhub' );
+
+			if ( ! $this->rescan_allowed() ) {
+				// Say it plainly. "Checking findings…" on its own leaves an
+				// operator wondering whether a scan just went out.
+				$job['message'] = __( 'No scan launched: scanning from Verify is off in the Tenable settings. Checking findings against what Tenable already holds…', 'vulnhub' );
+			} elseif ( $job['rescan'] && $targets && ! $scan_id ) {
+				$job['message'] = __( 'No rescan scan is chosen in the Tenable settings, so workstations are checked on their latest scan. Checking…', 'vulnhub' );
+			} else {
+				$job['message'] = __( 'Checking findings against Tenable…', 'vulnhub' );
+			}
 		}
 
 		return $job;
+	}
+
+	/**
+	 * May this job launch a Tenable scan?
+	 *
+	 * With no connector the answer is no, which is also the safe answer.
+	 */
+	private function rescan_allowed(): bool {
+		$connector = $this->connector();
+
+		return $connector && $connector->rescan_allowed();
 	}
 
 	/**
@@ -326,6 +359,22 @@ final class VulnHub_Tenable_Ticket_Check {
 		$scan = (array) $job['scan'];
 
 		if ( empty( $scan['launched_at'] ) ) {
+			/*
+			 * The same belt-and-braces as the asset guard below, for the same
+			 * reason: this is the last line before a scan goes out, and the
+			 * setting can have been turned off while the job sat in the queue.
+			 */
+			if ( ! $this->rescan_allowed() ) {
+				vulnhub()->logger->audit( 'ticket.rescan_refused', 'Refused to launch a rescan: scanning from Verify is off in the Tenable settings', 'ticket', 0, array( 'job' => $job['id'] ), 'warning' );
+
+				$scan['status'] = 'not launched';
+				$job['scan']    = $scan;
+				$job['phase']   = 'verify';
+				$job['message'] = __( 'No scan launched: scanning from Verify is off in the Tenable settings. Checking findings against what Tenable already holds…', 'vulnhub' );
+
+				return $job;
+			}
+
 			// Re-read by asset id now, not trusting what was gathered earlier.
 			$guard           = $this->guard_assets( array_keys( (array) $scan['assets'] ) );
 			$scan['assets']  = $guard['allowed'];

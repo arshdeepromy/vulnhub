@@ -2739,11 +2739,16 @@ document.addEventListener( 'click', function ( e ) {
  * Verify tickets
  *
  * Verify (one ticket) and Verify all tickets start a check job
- * (POST /vulnhub/v1/tickets/check) and poll it until it is done. The job
- * reads each ticket's status from Jira, rescans the network-scanned hosts in
- * Tenable, waits for that scan, then re-checks the findings, so a check with a
- * rescan can take a while. The job id is kept for this tab, so leaving and
- * coming back picks the progress up again.
+ * (POST /vulnhub/v1/tickets/check) and poll it until it is done. The job reads
+ * each ticket's status, assignee and latest comment from Jira and re-checks
+ * its findings; whether it also launches a Tenable scan is a setting, and the
+ * server decides -- asking for one does not get one. A check that does scan
+ * waits for it, so it can take minutes. The job id is kept for this tab, so
+ * leaving and coming back picks the progress up again.
+ *
+ * "Verify all tickets" asks first, and asks in the page: a browser confirm()
+ * cannot say what this site will actually do, cannot be read afterwards, and
+ * has nowhere to put the per-ticket result that follows.
  * ===================================================================== */
 ( function () {
 	'use strict';
@@ -2776,10 +2781,8 @@ document.addEventListener( 'click', function ( e ) {
 		} );
 	}
 
-	function show( d ) {
-		panel.hidden = false;
-		msg.textContent = d.message || '';
-		list.textContent = '';
+	function rows( into, d ) {
+		into.textContent = '';
 
 		Object.keys( d.tickets || {} ).forEach( function ( id ) {
 			var t  = d.tickets[ id ];
@@ -2790,11 +2793,44 @@ document.addEventListener( 'click', function ( e ) {
 			li.appendChild( k );
 			li.appendChild( document.createTextNode( ' ' + ( t.message || '' ) ) );
 			li.className = 'is-' + ( t.result || t.state || '' );
-			list.appendChild( li );
+			into.appendChild( li );
 		} );
+	}
+
+	/*
+	 * How far along, in the two stages a ticket actually goes through: read
+	 * from Jira, then re-checked against Tenable. Counting only the second
+	 * leaves the bar at 0% for the whole first stage -- which, with a step per
+	 * cron tick, is minutes of looking broken while it is working.
+	 */
+	function counted( d ) {
+		var all = Object.keys( d.tickets || {} );
+		var read = 0;
+		var done = 0;
+
+		all.forEach( function ( id ) {
+			var s = d.tickets[ id ].state;
+			if ( 'refreshed' === s || 'checked' === s ) { read++; }
+			if ( 'checked' === s ) { done++; }
+		} );
+
+		return {
+			total: all.length,
+			read: read,
+			done: done,
+			pct: all.length ? Math.round( ( ( read + done ) / ( all.length * 2 ) ) * 100 ) : 0
+		};
+	}
+
+	function show( d ) {
+		panel.hidden = false;
+		msg.textContent = d.message || '';
+		rows( list, d );
 
 		close.hidden = ! d.done;
 		buttons( ! d.done );
+
+		if ( dlg && dlg.open ) { showInDialog( d ); }
 	}
 
 	function poll( job ) {
@@ -2813,6 +2849,81 @@ document.addEventListener( 'click', function ( e ) {
 			remember( '' );
 			show( { message: ( e && e.message ) || 'The check could not be read.', done: true } );
 		} );
+	}
+
+	var dlg     = document.getElementById( 'vh-verify-all' );
+	var dLede   = dlg && dlg.querySelector( '[data-vh-verify-lede]' );
+	var dList   = dlg && dlg.querySelector( '[data-vh-verify-list]' );
+	var dProg   = dlg && dlg.querySelector( '[data-vh-verify-progress]' );
+	var dFill   = dlg && dlg.querySelector( '[data-vh-verify-fill]' );
+	var dCount  = dlg && dlg.querySelector( '[data-vh-verify-count]' );
+	var dStatus = dlg && dlg.querySelector( '[data-vh-verify-status]' );
+	var dGo     = dlg && dlg.querySelector( '[data-vh-verify-go]' );
+	var dCancel = dlg && dlg.querySelector( '[data-vh-verify-cancel]' );
+	// The question as the server wrote it, kept so a second run reads as a
+	// question again rather than as the last run's closing message.
+	var question = dLede ? dLede.textContent : '';
+
+	function showInDialog( d ) {
+		if ( ! dlg ) { return; }
+
+		var n = counted( d );
+
+		dProg.hidden = ! n.total;
+		if ( n.total ) {
+			dFill.style.width = n.pct + '%';
+			// Both stages, named: "0 of 6" against a moving bar reads as stuck.
+			dCount.textContent = d.done
+				? n.done + ' of ' + n.total + ' checked'
+				: 'Read from Jira ' + n.read + ' of ' + n.total + ' · re-checked ' + n.done + ' of ' + n.total;
+		}
+
+		dStatus.textContent = d.message || '';
+		rows( dList, d );
+
+		if ( d.done ) {
+			dGo.disabled    = false;
+			dGo.textContent = 'Close and refresh';
+			dGo.onclick     = function () { window.location.reload(); };
+			dCancel.hidden  = true;
+		}
+	}
+
+	/* The dialog dressed for a run in progress, whoever started it. */
+	function running() {
+		dLede.textContent   = 'This runs in the background, a step at a time. You can close this and come back — the progress is picked up again.';
+		dCancel.hidden      = true;
+		dGo.disabled        = true;
+		dGo.textContent     = 'Verifying…';
+		dStatus.textContent = 'Reading the check…';
+		dProg.hidden        = false;
+
+		if ( ! dlg.open ) { dlg.showModal(); }
+	}
+
+	function ask() {
+		// Back to the question every time: the dialog is reused, and the last
+		// run's results must not read as this one's.
+		dLede.textContent   = question;
+		dList.textContent   = '';
+		dProg.hidden        = true;
+		dStatus.textContent = '';
+		dCancel.hidden      = false;
+		dGo.disabled        = false;
+		dGo.textContent     = 'Verify all tickets';
+
+		dGo.onclick = function () {
+			dGo.disabled        = true;
+			dGo.textContent     = 'Verifying…';
+			dCancel.hidden      = true;
+			dStatus.textContent = 'Starting the check…';
+			// A step runs per cron tick, so this is minutes, not seconds. The
+			// job id is kept for the tab: closing this does not stop it.
+			running();
+			start( { all: true, rescan: true }, 'Starting the check…' );
+		};
+
+		if ( ! dlg.open ) { dlg.showModal(); }
 	}
 
 	function start( data, label ) {
@@ -2839,16 +2950,36 @@ document.addEventListener( 'click', function ( e ) {
 		if ( one ) {
 			start( { ids: [ parseInt( one.getAttribute( 'data-vh-check' ), 10 ) ], rescan: true }, 'Starting the check…' );
 		} else if ( all ) {
-			if ( ! window.confirm( 'Verify every ticket that is not yet verified fixed? This launches one Tenable rescan of their network-scanned workstations; servers are never rescanned.' ) ) {
+			// Without the dialog on the page -- the ticket page has the
+			// buttons but not the dialog -- fall back to starting directly.
+			if ( ! dlg ) {
+				start( { all: true, rescan: true }, 'Starting the check…' );
 				return;
 			}
-			start( { all: true, rescan: true }, 'Starting the check…' );
+
+			/*
+			 * A run already going: show it rather than asking again. Asking
+			 * would offer to start a second job over the same tickets, which
+			 * is work nobody asked for and two sets of results racing into the
+			 * same rows.
+			 */
+			if ( recalled() ) {
+				running();
+				poll( recalled() );
+				return;
+			}
+
+			ask();
 		}
 	} );
 
 	close.addEventListener( 'click', function () {
 		window.location.reload();
 	} );
+
+	if ( dCancel ) {
+		dCancel.addEventListener( 'click', function () { dlg.close(); } );
+	}
 
 	if ( recalled() ) {
 		poll( recalled() );
@@ -2868,5 +2999,206 @@ document.addEventListener( 'click', function ( e ) {
 		if ( form ) {
 			form.submit();
 		}
+	} );
+}() );
+
+/* =====================================================================
+ * Ticket comments: read the conversation on a ticket, and reply to it,
+ * without opening Jira.
+ *
+ * The same component is rendered twice by the server -- inside the dialog
+ * the Tickets list opens, and inline on the ticket page -- so everything
+ * here works against a container rather than against the page, and the two
+ * cannot drift apart.
+ *
+ * A reply defaults to an internal note. Going public notifies whoever raised
+ * the request and cannot be undone, so it is never where a stray Enter lands.
+ * ===================================================================== */
+( function () {
+	'use strict';
+
+	var cfg = window.VulnHubApp || { i18n: {} };
+
+	function el( tag, cls, text ) {
+		var node = document.createElement( tag );
+		if ( cls ) { node.className = cls; }
+		if ( null != text ) { node.textContent = String( text ); }
+		return node;
+	}
+
+	function ago( iso ) {
+		var then = Date.parse( ( iso || '' ).replace( ' ', 'T' ) + 'Z' );
+		if ( isNaN( then ) ) { return ''; }
+
+		var secs = Math.max( 0, Math.round( ( Date.now() - then ) / 1000 ) );
+		var steps = [ [ 31536000, 'y' ], [ 2592000, 'mo' ], [ 604800, 'w' ], [ 86400, 'd' ], [ 3600, 'h' ], [ 60, 'm' ] ];
+
+		for ( var i = 0; i < steps.length; i++ ) {
+			if ( secs >= steps[ i ][ 0 ] ) {
+				return Math.floor( secs / steps[ i ][ 0 ] ) + steps[ i ][ 1 ] + ' ago';
+			}
+		}
+		return 'just now';
+	}
+
+	/* One comment. The body is set as text, never as HTML: it is somebody
+	   else's input arriving from another system. */
+	function commentNode( c ) {
+		var item = el( 'li', 'vh-comment' + ( c.public ? '' : ' vh-comment--internal' ) );
+		var head = el( 'div', 'vh-comment__head' );
+
+		head.appendChild( el( 'strong', null, c.author || 'Unknown' ) );
+		head.appendChild( el( 'span', 'vh-chip vh-chip--xs vh-chip--' + ( c.public ? 'good' : 'neutral' ), c.public ? 'reply' : 'internal' ) );
+		head.appendChild( el( 'span', 'vh-meta', ago( c.created ) ) );
+
+		item.appendChild( head );
+		item.appendChild( el( 'div', 'vh-comment__body', c.body || '' ) );
+		return item;
+	}
+
+	function render( box, comments ) {
+		var list = box.querySelector( '[data-vh-comments-list]' );
+		list.innerHTML = '';
+
+		if ( ! comments || ! comments.length ) {
+			list.appendChild( el( 'p', 'vh-meta', 'No comments on this ticket yet.' ) );
+			return;
+		}
+
+		// Oldest first: a conversation reads downwards, and the reply box is
+		// at the bottom. The API hands them back newest first.
+		var ul = el( 'ul', 'vh-comments__items' );
+		comments.slice().reverse().forEach( function ( c ) { ul.appendChild( commentNode( c ) ); } );
+		list.appendChild( ul );
+		list.scrollTop = list.scrollHeight;
+	}
+
+	function load( box, id ) {
+		var list = box.querySelector( '[data-vh-comments-list]' );
+		list.innerHTML = '';
+		list.appendChild( el( 'p', 'vh-meta', 'Loading the comments…' ) );
+
+		return wp.apiFetch( { path: '/vulnhub/v1/tickets/' + id + '/comments' } )
+			.then( function ( result ) {
+				if ( ! result.ok ) {
+					list.innerHTML = '';
+					list.appendChild( el( 'div', 'vh-notice vh-notice--warn', result.message || 'The comments could not be read.' ) );
+					return;
+				}
+				render( box, result.comments );
+			} )
+			.catch( function ( error ) {
+				list.innerHTML = '';
+				list.appendChild( el( 'div', 'vh-notice vh-notice--warn', ( error && error.message ) || cfg.i18n.error || 'The comments could not be read.' ) );
+			} );
+	}
+
+	function wire( box, id ) {
+		var post = box.querySelector( '[data-vh-comment-post]' );
+		if ( ! post || post.dataset.vhWired ) { return; }
+		post.dataset.vhWired = '1';
+
+		var text   = box.querySelector( '[data-vh-comment-body]' );
+		var status = box.querySelector( '[data-vh-comment-status]' );
+		var hint   = box.querySelector( '[data-vh-comment-hint]' );
+
+		function isPublic() {
+			var on = box.querySelector( 'input[type=radio][value=public]' );
+			return !! ( on && on.checked );
+		}
+
+		box.addEventListener( 'change', function ( e ) {
+			if ( e.target.matches( 'input[type=radio]' ) && hint ) {
+				hint.textContent = isPublic()
+					? 'The person who raised this will be notified and can read it.'
+					: 'Only agents see an internal note.';
+				box.classList.toggle( 'is-public', isPublic() );
+			}
+		} );
+
+		post.addEventListener( 'click', function () {
+			var body = ( text.value || '' ).trim();
+
+			if ( ! body ) {
+				status.textContent = 'Write something first.';
+				text.focus();
+				return;
+			}
+
+			// Say which kind is about to go out, in the button, while it goes.
+			post.disabled = true;
+			status.textContent = isPublic() ? 'Posting a reply the customer will see…' : 'Posting an internal note…';
+
+			wp.apiFetch( {
+				path: '/vulnhub/v1/tickets/' + id + '/comments',
+				method: 'POST',
+				data: { body: body, public: isPublic() ? 1 : 0 }
+			} )
+				.then( function ( result ) {
+					text.value = '';
+					status.textContent = result.message || 'Posted.';
+					post.disabled = false;
+					return load( box, id );
+				} )
+				.catch( function ( error ) {
+					// The text stays in the box: it was not posted, and
+					// retyping it is the last thing anyone wants.
+					status.textContent = ( error && error.message ) || cfg.i18n.error || 'The comment was not posted.';
+					post.disabled = false;
+				} );
+		} );
+	}
+
+	/* ---- the dialog on the Tickets list ---- */
+	document.addEventListener( 'click', function ( event ) {
+		var button = event.target.closest ? event.target.closest( '[data-vh-comments]' ) : null;
+		if ( ! button ) { return; }
+		event.preventDefault();
+
+		var dlg = document.getElementById( 'vh-ticket-comments' );
+		if ( ! dlg ) { return; }
+
+		var id  = parseInt( button.dataset.vhComments, 10 );
+		var box = dlg.querySelector( '.vh-comments' );
+		var row = button.closest( 'tr' );
+		var key = button.dataset.vhCommentsKey || '';
+
+		dlg.querySelector( '#vh-comments-title' ).textContent = key || 'Ticket';
+
+		var lede = dlg.querySelector( '[data-vh-comments-lede]' );
+		var summary = row ? row.querySelector( 'td:nth-child(3)' ) : null;
+		lede.textContent = summary ? summary.textContent.trim() : '';
+
+		// The link out stays available: this panel is a convenience, not a
+		// replacement for the ticket in Jira.
+		var jira = dlg.querySelector( '[data-vh-comments-jira]' );
+		var href = row ? row.querySelector( 'td:first-child a[target=_blank]' ) : null;
+		if ( jira ) {
+			jira.hidden = ! href;
+			if ( href ) { jira.href = href.href; }
+		}
+
+		box.setAttribute( 'data-vh-comments-for', String( id ) );
+		if ( ! dlg.open ) { dlg.showModal(); }
+
+		wire( box, id );
+		load( box, id );
+	} );
+
+	document.addEventListener( 'click', function ( event ) {
+		var close = event.target.closest ? event.target.closest( '[data-vh-comments-close]' ) : null;
+		if ( ! close ) { return; }
+		var dlg = close.closest( 'dialog' );
+		if ( dlg ) { dlg.close(); }
+	} );
+
+	/* ---- the panel on the ticket page ---- */
+	document.addEventListener( 'DOMContentLoaded', function () {
+		document.querySelectorAll( '.vh-comments--inline[data-vh-comments-for]' ).forEach( function ( box ) {
+			var id = parseInt( box.getAttribute( 'data-vh-comments-for' ), 10 );
+			if ( ! id ) { return; }
+			wire( box, id );
+			load( box, id );
+		} );
 	} );
 }() );

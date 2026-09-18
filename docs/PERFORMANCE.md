@@ -158,6 +158,71 @@ No non-200s at any level.
 
 ---
 
+---
+
+## The Vulnerabilities tabs, 2026-09-18
+
+A report that "By product and the other tabs are very slow". They were, and
+this time it *was* the application.
+
+### Measure the right number first
+
+`curl` said the products tab answered in 58 ms. The browser said 1,248 ms. Both
+were telling the truth about different things: PHP streams, so without output
+buffering the first byte leaves while the page is still being built. `curl`'s
+`time_starttransfer` caught that first byte; the browser waited for the whole
+gzipped body. **Use `%{time_total}`, not `%{time_starttransfer}`, on a
+streaming page** -- or the slow page looks seventeen times faster than it is.
+
+A blind alley worth recording: the gap first looked like a compression problem,
+because adding `Accept-Encoding: gzip` took a page from 0.058 s to 1.97 s. It
+was not. Buffering the output (`output_buffering=65536`) changed the total time
+by nothing at all -- it only made the plain-`curl` number honest. Reverted.
+
+### Where the time actually went
+
+Rendered through `render_view()` with `SAVEQUERIES`, unfiltered:
+
+| tab | render | of which SQL |
+|---|---|---|
+| Findings | 117 ms | 108 ms |
+| By product | 1,013 ms | 1,008 ms |
+| Vulnerability on assets | 1,864 ms | 1,862 ms |
+
+Essentially all of it is one or two aggregates.
+
+**1. The same query, twice.** `vuln_assets` ran its `GROUP BY f.vuln_id`
+aggregate twice -- once with `LIMIT 1` for the Export button's count, once with
+`LIMIT 25` for the table -- and its `COUNT(DISTINCT f.vuln_id)` twice with it.
+A grouped query's cost is the GROUP BY over every matching finding, not the
+rows it returns, so asking for one row was not asking for less work: 620 ms and
+225 ms, paid twice. `total` already comes back with the rows, so the page now
+reads once and both callers use it. **1,864 ms -> 1,068 ms**, output
+byte-identical.
+
+**2. The aggregates themselves are not indexable.** Both group by a `CASE`
+expression over ~258,000 open findings; EXPLAIN shows `Using temporary; Using
+filesort` whatever is indexed. So they are cached, by
+`VulnHub_Dash_App::cached_group()`, on the same epoch-keyed discipline as the
+widgets -- full filter set in the key so no two filter sets can share an
+answer, and **no stale-while-revalidate**: `bust()` ticks
+`vulnhub_widget_epoch` unconditionally, so a sync that changed the numbers is
+never answered from before it. Verified: `bust()` and `bust('findings')` both
+force a genuine recompute.
+
+### Where it landed
+
+| page | before | after (first click) | after (repeat) |
+|---|---|---|---|
+| By product, unfiltered | 1,140 ms | 1,140 ms | **181 ms** |
+| Vulnerability on assets, unfiltered | 1,950 ms | 1,068 ms | **182 ms** |
+| By product, severity=high | 193 ms | 193 ms | **120 ms** |
+
+Every page checked byte-for-byte against its output before the change.
+
+A filtered view was always fast (25 ms unfiltered-critical), which is why this
+only bit on the unfiltered tabs -- the ones you land on first.
+
 ## How to check this again
 
 ```sh

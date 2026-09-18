@@ -286,6 +286,17 @@ final class VulnHub_Jira_Adf {
 	}
 
 	/**
+	 * How big this document is on the wire.
+	 *
+	 * Jira's description field holds 32,767 characters and refuses the whole
+	 * issue over that, so the sections that grow with the selection ask this
+	 * as they go rather than finding out from a rejected create call.
+	 */
+	public function bytes(): int {
+		return strlen( (string) wp_json_encode( $this->to_array() ) );
+	}
+
+	/**
 	 * Render a document back to readable plain text.
 	 *
 	 * Used for the ticket summary line and for the mock site, which stores what

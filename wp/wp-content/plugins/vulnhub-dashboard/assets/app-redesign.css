@@ -2757,3 +2757,76 @@ dialog.vh-review[open] { display: flex; }
 /* ...and whether the application's vendor has shipped the fix (App_Fix) */
 .vh-fixroute--app.vh-fixroute--shipped { color: var(--vh-good); border-color: color-mix(in srgb, var(--vh-good) 45%, transparent); }
 .vh-fixroute--app.vh-fixroute--not_seen { color: var(--vh-bad); border-color: color-mix(in srgb, var(--vh-bad) 45%, transparent); }
+
+/* ---------------------------------------------------------------------
+ * Ticket comments: the conversation on a ticket, in the dialog the list
+ * opens and inline on the ticket page. One set of rules for both.
+ * ------------------------------------------------------------------- */
+.vh-col-comment { max-width: 320px; }
+.vh-col-act { white-space: nowrap; }
+.vh-col-act .vh-btn + .vh-btn { margin-left: 6px; }
+
+.vh-assigned { display: block; color: var(--vh-ink); }
+.vh-lastcomment { display: block; font-size: 12.5px; }
+.vh-lastcomment__body {
+	display: block; margin-top: 2px; color: var(--vh-muted);
+	/* Two lines, then stop: the column is a hint, the dialog is the text. */
+	display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.vh-chip--xs { font-size: 10px; padding: 1px 6px; }
+
+.vh-comments { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.vh-comments__dialog { max-width: 760px; }
+.vh-comments__list { max-height: 46vh; overflow: auto; }
+.vh-comments--inline .vh-comments__list { max-height: 340px; }
+.vh-comments__items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+
+.vh-comment { border: 1px solid var(--vh-line); border-radius: 10px; padding: 10px 12px; background: var(--vh-raised, transparent); }
+/* An internal note is visibly not a reply -- the difference matters more
+   here than anywhere, because it is the difference between a colleague
+   reading it and a customer reading it. */
+.vh-comment--internal { border-style: dashed; background: transparent; }
+.vh-comment__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; font-size: 12.5px; }
+.vh-comment__body { font-size: 13px; line-height: 1.55; color: var(--vh-ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.vh-comments__reply { border-top: 1px solid var(--vh-line); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.vh-comments__text { width: 100%; resize: vertical; min-height: 68px; }
+.vh-comments__vis { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 12.5px; }
+.vh-comments__vis label { display: inline-flex; align-items: center; gap: 6px; }
+.vh-comments__vis .vh-btn { margin-left: auto; }
+.vh-comments__hint { color: var(--vh-muted); }
+/* Going public is the loud state, so the box says so before Post is pressed. */
+.vh-comments.is-public .vh-comments__hint { color: var(--vh-warn, var(--vh-sev-medium)); }
+.vh-comments.is-public .vh-comments__text { border-color: color-mix(in srgb, var(--vh-warn, var(--vh-sev-medium)) 55%, transparent); }
+.vh-comments__status { margin: 0; font-size: 12.5px; color: var(--vh-muted); min-height: 1em; }
+
+.vh-panel__sub { margin-top: 18px; border-top: 1px solid var(--vh-line); padding-top: 14px; }
+.vh-panel__sub > h3 { margin: 0 0 10px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--vh-muted); }
+
+@media (max-width: 782px) {
+	.vh-col-comment { max-width: none; }
+	.vh-comments__vis .vh-btn { margin-left: 0; width: 100%; }
+}
+
+/* ---------------------------------------------------------------------
+ * "Verify all tickets": the question, then the run, in one dialog.
+ * ------------------------------------------------------------------- */
+.vh-verify__dialog { max-width: 720px; }
+.vh-verify__progress { display: flex; flex-direction: column; gap: 6px; }
+.vh-verify__bar { height: 6px; border-radius: 999px; background: var(--vh-line); overflow: hidden; }
+.vh-verify__bar > span {
+	display: block; height: 100%; width: 0;
+	background: var(--vh-accent, var(--vh-good)); border-radius: inherit;
+	transition: width .3s ease;
+}
+.vh-verify__count { margin: 0; font-size: 12.5px; color: var(--vh-muted); }
+.vh-verify__list { margin: 0; max-height: 42vh; overflow: auto; }
+.vh-verify__list:empty { display: none; }
+/* Nothing to report yet: no empty box, no stray rule. */
+.vh-verify__dialog .vh-review__body:has(.vh-verify__list:empty) .vh-verify__progress[hidden] { display: none; }
+
+/* .vh-btn sets display:inline-flex, which outranks the UA stylesheet's
+   [hidden] { display: none } -- so el.hidden = true did nothing to a button
+   and the verify dialog kept offering Cancel while it was already running.
+   Same trap as .vh-prodrow above. */
+.vh-btn[hidden], a.vh-btn[hidden] { display: none !important; }

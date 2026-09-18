@@ -265,8 +265,10 @@ final class VulnHub_Dash_Tickets {
 					<p class="vh-notice vh-notice--warn" role="alert"><?php echo esc_html( $error ); ?></p>
 				<?php endif; ?>
 
+				<?php $vh_jira_on_step1 = function_exists( 'vulnhub_jira_connector' ) && vulnhub_jira_connector() && vulnhub_jira_connector()->is_enabled(); ?>
+
 				<section class="vh-raise__step">
-					<h3><span class="vh-raise__n">1</span> <?php esc_html_e( 'Download the list', 'vulnhub' ); ?></h3>
+					<h3><span class="vh-raise__n">1</span> <?php esc_html_e( 'The list that gets attached', 'vulnhub' ); ?></h3>
 					<p class="vh-export__scope">
 						<?php
 						printf(
@@ -277,6 +279,27 @@ final class VulnHub_Dash_Tickets {
 						?>
 						<?php echo esc_html( implode( ' · ', $filters ) ); ?>
 					</p>
+
+					<?php
+					/*
+					 * Say that the file is attached, here, where the columns
+					 * are picked. The step read as "download it yourself and
+					 * attach it by hand" -- the one thing it does not mean --
+					 * because the only CSV on the screen was a button marked
+					 * Download and nothing said what the ticks were for.
+					 */
+					if ( $vh_jira_on_step1 ) :
+						?>
+						<p class="vh-sub vh-muted">
+							<?php
+							printf(
+								/* translators: %s: number of rows. */
+								esc_html( _n( 'These columns are the CSV that VulnHub attaches when it raises the ticket in Jira: %s row, one per asset. You see the exact file, with a preview, and can still change the columns in the review before anything is sent. Download CSV here is only a copy for yourself.', 'These columns are the CSV that VulnHub attaches when it raises the ticket in Jira: %s rows, one per asset. You see the exact file, with a preview, and can still change the columns in the review before anything is sent. Download CSV here is only a copy for yourself.', $total, 'vulnhub' ) ),
+								'<strong>' . esc_html( number_format_i18n( $total ) ) . '</strong>'
+							);
+							?>
+						</p>
+					<?php endif; ?>
 
 					<div class="vh-export__head">
 						<strong><?php esc_html_e( 'Columns to include', 'vulnhub' ); ?></strong>
@@ -870,6 +893,32 @@ final class VulnHub_Dash_Tickets {
 	}
 
 	/**
+	 * Does pressing Verify launch a scan on this site?
+	 *
+	 * Asked of whatever scanner is installed, so the copy on the screen is
+	 * the behaviour rather than a description of the default.
+	 */
+	public static function rescan_allowed(): bool {
+		/**
+		 * Filters whether Verify may launch a scan.
+		 *
+		 * @param bool $allowed Default false: launching is opt-in.
+		 */
+		return (bool) apply_filters( 'vulnhub_ticket_rescan_allowed', false );
+	}
+
+	/**
+	 * What Verify does, in the words that match what it will actually do.
+	 */
+	public static function verify_blurb(): string {
+		$common = __( 'Tickets already verified fixed are skipped. Without anyone pressing Verify, each ticket is checked at 10:00 the morning after its assets\' scheduled Tenable scan runs, and on its due date.', 'vulnhub' );
+
+		return self::rescan_allowed()
+			? __( 'Verify reads each ticket\'s status, assignee and latest comment from Jira, rescans its network-scanned workstations in Tenable and re-checks its findings. Servers are never rescanned from here, and agent-based machines are checked on their latest results.', 'vulnhub' ) . ' ' . $common
+			: __( 'Verify reads each ticket\'s status, assignee and latest comment from Jira and re-checks its findings against what Tenable already holds. No scan is launched: scanning from Verify is off in the Tenable settings.', 'vulnhub' ) . ' ' . $common;
+	}
+
+	/**
 	 * The Verify button for one ticket.
 	 *
 	 * @param array<string,mixed> $t Ticket row.
@@ -879,13 +928,145 @@ final class VulnHub_Dash_Tickets {
 			return '';
 		}
 
+		$title = self::rescan_allowed()
+			? __( 'Read the status, assignee and latest comment from Jira, rescan this ticket\'s network-scanned workstations in Tenable, then re-check. Servers are never rescanned from here, and agent-based machines are checked on their latest results.', 'vulnhub' )
+			: __( 'Read the status, assignee and latest comment from Jira, then re-check the findings against what Tenable already holds. No scan is launched.', 'vulnhub' );
+
 		return sprintf(
 			'<button type="button" class="vh-btn vh-btn--ghost vh-btn--sm %1$s" data-vh-check="%2$d" title="%3$s">%4$s</button>',
 			esc_attr( $extra_class ),
 			(int) $t['id'],
-			esc_attr__( 'Read the status from Jira, rescan this ticket\'s network-scanned workstations in Tenable, then re-check. Servers are never rescanned from here, and agent-based machines are checked on their latest results.', 'vulnhub' ),
+			esc_attr( $title ),
 			esc_html__( 'Verify', 'vulnhub' )
 		);
+	}
+
+	/**
+	 * Who the ticket is with, as a line.
+	 *
+	 * A service desk that routes by team leaves Jira's assignee null, so a
+	 * column that only reads `assignee` reports every ticket as unassigned
+	 * while people are actively working them. The team is the answer there,
+	 * and is labelled as a team so it is not mistaken for a person.
+	 *
+	 * @param array<string,mixed> $t Ticket row.
+	 */
+	public static function assigned_html( array $t ): string {
+		$who = class_exists( 'VulnHub_Jira_Connector' )
+			? VulnHub_Jira_Connector::assigned_to( $t )
+			: array( 'name' => trim( (string) ( $t['assignee'] ?? '' ) ), 'is_team' => false );
+
+		if ( '' === $who['name'] ) {
+			return '<span class="vh-meta">&mdash;</span>';
+		}
+
+		return '<span class="vh-assigned">' . esc_html( $who['name'] ) . '</span>'
+			. ( $who['is_team'] ? '<span class="vh-meta">' . esc_html__( 'team', 'vulnhub' ) . '</span>' : '' );
+	}
+
+	/**
+	 * The newest comment on the ticket, in a line.
+	 *
+	 * Shown from what the last refresh stored rather than read live: a list of
+	 * twenty tickets would otherwise be twenty calls to Jira to draw one
+	 * column. It carries its own "seen" time for that reason.
+	 *
+	 * @param array<string,mixed> $t Ticket row.
+	 */
+	public static function last_comment_html( array $t ): string {
+		$c = Tickets::last_comment( $t );
+
+		if ( ! $c || '' === trim( (string) ( $c['body'] ?? '' ) ) ) {
+			return '<span class="vh-meta">' . esc_html__( 'No comments yet', 'vulnhub' ) . '</span>';
+		}
+
+		return '<span class="vh-lastcomment">'
+			. '<span class="vh-chip vh-chip--' . ( empty( $c['public'] ) ? 'neutral' : 'good' ) . ' vh-chip--xs">'
+			. esc_html( empty( $c['public'] ) ? __( 'internal', 'vulnhub' ) : __( 'reply', 'vulnhub' ) )
+			. '</span> '
+			. '<strong>' . esc_html( (string) $c['author'] ) . '</strong> '
+			. '<span class="vh-meta">' . esc_html( vh_ago( (string) $c['created'] ) ) . '</span>'
+			. '<span class="vh-lastcomment__body">' . esc_html( vh_trim( (string) $c['body'], 120 ) ) . '</span>'
+			. '</span>';
+	}
+
+	/**
+	 * The View button: opens the comments for one ticket without leaving here.
+	 *
+	 * @param array<string,mixed> $t Ticket row.
+	 */
+	public static function view_button( array $t ): string {
+		return sprintf(
+			'<button type="button" class="vh-btn vh-btn--ghost vh-btn--sm" data-vh-comments="%1$d" data-vh-comments-key="%2$s" title="%3$s">%4$s</button>',
+			(int) $t['id'],
+			esc_attr( (string) $t['external_key'] ),
+			esc_attr__( 'Read the comments on this ticket and reply, without opening Jira.', 'vulnhub' ),
+			esc_html__( 'View', 'vulnhub' )
+		);
+	}
+
+	/**
+	 * Whether this user may add a comment to a ticket.
+	 */
+	public static function can_comment(): bool {
+		return current_user_can( Caps::RAISE_TICKET ) && has_filter( 'vulnhub_post_ticket_comment' );
+	}
+
+	/**
+	 * The comments component: a list JavaScript fills, and a reply box.
+	 *
+	 * Rendered both inside the dialog on the list and inline on the ticket
+	 * page, from one function, so the two cannot drift apart.
+	 *
+	 * @param int  $id     Ticket id, or 0 for the dialog, which is told later.
+	 * @param bool $inline True on the ticket page.
+	 */
+	public static function comments_body( int $id = 0, bool $inline = false ): string {
+		$out = '<div class="vh-comments' . ( $inline ? ' vh-comments--inline' : '' ) . '"'
+			. ( $id > 0 ? ' data-vh-comments-for="' . (int) $id . '"' : '' ) . '>';
+
+		$out .= '<div class="vh-comments__list" data-vh-comments-list role="status" aria-live="polite">'
+			. '<p class="vh-meta">' . esc_html__( 'Loading the comments…', 'vulnhub' ) . '</p></div>';
+
+		if ( self::can_comment() ) {
+			$out .= '<div class="vh-comments__reply">'
+				. '<label class="screen-reader-text" for="vh-comment-body-' . (int) $id . '">' . esc_html__( 'Your comment', 'vulnhub' ) . '</label>'
+				. '<textarea id="vh-comment-body-' . (int) $id . '" class="vh-comments__text" data-vh-comment-body rows="3" placeholder="'
+				. esc_attr__( 'Write a comment…', 'vulnhub' ) . '"></textarea>'
+				/*
+				 * Internal first, and checked. A reply goes to whoever raised
+				 * the request and cannot be taken back, so the quiet option is
+				 * the one a misclick lands on.
+				 */
+				. '<div class="vh-comments__vis">'
+				. '<label><input type="radio" name="vh-comment-vis-' . (int) $id . '" value="internal" checked> '
+				. esc_html__( 'Internal note', 'vulnhub' ) . '</label>'
+				. '<label><input type="radio" name="vh-comment-vis-' . (int) $id . '" value="public"> '
+				. esc_html__( 'Reply to customer', 'vulnhub' ) . '</label>'
+				. '<span class="vh-comments__hint" data-vh-comment-hint>' . esc_html__( 'Only agents see an internal note.', 'vulnhub' ) . '</span>'
+				. '<button type="button" class="vh-btn vh-btn--primary vh-btn--sm" data-vh-comment-post>' . esc_html__( 'Post', 'vulnhub' ) . '</button>'
+				. '</div>'
+				. '<p class="vh-comments__status" data-vh-comment-status role="status"></p>'
+				. '</div>';
+		}
+
+		return $out . '</div>';
+	}
+
+	/**
+	 * The dialog the list opens. One per page, filled per ticket.
+	 */
+	public static function comments_dialog(): string {
+		return '<dialog id="vh-ticket-comments" class="vh-review vh-comments__dialog" aria-labelledby="vh-comments-title">'
+			. '<form method="dialog" class="vh-modal__x"><button aria-label="' . esc_attr__( 'Close', 'vulnhub' ) . '">&times;</button></form>'
+			. '<h2 id="vh-comments-title">' . esc_html__( 'Ticket', 'vulnhub' ) . '</h2>'
+			. '<p class="vh-review__lede" data-vh-comments-lede></p>'
+			. '<div class="vh-review__body">' . self::comments_body() . '</div>'
+			. '<div class="vh-review__foot">'
+			. '<span class="vh-review__status" data-vh-comments-foot role="status"></span>'
+			. '<a class="vh-btn vh-btn--ghost" data-vh-comments-jira target="_blank" rel="noopener noreferrer" hidden>' . esc_html__( 'Open in Jira', 'vulnhub' ) . '</a>'
+			. '<button type="button" class="vh-btn" data-vh-comments-close>' . esc_html__( 'Close', 'vulnhub' ) . '</button>'
+			. '</div></dialog>';
 	}
 
 	/**
@@ -929,6 +1110,51 @@ final class VulnHub_Dash_Tickets {
 		}
 
 		return '<div class="vh-check-last" data-vh-check-last="' . (int) $t['id'] . '">' . $out . '</div>';
+	}
+
+	/**
+	 * What "Verify all tickets" is about to do, in one sentence.
+	 *
+	 * Said before it runs, and it has to be true: the browser's own confirm()
+	 * used to promise "this launches one Tenable rescan of their
+	 * network-scanned workstations" whatever the settings said, which on an
+	 * agent-based estate described something that never happens.
+	 */
+	public static function verify_all_question(): string {
+		return self::rescan_allowed()
+			? __( 'Verify every ticket that is not yet verified fixed? Each ticket\'s status, assignee and latest comment are read from Jira, one Tenable rescan of their network-scanned workstations is launched, and the findings are re-checked. Servers and agent-based machines are never rescanned.', 'vulnhub' )
+			: __( 'Verify every ticket that is not yet verified fixed? Each ticket\'s status, assignee and latest comment are read from Jira and the findings are re-checked against what Tenable already holds. No scan is launched.', 'vulnhub' );
+	}
+
+	/**
+	 * The dialog that asks, then reports.
+	 *
+	 * One dialog for both halves: the question and the progress of the run it
+	 * starts. A check over every ticket is minutes of work with a result per
+	 * ticket, and a browser confirm() can neither say that honestly nor show
+	 * it afterwards.
+	 */
+	public static function check_dialog(): string {
+		if ( ! self::can_check() ) {
+			return '';
+		}
+
+		return '<dialog id="vh-verify-all" class="vh-review vh-verify__dialog" aria-labelledby="vh-verify-title">'
+			. '<form method="dialog" class="vh-modal__x"><button aria-label="' . esc_attr__( 'Close', 'vulnhub' ) . '">&times;</button></form>'
+			. '<h2 id="vh-verify-title">' . esc_html__( 'Verify all tickets', 'vulnhub' ) . '</h2>'
+			. '<p class="vh-review__lede" data-vh-verify-lede>' . esc_html( self::verify_all_question() ) . '</p>'
+			. '<div class="vh-review__body">'
+				. '<div class="vh-verify__progress" data-vh-verify-progress hidden>'
+					. '<div class="vh-verify__bar"><span data-vh-verify-fill></span></div>'
+					. '<p class="vh-verify__count" data-vh-verify-count role="status" aria-live="polite"></p>'
+				. '</div>'
+				. '<ul class="vh-check-panel__list vh-verify__list" data-vh-verify-list></ul>'
+			. '</div>'
+			. '<div class="vh-review__foot">'
+				. '<span class="vh-review__status" data-vh-verify-status role="status"></span>'
+				. '<button type="button" class="vh-btn vh-btn--ghost" data-vh-verify-cancel>' . esc_html__( 'Cancel', 'vulnhub' ) . '</button>'
+				. '<button type="button" class="vh-btn vh-btn--primary" data-vh-verify-go>' . esc_html__( 'Verify all tickets', 'vulnhub' ) . '</button>'
+			. '</div></dialog>';
 	}
 
 	/**
@@ -1004,15 +1230,27 @@ final class VulnHub_Dash_Tickets {
 							· <?php echo esc_html( (string) $raiser->display_name ); ?>
 						<?php endif; ?>
 					</dd>
-					<?php if ( '' !== (string) ( $t['assignee'] ?? '' ) ) : ?>
-						<dt><?php esc_html_e( 'Assignee', 'vulnhub' ); ?></dt>
-						<dd><?php echo esc_html( (string) $t['assignee'] ); ?></dd>
+					<?php
+					$vh_who = class_exists( 'VulnHub_Jira_Connector' )
+						? VulnHub_Jira_Connector::assigned_to( $t )
+						: array( 'name' => trim( (string) ( $t['assignee'] ?? '' ) ), 'is_team' => false );
+					?>
+					<?php if ( '' !== $vh_who['name'] ) : ?>
+						<dt><?php echo esc_html( $vh_who['is_team'] ? __( 'Assigned team', 'vulnhub' ) : __( 'Assignee', 'vulnhub' ) ); ?></dt>
+						<dd><?php echo esc_html( $vh_who['name'] ); ?></dd>
 					<?php endif; ?>
 					<?php if ( '' !== trim( (string) ( $t['notes'] ?? '' ) ) ) : ?>
 						<dt><?php esc_html_e( 'Notes', 'vulnhub' ); ?></dt>
 						<dd class="vh-prewrap"><?php echo esc_html( (string) $t['notes'] ); ?></dd>
 					<?php endif; ?>
 				</dl>
+
+				<?php if ( 'jira' === (string) $t['provider'] ) : ?>
+					<div class="vh-panel__sub">
+						<h3><?php esc_html_e( 'Comments', 'vulnhub' ); ?></h3>
+						<?php echo self::comments_body( (int) $t['id'], true ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
+					</div>
+				<?php endif; ?>
 
 				<?php if ( Tickets::PROVIDER_JSM === (string) $t['provider'] && current_user_can( Caps::RAISE_TICKET ) ) : ?>
 					<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="vh-raise__status">

@@ -62,6 +62,18 @@ that writes, call `bust()`. When a number looks wrong, suspect the cache and
 PHP's opcache (2s revalidate) before the code — re-read after flushing rather
 than trusting one stale read. This has misled us twice.
 
+**A cap by count is not a cap by size.** The Jira description bounded every
+section it builds by count — 15 vulnerability definitions, 10 applications, 8
+solution texts, 12 evidence bullets -- and each bound reads sensibly on its own.
+They multiply. A selection that filled all of them built 36 KB into a field that
+holds 32,767, and Jira refuses the whole issue: the ticket is not long, it does
+not exist. Where a remote field has a hard limit, spend against a byte budget
+and say what was left out, and keep the stop mark a whole block below the limit
+— a check before appending is a check the next block still gets to cross.
+Measure the worst case you can actually reach, not the one you can imagine:
+ours was 30 KB across 29 real selections, and the 500-finding ticket that
+looked fine was inside the limit by 1,600 bytes.
+
 **Never hard-code a customer's column or vendor names.** Attribute names belong
 to whoever built the source system. Detect them, let an operator override, and
 log what was detected and what was not. A run that cannot explain its own

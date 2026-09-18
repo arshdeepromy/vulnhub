@@ -37,15 +37,85 @@ final class VulnHub_Jira_Ticketer {
 
 	/**
 	 * Hard ceiling on findings covered by a single request, so a runaway
-	 * "select all" cannot try to describe ten thousand rows inside one issue.
+	 * "select all" cannot try to describe a whole estate inside one issue.
+	 *
+	 * The description does not grow with the selection: every section of it is
+	 * capped, and the full list travels as the CSV attachment. So this bounds
+	 * the query, the file and the rows linked to the ticket -- not how much
+	 * text Jira is asked to hold. 500 was below what people actually select:
+	 * one product across the estate is routinely more than that, and "raise
+	 * one ticket for this product" is a single piece of work whether it lands
+	 * on 400 machines or 900. Sites with a different idea of one ticket's
+	 * worth of work move it with 'vulnhub_ticket_max_findings'.
 	 */
-	private const MAX_FINDINGS = 500;
+	private const MAX_FINDINGS = 5000;
+
+	/** Copies of a bundled component described in words before the rest are summarised. */
+	private const APP_FIX_SENTENCES = 6;
 
 	/** Longest edited description accepted, in characters (Jira's field holds 32,767). */
 	private const DESCRIPTION_EDIT_MAX = 30000;
 
 	/** Assets named in a description when the full list is attached. */
 	private const DESCRIPTION_ASSETS = 30;
+
+	/**
+	 * Where a section stops adding to the description, in bytes of ADF.
+	 *
+	 * Every section was already capped by count -- 15 definitions, 10
+	 * applications, 8 solutions, 12 evidence bullets -- and each cap is
+	 * reasonable on its own. They multiply: a definition carrying long vendor
+	 * prose runs to two kilobytes, so a selection that fills every cap builds
+	 * a description over the 32,767 Jira accepts, and Jira refuses the create
+	 * call outright. A refused ticket is worse than a short one, and the
+	 * attachment carries every finding either way -- so the sections that grow
+	 * with the selection spend against this budget and say what they left out.
+	 *
+	 * This is a *stop adding* mark, not the limit, and the difference is the
+	 * point: the check happens before a block is appended, so the block in
+	 * flight still lands after it. It sits a whole block below the limit for
+	 * that reason -- 26,000 to stop, up to ~4,500 for the largest single block
+	 * (one application's per-copy evidence), 1,500 for the SLA and closing
+	 * sections that always follow, which is 32,000 in the worst case.
+	 *
+	 * Measured before any of this existed: 3,641 findings on one product built
+	 * 36 KB, which Jira rejects outright, and an ordinary 572-finding ticket
+	 * built 31 KB -- inside the limit by 1,600 bytes, entirely by luck.
+	 */
+	private const DESCRIPTION_BYTES = 26000;
+
+	/** Where vulnerability detail stops, so remediation still gets room. */
+	private const DESCRIPTION_DETAIL_BYTES = 16000;
+
+	/** Vulnerability definitions described in full. */
+	private const DESCRIPTION_VULNS = 15;
+
+	/** Applications whose bundled components are described. */
+	private const DESCRIPTION_APPS = 10;
+
+	/** Distinct vendor solution texts quoted. */
+	private const DESCRIPTION_SOLUTIONS = 8;
+
+	/**
+	 * The most findings one ticket may cover.
+	 *
+	 * Read the limit through this everywhere, so the screens that tell an
+	 * operator what it is and the code that enforces it cannot drift apart.
+	 */
+	public static function max_findings(): int {
+		return max( 1, (int) apply_filters( 'vulnhub_ticket_max_findings', self::MAX_FINDINGS ) );
+	}
+
+	/**
+	 * The largest attachment Jira will take, in bytes.
+	 *
+	 * Jira Cloud's default is 10 MB and a site administrator can change it, so
+	 * a deployment that raised it says so with
+	 * 'vulnhub_ticket_attachment_limit' rather than losing the warning.
+	 */
+	public static function attachment_limit(): int {
+		return max( 1, (int) apply_filters( 'vulnhub_ticket_attachment_limit', 10 * MB_IN_BYTES ) );
+	}
 
 	/**
 	 * Resolved account ids, keyed by the configured assignee string.
@@ -69,6 +139,8 @@ final class VulnHub_Jira_Ticketer {
 		add_filter( 'vulnhub_draft_ticket', array( $this, 'draft_ticket' ), 10, 2 );
 		add_action( 'admin_post_' . self::DRAFT_CSV_ACTION, array( $this, 'download_draft_csv' ) );
 		add_filter( 'vulnhub_refresh_ticket', array( $this, 'refresh_ticket' ), 10, 2 );
+		add_filter( 'vulnhub_ticket_comments', array( $this, 'ticket_comments' ), 10, 2 );
+		add_filter( 'vulnhub_post_ticket_comment', array( $this, 'post_ticket_comment' ), 10, 4 );
 	}
 
 	/**
@@ -125,6 +197,82 @@ final class VulnHub_Jira_Ticketer {
 		return $connector ? $connector->refresh_ticket( $result, $ticket ) : $result;
 	}
 
+	/**
+	 * Answer `vulnhub_ticket_comments`.
+	 *
+	 * A ticket recorded by hand (`provider = jsm`) has no issue to read, and
+	 * says so rather than looking like a ticket nobody has commented on.
+	 *
+	 * @param array<string,mixed>|null $result Result from an earlier ITSM plugin.
+	 * @param array<string,mixed>      $ticket Ticket row.
+	 * @return array<string,mixed>|null
+	 */
+	public function ticket_comments( ?array $result, array $ticket ): ?array {
+		if ( null !== $result ) {
+			return $result;
+		}
+
+		$connector = vulnhub_jira_connector();
+
+		if ( ! $connector ) {
+			return null;
+		}
+
+		if ( 'jira' !== (string) ( $ticket['provider'] ?? '' ) ) {
+			return array(
+				'ok'       => false,
+				'message'  => __( 'This ticket was recorded by hand, so VulnHub has no issue to read comments from. Open it in Jira.', 'vulnhub' ),
+				'comments' => array(),
+			);
+		}
+
+		$read = $connector->comments( (string) ( $ticket['external_key'] ?? '' ) );
+
+		// Reading the comments is also the freshest look anyone has had at the
+		// ticket, so keep the newest one rather than throwing the trip away.
+		if ( ! empty( $read['ok'] ) ) {
+			\VulnHub\Core\Tickets::set_last_comment( (int) $ticket['id'], $read['comments'][0] ?? null );
+		}
+
+		return $read;
+	}
+
+	/**
+	 * Answer `vulnhub_post_ticket_comment`.
+	 *
+	 * @param array<string,mixed>|null $result Result from an earlier ITSM plugin.
+	 * @param array<string,mixed>      $ticket Ticket row.
+	 * @param string                   $body   Comment text.
+	 * @param bool                     $public True for a customer-visible reply.
+	 * @return array<string,mixed>|null
+	 */
+	public function post_ticket_comment( ?array $result, array $ticket, string $body, bool $public ): ?array {
+		if ( null !== $result ) {
+			return $result;
+		}
+
+		$connector = vulnhub_jira_connector();
+
+		if ( ! $connector ) {
+			return null;
+		}
+
+		if ( 'jira' !== (string) ( $ticket['provider'] ?? '' ) ) {
+			return array(
+				'ok'      => false,
+				'message' => __( 'This ticket was recorded by hand, so there is no issue here to comment on. Open it in Jira.', 'vulnhub' ),
+			);
+		}
+
+		$posted = $connector->post_comment( (string) ( $ticket['external_key'] ?? '' ), $body, $public );
+
+		if ( ! empty( $posted['ok'] ) && isset( $posted['comment'] ) ) {
+			\VulnHub\Core\Tickets::set_last_comment( (int) $ticket['id'], (array) $posted['comment'] );
+		}
+
+		return $posted;
+	}
+
 	/* =================================================================
 	 * The main entry point
 	 * ============================================================== */
@@ -169,8 +317,10 @@ final class VulnHub_Jira_Ticketer {
 			);
 		}
 
-		if ( count( $finding_ids ) > self::MAX_FINDINGS ) {
-			$finding_ids = array_slice( $finding_ids, 0, self::MAX_FINDINGS );
+		$max = self::max_findings();
+
+		if ( count( $finding_ids ) > $max ) {
+			$finding_ids = array_slice( $finding_ids, 0, $max );
 		}
 
 		$rows = $this->load_findings( $finding_ids );
@@ -327,15 +477,16 @@ final class VulnHub_Jira_Ticketer {
 				}
 			}
 
-			$scope = VulnHub_Dash_Export::findings_scope( $filters, self::MAX_FINDINGS );
+			$max   = self::max_findings();
+			$scope = VulnHub_Dash_Export::findings_scope( $filters, $max );
 
-			if ( $scope['total'] > self::MAX_FINDINGS ) {
+			if ( $scope['total'] > $max ) {
 				return $fail(
 					sprintf(
 						/* translators: 1: matching findings, 2: the limit. */
 						__( '%1$d findings match these filters; one ticket can cover at most %2$d. Narrow the filters.', 'vulnhub' ),
 						$scope['total'],
-						self::MAX_FINDINGS
+						$max
 					)
 				);
 			}
@@ -471,6 +622,15 @@ final class VulnHub_Jira_Ticketer {
 		if ( ! empty( $built['description_trimmed'] ) ) {
 			/* translators: %s: characters. */
 			$warnings[] = sprintf( __( 'Your edited description was cut to %s characters.', 'vulnhub' ), number_format_i18n( self::DESCRIPTION_EDIT_MAX ) );
+		}
+
+		if ( $csv && strlen( (string) $csv['bytes'] ) > self::attachment_limit() ) {
+			$warnings[] = sprintf(
+				/* translators: 1: file size, 2: the limit Jira accepts. */
+				__( 'The attachment is %1$s, over the %2$s this Jira accepts. The file is uploaded after the issue is created, so the ticket would be raised with the attachment missing. Narrow the selection, or attach the file by hand afterwards.', 'vulnhub' ),
+				size_format( strlen( (string) $csv['bytes'] ) ),
+				size_format( self::attachment_limit() )
+			);
 		}
 
 		if ( $description_bytes > 32000 ) {
@@ -1206,12 +1366,12 @@ final class VulnHub_Jira_Ticketer {
 
 		// Refused, not trimmed: quietly ticketing the first 500 of 800 would
 		// leave 300 findings looking handled when nobody was asked about them.
-		if ( count( $finding_ids ) > self::MAX_FINDINGS ) {
+		if ( count( $finding_ids ) > self::max_findings() ) {
 			$out['error'] = sprintf(
 				/* translators: 1: selected count, 2: the limit. */
 				__( '%1$d findings are selected; one ticket can cover at most %2$d. Narrow the selection.', 'vulnhub' ),
 				count( $finding_ids ),
-				self::MAX_FINDINGS
+				self::max_findings()
 			);
 			return $out;
 		}
@@ -2083,7 +2243,16 @@ final class VulnHub_Jira_Ticketer {
 				);
 		}
 
-		foreach ( $waiting as $g ) {
+		/*
+		 * One sentence per copy, not one per finding. A selection covering a
+		 * product across the estate carries hundreds of copies of a bundled
+		 * component, and naming them all is both unreadable and enough text on
+		 * its own to reach the size Jira refuses. The copies are in the
+		 * attachment; the paragraph says how many there are.
+		 */
+		$waiting_shown = array_slice( $waiting, 0, self::APP_FIX_SENTENCES, true );
+
+		foreach ( $waiting_shown as $g ) {
 			$sentences[] = sprintf(
 				/* translators: 1: "Except:" or "", 2: component, 3: location inside the app, 4: version, 5: machines, 6: findings. */
 				_n( '%1$s%2$s in %3$s is still %4$s on every machine it was seen on (%5$d)%7$s, so updating will not fix %6$d finding yet: remove that component if it is not used, or record an exception.', '%1$s%2$s in %3$s is still %4$s on every machine it was seen on (%5$d)%7$s, so updating will not fix %6$d findings yet: remove that component if it is not used, or record an exception.', $g['findings'], 'vulnhub' ),
@@ -2097,6 +2266,17 @@ final class VulnHub_Jira_Ticketer {
 					/* translators: 1: application, 2: application version. */
 					? sprintf( __( ', including %1$s %2$s, the newest version seen', 'vulnhub' ), $app, $g['newest'] )
 					: ''
+			);
+		}
+
+		$waiting_rest = array_slice( $waiting, count( $waiting_shown ), null, true );
+
+		if ( $waiting_rest ) {
+			$sentences[] = sprintf(
+				/* translators: 1: number of further copies, 2: findings on them. */
+				_n( 'A further copy has no fixed build either, covering %2$d more finding on this ticket.', 'A further %1$d copies have no fixed build either, covering %2$d more findings on this ticket.', count( $waiting_rest ), 'vulnhub' ),
+				count( $waiting_rest ),
+				$count( $waiting_rest )
 			);
 		}
 
@@ -2441,12 +2621,12 @@ final class VulnHub_Jira_Ticketer {
 				$doc->paragraph( $description );
 			}
 
-			if ( count( $seen_vulns ) >= 15 ) {
+			if ( count( $seen_vulns ) >= self::DESCRIPTION_VULNS || $doc->bytes() >= self::DESCRIPTION_DETAIL_BYTES ) {
 				$doc->paragraph(
 					sprintf(
 						/* translators: %d: number of vulnerabilities not listed. */
 						__( '… and %d further vulnerability definition(s); every finding is listed in the attachment, when one is attached.', 'vulnhub' ),
-						max( 0, count( $vulns ) - 15 )
+						max( 0, count( $vulns ) - count( $seen_vulns ) )
 					)
 				);
 				break;
@@ -2478,8 +2658,30 @@ final class VulnHub_Jira_Ticketer {
 		}
 
 		if ( $bundled ) {
-			foreach ( array_slice( $bundled, 0, 10, true ) as $app => $copies ) {
+			$described = 0;
+
+			foreach ( array_slice( $bundled, 0, self::DESCRIPTION_APPS, true ) as $app => $copies ) {
+				if ( $doc->bytes() >= self::DESCRIPTION_BYTES ) {
+					break;
+				}
+
 				$this->describe_app_fix( $doc, (string) $app, $copies );
+				++$described;
+			}
+
+			if ( count( $bundled ) > $described ) {
+				$doc->paragraph(
+					sprintf(
+						/* translators: %d: applications not described here. */
+						_n(
+							'One further application ships an affected component; its findings are in the attachment.',
+							'%d further applications ship affected components; their findings are in the attachment.',
+							count( $bundled ) - $described,
+							'vulnhub'
+						),
+						count( $bundled ) - $described
+					)
+				);
 			}
 		}
 
@@ -2503,8 +2705,15 @@ final class VulnHub_Jira_Ticketer {
 		}
 
 		if ( $solutions ) {
-			foreach ( array_slice( array_values( $solutions ), 0, 8 ) as $solution ) {
-				$doc->paragraph( $solution );
+			foreach ( array_slice( array_values( $solutions ), 0, self::DESCRIPTION_SOLUTIONS ) as $solution ) {
+				if ( $doc->bytes() >= self::DESCRIPTION_BYTES ) {
+					break;
+				}
+
+				// A scanner's remediation text is occasionally an essay. The
+				// instruction is at the top of it, so a bounded quote says the
+				// same thing as the whole of it.
+				$doc->paragraph( vh_trim( $solution, 2000 ) );
 			}
 		} elseif ( ! $bundled ) {
 			$doc->paragraph( __( 'The vulnerability source published no remediation text for these findings. Apply the vendor patch or mitigation referenced by the CVEs above.', 'vulnhub' ) );

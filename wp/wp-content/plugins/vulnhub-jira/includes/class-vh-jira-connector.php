@@ -38,6 +38,9 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 	 */
 	private const SYNC_CEILING = 2000;
 
+	/** Longest comment accepted, in characters (Jira's comment body holds 32,767). */
+	private const COMMENT_MAX = 30000;
+
 	/**
 	 * Fields requested from Jira. Asking for a narrow set is what keeps the
 	 * enhanced search fast and its pages full.
@@ -64,6 +67,11 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 	private ?VulnHub_Jira_Client $client = null;
 
 	/**
+	 * Routing directory, built on demand.
+	 */
+	private ?VulnHub_Jira_Directory $directory = null;
+
+	/**
 	 * Simulated site, built once per request in mock mode.
 	 */
 	private ?VulnHub_Jira_Mock $mock_site = null;
@@ -78,6 +86,29 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 	/* =================================================================
 	 * Identity
 	 * ============================================================== */
+
+	/**
+	 * Fields to request, plus the Team field when this site has one.
+	 *
+	 * Not part of SYNC_FIELDS because the field's id is site specific and only
+	 * known once the directory has looked. Asked for by id rather than through
+	 * `*navigable`, which would return every navigable field on every issue of
+	 * a two-thousand-ticket sync -- the opposite of why the list is narrow.
+	 *
+	 * @return string[]
+	 */
+	private function sync_fields(): array {
+		$id = (string) ( $this->directory()->team_field()['id'] ?? '' );
+
+		return '' === $id ? self::SYNC_FIELDS : array_merge( self::SYNC_FIELDS, array( $id ) );
+	}
+
+	/**
+	 * The routing directory for this connector, built once per request.
+	 */
+	private function directory(): VulnHub_Jira_Directory {
+		return $this->directory ??= new VulnHub_Jira_Directory( $this );
+	}
 
 	/**
 	 * Machine id.
@@ -983,7 +1014,7 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 			++$guard;
 			++$this->counts['requests'];
 
-			$response = $this->client()->search_jql( $jql, self::SYNC_FIELDS, count( $keys ), $token );
+			$response = $this->client()->search_jql( $jql, $this->sync_fields(), count( $keys ), $token );
 
 			if ( ! $response->ok() ) {
 				$this->log(
@@ -1102,6 +1133,20 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 		$category = (array) ( $status['statusCategory'] ?? array() );
 		$assignee = is_array( $fields['assignee'] ?? null ) ? (array) $fields['assignee'] : array();
 
+		// Whoever is actually carrying it. A desk that routes by team assigns
+		// the team, not a person, and "unassigned" on a ticket somebody is
+		// working is worse than saying nothing.
+		$team_field = $this->directory()->team_field();
+		$team_id    = (string) ( $team_field['id'] ?? '' );
+		$team_raw   = '' !== $team_id ? ( $fields[ $team_id ] ?? null ) : null;
+		$team_name  = '';
+
+		if ( is_array( $team_raw ) ) {
+			$team_name = (string) ( $team_raw['name'] ?? ( $team_raw['value'] ?? '' ) );
+		} elseif ( is_string( $team_raw ) ) {
+			$team_name = $team_raw;
+		}
+
 		return array(
 			'provider'        => 'jira',
 			'external_id'     => (string) ( $issue['id'] ?? '' ),
@@ -1123,7 +1168,194 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 				'updated'        => (string) ( $fields['updated'] ?? '' ),
 				'resolutiondate' => (string) ( $fields['resolutiondate'] ?? '' ),
 				'status_colour'  => (string) ( $category['colorName'] ?? '' ),
+				'team_name'      => $team_name,
 			),
+		);
+	}
+
+	/**
+	 * Who a ticket is with: the assignee, or the team carrying it.
+	 *
+	 * @param array<string,mixed> $ticket Ticket row.
+	 * @return array{name:string,is_team:bool}
+	 */
+	public static function assigned_to( array $ticket ): array {
+		$person = trim( (string) ( $ticket['assignee'] ?? '' ) );
+
+		if ( '' !== $person ) {
+			return array( 'name' => $person, 'is_team' => false );
+		}
+
+		$payload = json_decode( (string) ( $ticket['payload_json'] ?? '' ), true );
+		$team    = is_array( $payload ) ? trim( (string) ( $payload['team_name'] ?? '' ) ) : '';
+
+		return array( 'name' => $team, 'is_team' => '' !== $team );
+	}
+
+	/* =================================================================
+	 * Comments
+	 * ============================================================== */
+
+	/**
+	 * Every comment on an issue, newest first.
+	 *
+	 * @return array{ok:bool,message:string,comments:array<int,array<string,mixed>>}
+	 */
+	public function comments( string $key, int $max = 50 ): array {
+		if ( ! $this->is_enabled() ) {
+			return array( 'ok' => false, 'message' => __( 'Jira is not enabled.', 'vulnhub' ), 'comments' => array() );
+		}
+		if ( '' === trim( $key ) ) {
+			return array( 'ok' => false, 'message' => __( 'That ticket has no Jira issue key.', 'vulnhub' ), 'comments' => array() );
+		}
+
+		$response = $this->client()->issue_comments( $key, $max );
+
+		if ( ! $response->ok() ) {
+			return array(
+				'ok'       => false,
+				'message'  => sprintf(
+					/* translators: 1: issue key, 2: HTTP status, 3: error message. */
+					__( 'Could not read the comments on %1$s (HTTP %2$d): %3$s', 'vulnhub' ),
+					$key,
+					$response->status,
+					vh_trim( $response->error_message(), 160 )
+				),
+				'comments' => array(),
+			);
+		}
+
+		$out = array();
+
+		foreach ( (array) ( $response->data()['comments'] ?? array() ) as $raw ) {
+			$out[] = $this->normalise_comment( (array) $raw );
+		}
+
+		return array( 'ok' => true, 'message' => '', 'comments' => $out );
+	}
+
+	/**
+	 * The newest comment on an issue, or null when there are none and when the
+	 * read fails -- a caller refreshing a status should not lose the status
+	 * because the comments could not be read.
+	 *
+	 * @return array<string,mixed>|null
+	 */
+	public function latest_comment( string $key ): ?array {
+		$read = $this->comments( $key, 1 );
+
+		return empty( $read['ok'] ) || ! $read['comments'] ? null : $read['comments'][0];
+	}
+
+	/**
+	 * Add a comment to an issue.
+	 *
+	 * On a service desk an issue comment and a request comment are not the
+	 * same thing: only the request API can say whether the customer sees it,
+	 * and a comment added through the issue API is public by default. So
+	 * anything with a visibility goes through the service desk route, and the
+	 * issue route is the fallback for a project that is not a desk -- where
+	 * "internal" has no meaning and the caller is told so rather than being
+	 * quietly given a public comment.
+	 *
+	 * @param bool $public True for a reply the customer sees.
+	 * @return array{ok:bool,message:string,comment?:array<string,mixed>}
+	 */
+	public function post_comment( string $key, string $body, bool $public ): array {
+		$body = trim( $body );
+
+		if ( ! $this->is_enabled() ) {
+			return array( 'ok' => false, 'message' => __( 'Jira is not enabled.', 'vulnhub' ) );
+		}
+		if ( '' === trim( $key ) ) {
+			return array( 'ok' => false, 'message' => __( 'That ticket has no Jira issue key.', 'vulnhub' ) );
+		}
+		if ( '' === $body ) {
+			return array( 'ok' => false, 'message' => __( 'Write something first.', 'vulnhub' ) );
+		}
+		if ( mb_strlen( $body ) > self::COMMENT_MAX ) {
+			return array(
+				'ok'      => false,
+				/* translators: %s: character limit. */
+				'message' => sprintf( __( 'That comment is longer than the %s characters Jira accepts.', 'vulnhub' ), number_format_i18n( self::COMMENT_MAX ) ),
+			);
+		}
+
+		$response = $this->client()->request_comment( $key, $body, $public );
+
+		/*
+		 * 404 from the service desk API means this issue is not a request --
+		 * an ordinary project, or a desk the token cannot see. An internal
+		 * note cannot be honoured there, so it is refused rather than posted
+		 * where the customer would read it.
+		 */
+		if ( 404 === $response->status ) {
+			if ( ! $public ) {
+				return array(
+					'ok'      => false,
+					'message' => sprintf(
+						/* translators: %s: issue key. */
+						__( '%s is not a service desk request, so there is no internal note to post -- every comment on it is visible to anyone who can see the issue. Post it as a reply if you meant to.', 'vulnhub' ),
+						$key
+					),
+				);
+			}
+
+			$response = $this->client()->comment( $key, VulnHub_Jira_Adf::doc()->paragraph( $body )->to_array() );
+		}
+
+		if ( ! $response->ok() ) {
+			return array(
+				'ok'      => false,
+				'message' => sprintf(
+					/* translators: 1: issue key, 2: HTTP status, 3: error message. */
+					__( 'Jira refused the comment on %1$s (HTTP %2$d): %3$s', 'vulnhub' ),
+					$key,
+					$response->status,
+					vh_trim( $response->error_message(), 160 )
+				),
+			);
+		}
+
+		$this->log( sprintf( 'Commented on %s (%s)', $key, $public ? 'reply to customer' : 'internal note' ) );
+
+		return array(
+			'ok'      => true,
+			'message' => $public
+				? __( 'Posted as a reply the customer can see.', 'vulnhub' )
+				: __( 'Posted as an internal note.', 'vulnhub' ),
+			'comment' => $this->normalise_comment( (array) $response->data() ),
+		);
+	}
+
+	/**
+	 * One comment, flattened for the screen.
+	 *
+	 * `jsdPublic` is the service desk's own flag and is absent on an ordinary
+	 * project, where every comment is as visible as the issue. Absent is read
+	 * as public, because that is what it means -- never as internal, which
+	 * would label a customer-visible comment as private.
+	 *
+	 * @param array<string,mixed> $raw Comment from Jira.
+	 * @return array<string,mixed>
+	 */
+	private function normalise_comment( array $raw ): array {
+		$author = (array) ( $raw['author'] ?? array() );
+		$body   = (array) ( $raw['body'] ?? array() );
+
+		return array(
+			'id'        => (string) ( $raw['id'] ?? '' ),
+			'author'    => (string) ( $author['displayName'] ?? __( 'Unknown', 'vulnhub' ) ),
+			'author_id' => (string) ( $author['accountId'] ?? '' ),
+			'avatar'    => (string) ( $author['avatarUrls']['24x24'] ?? '' ),
+			'body'      => trim( VulnHub_Jira_Adf::to_text( $body ) ),
+			'html'      => VulnHub_Jira_Adf::to_html( $body ),
+			// Jira sends ISO8601 with the site's own offset. Storage is UTC,
+			// always -- left alone, a comment from this morning reads "in 12
+			// hours" on a New Zealand site.
+			'created'   => (string) ( vh_to_mysql( $raw['created'] ?? '' ) ?? '' ),
+			'updated'   => (string) ( vh_to_mysql( $raw['updated'] ?? '' ) ?? '' ),
+			'public'    => ! array_key_exists( 'jsdPublic', $raw ) || (bool) $raw['jsdPublic'],
 		);
 	}
 
@@ -1175,7 +1407,7 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 			);
 		}
 
-		$response = $this->client()->get_issue( $key, self::SYNC_FIELDS );
+		$response = $this->client()->get_issue( $key, $this->sync_fields() );
 
 		if ( ! $response->ok() ) {
 			return array(
@@ -1195,18 +1427,45 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 
 		\VulnHub\Core\Tickets::upsert( $normalised );
 
+		/*
+		 * What is actually happening on the ticket, not just what column it
+		 * sits in. A status of "To Do" three weeks running says nothing; "the
+		 * desk asked a question on Tuesday and nobody answered" says all of
+		 * it. Refreshing it here means every Verify picks it up, because Verify
+		 * refreshes first. A failure to read comments never fails the refresh
+		 * -- the status is the point, the comment is the colour.
+		 */
+		$comment = $this->latest_comment( $key );
+
+		if ( null !== $comment ) {
+			\VulnHub\Core\Tickets::set_last_comment( (int) $ticket['id'], $comment );
+		}
+
 		if ( 'done' === $normalised['status_category'] && ! $was_done ) {
 			\VulnHub\Core\Tickets::mark_closed( (int) $ticket['id'], $normalised['resolution'] );
+		}
+
+		$said = '';
+
+		if ( null !== $comment && '' !== (string) $comment['body'] ) {
+			$said = sprintf(
+				/* translators: 1: author, 2: how long ago, 3: what they said. */
+				__( ' Last comment %2$s by %1$s: "%3$s"', 'vulnhub' ),
+				(string) $comment['author'],
+				vh_ago( (string) $comment['created'] ),
+				vh_trim( (string) $comment['body'], 140 )
+			);
 		}
 
 		return array(
 			'ok'      => true,
 			'message' => sprintf(
-				/* translators: 1: issue key, 2: status name, 3: assignee. */
-				__( '%1$s is now "%2$s"%3$s.', 'vulnhub' ),
+				/* translators: 1: issue key, 2: status name, 3: assignee, 4: the last comment. */
+				__( '%1$s is now "%2$s"%3$s.%4$s', 'vulnhub' ),
 				$key,
 				$normalised['status'],
-				'' !== $normalised['assignee'] ? sprintf( __( ', assigned to %s', 'vulnhub' ), $normalised['assignee'] ) : ''
+				'' !== $normalised['assignee'] ? sprintf( __( ', assigned to %s', 'vulnhub' ), $normalised['assignee'] ) : '',
+				$said
 			),
 			'ticket'  => \VulnHub\Core\Tickets::by_key( $key ),
 		);

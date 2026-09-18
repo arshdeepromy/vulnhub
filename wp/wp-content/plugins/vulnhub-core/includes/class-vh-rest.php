@@ -181,6 +181,25 @@ final class Rest {
 
 		register_rest_route(
 			self::NS,
+			'/tickets/(?P<id>\d+)/comments',
+			array(
+				array(
+					'methods'             => 'GET',
+					'callback'            => array( $this, 'ticket_comments' ),
+					'permission_callback' => array( $this, 'can_view' ),
+				),
+				array(
+					// Writing to somebody else's ticket is a raise-level act,
+					// not a read-level one.
+					'methods'             => 'POST',
+					'callback'            => array( $this, 'post_ticket_comment' ),
+					'permission_callback' => array( $this, 'can_raise' ),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::NS,
 			'/exceptions',
 			array(
 				array(
@@ -579,6 +598,82 @@ final class Rest {
 		if ( null === $result ) {
 			return new WP_Error( 'vulnhub_no_itsm', __( 'No ticketing integration is active.', 'vulnhub' ), array( 'status' => 409 ) );
 		}
+
+		return new WP_REST_Response( $result );
+	}
+
+	/**
+	 * Every comment on a ticket, newest first.
+	 */
+	public function ticket_comments( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$ticket = Tickets::get( (int) $request['id'] );
+
+		if ( ! $ticket ) {
+			return new WP_Error( 'vulnhub_not_found', __( 'Ticket not found.', 'vulnhub' ), array( 'status' => 404 ) );
+		}
+
+		/**
+		 * Filters the comments read back for one ticket.
+		 *
+		 * @param array<string,mixed>|null $result Result.
+		 * @param array<string,mixed>      $ticket Ticket row.
+		 */
+		$result = apply_filters( 'vulnhub_ticket_comments', null, $ticket );
+
+		if ( null === $result ) {
+			return new WP_Error( 'vulnhub_no_itsm', __( 'No ticketing integration is active.', 'vulnhub' ), array( 'status' => 409 ) );
+		}
+
+		return new WP_REST_Response( $result );
+	}
+
+	/**
+	 * Add a comment to a ticket.
+	 *
+	 * `public` has to arrive as a real decision: absent means an internal
+	 * note, because a default that reaches the customer is the wrong way round
+	 * for a field nobody set.
+	 */
+	public function post_ticket_comment( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$ticket = Tickets::get( (int) $request['id'] );
+
+		if ( ! $ticket ) {
+			return new WP_Error( 'vulnhub_not_found', __( 'Ticket not found.', 'vulnhub' ), array( 'status' => 404 ) );
+		}
+
+		$body = trim( (string) $request->get_param( 'body' ) );
+
+		if ( '' === $body ) {
+			return new WP_Error( 'vulnhub_bad_request', __( 'Write something first.', 'vulnhub' ), array( 'status' => 400 ) );
+		}
+
+		$public = in_array( $request->get_param( 'public' ), array( true, 1, '1', 'true', 'yes', 'on' ), true );
+
+		/**
+		 * Filters posting a comment to a ticket.
+		 *
+		 * @param array<string,mixed>|null $result Result.
+		 * @param array<string,mixed>      $ticket Ticket row.
+		 * @param string                   $body   Comment text.
+		 * @param bool                     $public True for a customer-visible reply.
+		 */
+		$result = apply_filters( 'vulnhub_post_ticket_comment', null, $ticket, $body, $public );
+
+		if ( null === $result ) {
+			return new WP_Error( 'vulnhub_no_itsm', __( 'No ticketing integration is active.', 'vulnhub' ), array( 'status' => 409 ) );
+		}
+
+		if ( empty( $result['ok'] ) ) {
+			return new WP_Error( 'vulnhub_comment_failed', (string) ( $result['message'] ?? __( 'The comment was not posted.', 'vulnhub' ) ), array( 'status' => 502 ) );
+		}
+
+		vulnhub()->logger->audit(
+			'ticket.comment',
+			sprintf( 'Commented on %s (%s)', (string) $ticket['external_key'], $public ? 'reply to customer' : 'internal note' ),
+			'ticket',
+			(int) $ticket['id'],
+			array( 'public' => $public )
+		);
 
 		return new WP_REST_Response( $result );
 	}

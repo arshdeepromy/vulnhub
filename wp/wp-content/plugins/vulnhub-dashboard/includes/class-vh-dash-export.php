@@ -1388,7 +1388,7 @@ final class VulnHub_Dash_Export {
 				);
 			}
 
-			flush();
+			self::push();
 			$offset += 500;
 		} while ( $vulns && $offset < min( self::MAX_ROWS, (int) ( $page['total'] ?? 0 ) ) );
 
@@ -1507,7 +1507,7 @@ final class VulnHub_Dash_Export {
 					implode( ' ', $rem['cve_list'] ),
 				)
 			);
-			flush();
+			self::push();
 		}
 
 		self::put( $out, array() );
@@ -1552,7 +1552,7 @@ final class VulnHub_Dash_Export {
 					)
 				);
 			}
-			flush();
+			self::push();
 		}
 	}
 
@@ -1710,6 +1710,23 @@ final class VulnHub_Dash_Export {
 	 * @param callable(array):array              $query Repository call.
 	 * @param callable(array<string,mixed>):void $write Row writer.
 	 */
+	/**
+	 * Push what has been written so far to the browser.
+	 *
+	 * PHP now buffers output (see php.ini): without buffering, every echo was
+	 * its own write and mod_deflate paid a sync block per write, which cost
+	 * seconds on a large page. Buffering means flush() alone no longer empties
+	 * PHP's own buffer, so a streaming download has to ask for both -- and
+	 * ob_flush() throws if there is no buffer, hence the level check.
+	 */
+	private static function push(): void {
+		if ( ob_get_level() > 0 ) {
+			@ob_flush(); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		}
+
+		flush();
+	}
+
 	private static function each( array $base, callable $query, callable $write ): void {
 		$offset = 0;
 
@@ -1725,7 +1742,7 @@ final class VulnHub_Dash_Export {
 			// a file in memory inside a REST call: never -- flushing there
 			// would send headers ahead of the JSON response.
 			if ( null === self::$src ) {
-				flush();
+				self::push();
 			}
 
 			$offset += self::PAGE;
