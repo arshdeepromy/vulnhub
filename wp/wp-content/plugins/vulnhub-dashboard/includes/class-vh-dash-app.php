@@ -3768,21 +3768,67 @@ final class VulnHub_Dash_App {
 		$vh_sla  = in_array( self::q( 'sla' ), array( 'met', 'on_track', 'breached', 'overdue', 'no_due' ), true ) ? self::q( 'sla' ) : '';
 		$vh_tsev = in_array( self::q( 'tsev' ), array( 'critical', 'high', 'medium', 'low', 'asset' ), true ) ? self::q( 'tsev' ) : '';
 		$vh_ids  = VulnHub_Dash_Ticket_Report::ids_for( $vh_sla, $vh_tsev );
-		$q       = Tickets::query(
-			array_filter(
-				array(
-					'ids'                => $vh_ids,
-					'status_category'    => self::q( 'status_category' ),
-					'verification_state' => self::q( 'verification_state' ),
-					'kind'               => self::q( 'kind' ),
-					'search'             => self::q( 'search' ),
-					'limit'              => $per,
-					'offset'             => ( $paged - 1 ) * $per,
-				),
-				static fn( $v ): bool => '' !== $v && null !== $v
+		$vh_cat  = self::q( 'status_category' );
+
+		/*
+		 * Open or closed is the first question this screen answers, so it is a
+		 * tab rather than one value in a filter: day to day nobody wants a
+		 * closed ticket in the way, and "where did it go" needs an obvious
+		 * answer rather than a dropdown nobody thinks to change.
+		 *
+		 * Open is the default -- except when the report above has drilled in,
+		 * because a link built from an explicit set of ids (met SLA, say,
+		 * which is only ever about closed tickets) must not be quietly
+		 * narrowed to nothing.
+		 */
+		$vh_drill = '' !== $vh_sla || '' !== $vh_tsev;
+		$vh_state = self::q( 'tstate' );
+		$vh_state = in_array( $vh_state, array( 'open', 'closed', 'all' ), true )
+			? $vh_state
+			: ( $vh_drill ? 'all' : 'open' );
+
+		// The Status filter is the finer grain of the same axis, so the more
+		// specific control wins rather than the two contradicting each other.
+		if ( 'done' === $vh_cat ) {
+			$vh_state = 'closed';
+		} elseif ( in_array( $vh_cat, array( 'new', 'indeterminate' ), true ) && 'closed' === $vh_state ) {
+			$vh_state = 'open';
+		}
+
+		$vh_args = array_filter(
+			array(
+				'ids'                => $vh_ids,
+				'status_category'    => $vh_cat,
+				'verification_state' => self::q( 'verification_state' ),
+				'kind'               => self::q( 'kind' ),
+				'search'             => self::q( 'search' ),
+			),
+			static fn( $v ): bool => '' !== $v && null !== $v
+		);
+
+		// Counted before the tab narrows anything, so each tab can say how
+		// many rows it holds under the filters that are still in force.
+		$vh_counts = Tickets::state_counts( $vh_args );
+
+		if ( '' === $vh_cat ) {
+			if ( 'closed' === $vh_state ) {
+				$vh_args['status_category'] = 'done';
+			} elseif ( 'open' === $vh_state ) {
+				$vh_args['open'] = true;
+			}
+		}
+
+		$q = Tickets::query(
+			$vh_args + array(
+				'limit'  => $per,
+				'offset' => ( $paged - 1 ) * $per,
 			)
 		);
 		$pages = max( 1, (int) ceil( (int) $q['total'] / $per ) );
+
+		// Remediation progress for every row in one rollup, not one query per
+		// ticket: the bar is on 50 rows.
+		$vh_prog = Tickets::progress( array_map( static fn( array $r ): int => (int) $r['id'], $q['rows'] ) );
 		?>
 		<div class="vh-page-head">
 			<div>
@@ -3797,10 +3843,12 @@ final class VulnHub_Dash_App {
 		<h2 class="vh-trep__listhead" id="vh-ticket-list"><?php esc_html_e( 'All tickets', 'vulnhub' ); ?></h2>
 		<section class="vh-tiles">
 			<?php
-			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Open', 'vulnhub' ), 'value' => (int) $s['tickets_open'], 'tone' => 'neutral' ) ); // phpcs:ignore
-			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Closed', 'vulnhub' ), 'value' => (int) $s['tickets_done'], 'tone' => 'good' ) ); // phpcs:ignore
-			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Awaiting verification', 'vulnhub' ), 'value' => (int) $s['awaiting_verify'], 'tone' => 'warning', 'meta' => __( 'closed in Jira, not yet re-scanned', 'vulnhub' ) ) ); // phpcs:ignore
-			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Closed but still detected', 'vulnhub' ), 'value' => (int) $s['verify_failed'], 'tone' => (int) $s['verify_failed'] > 0 ? 'critical' : 'good', 'meta' => __( 'the scanner disagrees', 'vulnhub' ) ) ); // phpcs:ignore
+			$vh_tile_url = static fn( array $a ): string => self::page_url( 'tickets', $a ) . '#vh-ticket-list';
+
+			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Open', 'vulnhub' ), 'value' => (int) $s['tickets_open'], 'tone' => 'neutral', 'href' => $vh_tile_url( array( 'tstate' => 'open' ) ) ) ); // phpcs:ignore
+			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Closed', 'vulnhub' ), 'value' => (int) $s['tickets_done'], 'tone' => 'good', 'href' => $vh_tile_url( array( 'tstate' => 'closed' ) ) ) ); // phpcs:ignore
+			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Awaiting verification', 'vulnhub' ), 'value' => (int) $s['awaiting_verify'], 'tone' => 'warning', 'meta' => __( 'closed in Jira, not yet re-scanned', 'vulnhub' ), 'href' => $vh_tile_url( array( 'tstate' => 'all', 'verification_state' => Tickets::VERIFY_PENDING ) ) ) ); // phpcs:ignore
+			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Closed but still detected', 'vulnhub' ), 'value' => (int) $s['verify_failed'], 'tone' => (int) $s['verify_failed'] > 0 ? 'critical' : 'good', 'meta' => __( 'the scanner disagrees', 'vulnhub' ), 'href' => $vh_tile_url( array( 'tstate' => 'all', 'verification_state' => Tickets::VERIFY_STILL_OPEN ) ) ) ); // phpcs:ignore
 			?>
 		</section>
 
@@ -3821,6 +3869,27 @@ final class VulnHub_Dash_App {
 			</div>
 		<?php endif; ?>
 
+		<nav class="vh-tabs vh-tabs--count" aria-label="<?php esc_attr_e( 'Which tickets', 'vulnhub' ); ?>">
+			<?php
+			foreach ( array(
+				'open'   => __( 'Open', 'vulnhub' ),
+				'closed' => __( 'Closed', 'vulnhub' ),
+				'all'    => __( 'All', 'vulnhub' ),
+			) as $vh_tab => $vh_tab_label ) :
+				// The tab owns the open/closed axis, so switching tab drops a
+				// Status filter that would fight it, and starts back at page 1.
+				$vh_tab_url = remove_query_arg( array( 'tp', 'status_category' ) );
+				$vh_tab_url = add_query_arg( 'tstate', $vh_tab, $vh_tab_url );
+				?>
+				<a class="vh-tabs__tab <?php echo $vh_tab === $vh_state ? 'is-active' : ''; ?>"
+					href="<?php echo esc_url( $vh_tab_url ); ?>"
+					<?php echo $vh_tab === $vh_state ? 'aria-current="page"' : ''; ?>>
+					<?php echo esc_html( $vh_tab_label ); ?>
+					<span class="vh-tabs__n"><?php echo esc_html( number_format_i18n( (int) $vh_counts[ $vh_tab ] ) ); ?></span>
+				</a>
+			<?php endforeach; ?>
+		</nav>
+
 		<form class="vh-filters" method="get">
 			<?php self::hidden_filters( array( 'search', 'status_category', 'verification_state', 'kind' ) ); ?>
 			<label><?php esc_html_e( 'Search', 'vulnhub' ); ?>
@@ -3831,7 +3900,7 @@ final class VulnHub_Dash_App {
 					<option value=""><?php esc_html_e( 'All', 'vulnhub' ); ?></option>
 					<option value="new" <?php selected( self::q( 'status_category' ), 'new' ); ?>><?php esc_html_e( 'To do', 'vulnhub' ); ?></option>
 					<option value="indeterminate" <?php selected( self::q( 'status_category' ), 'indeterminate' ); ?>><?php esc_html_e( 'In progress', 'vulnhub' ); ?></option>
-					<option value="done" <?php selected( self::q( 'status_category' ), 'done' ); ?>><?php esc_html_e( 'Done', 'vulnhub' ); ?></option>
+					<?php /* No "Done" here: that is the Closed tab, and two controls for one axis is how a filter starts disagreeing with a tab. */ ?>
 				</select>
 			</label>
 			<label><?php esc_html_e( 'Request type', 'vulnhub' ); ?>
@@ -3864,7 +3933,18 @@ final class VulnHub_Dash_App {
 		<?php endif; ?>
 
 		<?php if ( ! $q['rows'] ) : ?>
-			<p class="vh-chart-empty"><?php esc_html_e( 'No tickets match. Raise one from the Vulnerabilities screen, or from a filtered list on Assets & owners.', 'vulnhub' ); ?></p>
+			<p class="vh-chart-empty">
+				<?php
+				if ( 'open' === $vh_state && $vh_counts['closed'] > 0 ) {
+					/* translators: %s: number of closed tickets. */
+					echo esc_html( sprintf( _n( 'No open tickets match. %s closed ticket matches — it is on the Closed tab.', 'No open tickets match. %s closed tickets match — they are on the Closed tab.', (int) $vh_counts['closed'], 'vulnhub' ), number_format_i18n( (int) $vh_counts['closed'] ) ) );
+				} elseif ( 'closed' === $vh_state ) {
+					esc_html_e( 'No closed tickets match. Nothing here has been closed yet.', 'vulnhub' );
+				} else {
+					esc_html_e( 'No tickets match. Raise one from the Vulnerabilities screen, or from a filtered list on Assets & owners.', 'vulnhub' );
+				}
+				?>
+			</p>
 		<?php else : ?>
 			<div class="vh-tablewrap">
 				<table class="vh-table">
@@ -3913,9 +3993,10 @@ final class VulnHub_Dash_App {
 										: sprintf( _n( '%s finding', '%s findings', (int) $t['finding_count'], 'vulnhub' ), number_format_i18n( (int) $t['finding_count'] ) )
 								);
 								?>
+								<?php echo VulnHub_Dash_Tickets::progress_html( $t, $vh_prog[ (int) $t['id'] ] ?? null ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
 							</td>
 							<td><span class="vh-chip vh-chip--<?php echo esc_attr( $vtone ); ?>"><?php echo esc_html( Tickets::verification_labels()[ $vstate ] ?? '—' ); ?></span></td>
-							<td><?php echo VulnHub_Dash_Tickets::last_check_html( $t ); // phpcs:ignore WordPress.Security.EscapeOutput ?></td>
+							<td><?php echo VulnHub_Dash_Tickets::last_check_html( $t, $vh_prog[ (int) $t['id'] ] ?? null ); // phpcs:ignore WordPress.Security.EscapeOutput ?></td>
 							<td class="vh-col-act">
 								<?php echo VulnHub_Dash_Tickets::view_button( $t ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
 								<?php echo VulnHub_Dash_Tickets::verify_button( $t ); // phpcs:ignore WordPress.Security.EscapeOutput ?>

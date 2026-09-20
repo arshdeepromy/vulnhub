@@ -181,6 +181,25 @@ final class Rest {
 
 		register_rest_route(
 			self::NS,
+			'/tickets/(?P<id>\d+)/transitions',
+			array(
+				array(
+					// Reading what the workflow offers is already a statement
+					// about what this account may do, so it is raise-level.
+					'methods'             => 'GET',
+					'callback'            => array( $this, 'ticket_transitions' ),
+					'permission_callback' => array( $this, 'can_raise' ),
+				),
+				array(
+					'methods'             => 'POST',
+					'callback'            => array( $this, 'apply_ticket_transition' ),
+					'permission_callback' => array( $this, 'can_raise' ),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::NS,
 			'/tickets/(?P<id>\d+)/comments',
 			array(
 				array(
@@ -598,6 +617,139 @@ final class Rest {
 		if ( null === $result ) {
 			return new WP_Error( 'vulnhub_no_itsm', __( 'No ticketing integration is active.', 'vulnhub' ), array( 'status' => 409 ) );
 		}
+
+		return new WP_REST_Response( $result );
+	}
+
+	/**
+	 * The statuses the far end will accept on a ticket right now.
+	 */
+	public function ticket_transitions( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$ticket = Tickets::get( (int) $request['id'] );
+
+		if ( ! $ticket ) {
+			return new WP_Error( 'vulnhub_not_found', __( 'Ticket not found.', 'vulnhub' ), array( 'status' => 404 ) );
+		}
+
+		/**
+		 * Filters the status moves offered on one ticket.
+		 *
+		 * @param array<string,mixed>|null $result Result.
+		 * @param array<string,mixed>      $ticket Ticket row.
+		 */
+		$result = apply_filters( 'vulnhub_ticket_transitions', null, $ticket );
+
+		if ( null === $result ) {
+			return new WP_Error( 'vulnhub_no_itsm', __( 'No ticketing integration is active.', 'vulnhub' ), array( 'status' => 409 ) );
+		}
+
+		/*
+		 * What the findings say, sent with the offer rather than looked up
+		 * again by the browser: closing a ticket is the one moment where "the
+		 * scanner still sees this" has to be in front of the person before
+		 * they act, not after.
+		 */
+		// Where the ticket stands now, so a workflow that offers nothing can
+		// say which status it is stuck in rather than just "no moves".
+		$result['status'] = (string) ( $ticket['status'] ?? '' );
+		$result['url']    = (string) ( $ticket['url'] ?? '' );
+
+		$progress = Tickets::progress_for( (int) $ticket['id'] );
+
+		if ( $progress ) {
+			$result['progress'] = array(
+				'findings'       => (int) $progress['findings'],
+				'findings_fixed' => (int) $progress['findings_fixed'],
+				'assets'         => (int) $progress['assets'],
+				'assets_fixed'   => (int) $progress['assets_fixed'],
+				'as_of'          => (string) $progress['as_of'],
+			);
+		}
+
+		return new WP_REST_Response( $result );
+	}
+
+	/**
+	 * Move a ticket to another status at the far end.
+	 *
+	 * Closing a ticket the scanner still disagrees with is allowed and
+	 * recorded. Refusing it outright would be the wrong call -- a finding can
+	 * be a false positive, or the work can be tracked somewhere else -- but it
+	 * is never silent: the dialog says so before the move, and the audit entry
+	 * keeps how many findings were still outstanding at the time.
+	 */
+	public function apply_ticket_transition( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$ticket = Tickets::get( (int) $request['id'] );
+
+		if ( ! $ticket ) {
+			return new WP_Error( 'vulnhub_not_found', __( 'Ticket not found.', 'vulnhub' ), array( 'status' => 404 ) );
+		}
+
+		$transition = trim( (string) $request->get_param( 'transition' ) );
+
+		if ( '' === $transition ) {
+			return new WP_Error( 'vulnhub_bad_request', __( 'Choose a status to move the ticket to.', 'vulnhub' ), array( 'status' => 400 ) );
+		}
+
+		$values = array();
+
+		foreach ( (array) $request->get_param( 'fields' ) as $key => $value ) {
+			if ( is_scalar( $value ) ) {
+				$values[ (string) $key ] = (string) $value;
+			}
+		}
+
+		/**
+		 * Filters applying a status move to one ticket.
+		 *
+		 * @param array<string,mixed>|null $result     Result.
+		 * @param array<string,mixed>      $ticket     Ticket row.
+		 * @param string                   $transition Transition id.
+		 * @param array<string,string>     $values     Required field values.
+		 * @param string                   $note       Comment to post with the move.
+		 */
+		$result = apply_filters(
+			'vulnhub_apply_ticket_transition',
+			null,
+			$ticket,
+			$transition,
+			$values,
+			trim( (string) $request->get_param( 'note' ) )
+		);
+
+		if ( null === $result ) {
+			return new WP_Error( 'vulnhub_no_itsm', __( 'No ticketing integration is active.', 'vulnhub' ), array( 'status' => 409 ) );
+		}
+
+		if ( empty( $result['ok'] ) ) {
+			return new WP_Error( 'vulnhub_transition_failed', (string) ( $result['message'] ?? __( 'The ticket was not moved.', 'vulnhub' ) ), array( 'status' => 502 ) );
+		}
+
+		$progress  = Tickets::progress_for( (int) $ticket['id'] );
+		$remaining = $progress ? (int) $progress['findings'] - (int) $progress['findings_fixed'] : 0;
+
+		vulnhub()->logger->audit(
+			'ticket.transition',
+			sprintf(
+				/* translators: 1: ticket key, 2: status name. */
+				__( 'Moved %1$s to %2$s', 'vulnhub' ),
+				(string) $ticket['external_key'],
+				(string) ( $result['status'] ?? '' )
+			),
+			'ticket',
+			(int) $ticket['id'],
+			array(
+				'transition'          => $transition,
+				'status'              => (string) ( $result['status'] ?? '' ),
+				'fields'              => array_keys( $values ),
+				'findings_open'       => $remaining,
+				'closed_with_open'    => $remaining > 0,
+			)
+		);
+
+		// Answer with the ticket as it is now, so the screen can redraw from
+		// what was actually recorded rather than from what was asked for.
+		$result['ticket'] = Tickets::get( (int) $ticket['id'] );
 
 		return new WP_REST_Response( $result );
 	}

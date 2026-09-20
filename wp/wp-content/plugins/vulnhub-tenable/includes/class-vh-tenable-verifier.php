@@ -409,6 +409,40 @@ final class VulnHub_Tenable_Verifier {
 			);
 		}
 
+		$state = $states[ $asset['tenable_uuid'] . '|' . $plugin_id ] ?? null;
+
+		/*
+		 * An explicit FIXED is Tenable's own positive statement, with its own
+		 * date, so it is evidence whenever it was recorded -- judged before
+		 * the scan-freshness gate below, not after it.
+		 *
+		 * This used to sit underneath that gate and was therefore unreachable
+		 * for any ticket closed after the fix had already been confirmed: ten
+		 * findings Tenable had marked FIXED, with dates, came back
+		 * "remediation is unproven" purely because nobody had scanned again in
+		 * the hours since somebody pressed Close. Demanding a further rescan
+		 * to believe FIXED adds nothing -- if the vulnerability had come back,
+		 * a scan would have had to run to find it, and the state would be
+		 * REOPENED rather than FIXED.
+		 *
+		 * The gate still guards the two readings that genuinely depend on a
+		 * scan having run: an *absent* finding (absence only means something
+		 * if somebody looked) and a still-open one (stale data must not be
+		 * read as "still detected").
+		 */
+		if ( $state && 'FIXED' === $state['state'] ) {
+			return array(
+				'verdict' => 'fixed',
+				'note'    => sprintf(
+					/* translators: 1: vulnerability title, 2: hostname, 3: date. */
+					__( '"%1$s" on %2$s: Tenable marked it FIXED on %3$s.', 'vulnhub' ),
+					$title,
+					$hostname,
+					vh_date( vh_to_mysql( $state['last_fixed'] ?: $state['last_found'] ) ?? '', 'j M Y' )
+				),
+			);
+		}
+
 		/*
 		 * If Tenable has not seen the asset since the ticket closed, no rescan
 		 * has happened and "still open" would be an unfair reading of stale
@@ -431,8 +465,6 @@ final class VulnHub_Tenable_Verifier {
 			);
 		}
 
-		$state = $states[ $asset['tenable_uuid'] . '|' . $plugin_id ] ?? null;
-
 		if ( null === $state ) {
 			// The asset has been rescanned and the plugin no longer fires.
 			return array(
@@ -443,19 +475,6 @@ final class VulnHub_Tenable_Verifier {
 					$title,
 					$hostname,
 					vh_ago( $asset['last_seen'] )
-				),
-			);
-		}
-
-		if ( 'FIXED' === $state['state'] ) {
-			return array(
-				'verdict' => 'fixed',
-				'note'    => sprintf(
-					/* translators: 1: vulnerability title, 2: hostname, 3: date. */
-					__( '"%1$s" on %2$s: Tenable marked it FIXED on %3$s.', 'vulnhub' ),
-					$title,
-					$hostname,
-					vh_date( vh_to_mysql( $state['last_fixed'] ?: $state['last_found'] ) ?? '', 'j M Y' )
 				),
 			);
 		}

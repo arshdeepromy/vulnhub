@@ -160,6 +160,48 @@ No non-200s at any level.
 
 ---
 
+## The ticket page, 2026-09-21
+
+A report that opening a ticket is "quite slow". The server was not: measured
+with `%{time_total}` on a warm request, `/tickets/?ticket=13` answered in 80 ms
+and the 572-finding `?ticket=12` in 86 ms. The page was fully loaded in the
+browser in 125-250 ms.
+
+**The slow thing was after load.** The comments panel fetches
+`/wp-json/vulnhub/v1/tickets/{id}/comments`, which is a live round trip to
+Jira, and that request took **864-1,171 ms** -- every single time a ticket was
+opened. Until it landed the panel said "Loading the comments…" and showed
+nothing, so the whole page read as slow even though it was not.
+
+| | before | after |
+|---|---|---|
+| comments fetch, cold | 0.950 s | 0.950 s |
+| comments fetch, warm | 0.950 s | **0.001 s** |
+| slowest request on the page | 1,171 ms | none over 250 ms |
+
+Two changes, and the order matters:
+
+1. **Do not start from empty.** The newest comment is already on the ticket row
+   (`last_comment`, refreshed by every status refresh). `comments_body()` now
+   renders it, dated, with markup mirroring `commentNode()` in `app.js` so the
+   fetch replacing it is not a jump. This costs nothing and fixes the *cold*
+   open, which no cache can.
+2. **Cache the good read.** `VulnHub_Jira_Connector::comments()` holds a
+   successful read in a transient for five minutes. Walking a list of tickets
+   costs one Jira call per ticket rather than one per click. A failed read is
+   never cached; posting a comment and refreshing a ticket both call
+   `forget_comments()`.
+
+The lesson repeats the one below with the roles reversed: last time `curl` made
+a slow page look fast, this time `curl` and the navigation timings both said
+the page was fast while the user was right that it felt slow. **A page is not
+finished when `load` fires.** Watch `requestfinished` for everything the page
+goes on to fetch, not just the document.
+
+The progress bar added to the same screens is deliberately not a new query per
+row: `Tickets::progress()` takes the whole page of ticket ids and answers in
+one grouped rollup -- 4.7 ms for eight tickets covering 791 findings.
+
 ## The Vulnerabilities tabs, 2026-09-18
 
 A report that "By product and the other tabs are very slow". They were, and

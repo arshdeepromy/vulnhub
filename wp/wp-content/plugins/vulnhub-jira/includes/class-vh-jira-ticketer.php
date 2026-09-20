@@ -141,6 +141,8 @@ final class VulnHub_Jira_Ticketer {
 		add_filter( 'vulnhub_refresh_ticket', array( $this, 'refresh_ticket' ), 10, 2 );
 		add_filter( 'vulnhub_ticket_comments', array( $this, 'ticket_comments' ), 10, 2 );
 		add_filter( 'vulnhub_post_ticket_comment', array( $this, 'post_ticket_comment' ), 10, 4 );
+		add_filter( 'vulnhub_ticket_transitions', array( $this, 'ticket_transitions' ), 10, 2 );
+		add_filter( 'vulnhub_apply_ticket_transition', array( $this, 'apply_ticket_transition' ), 10, 5 );
 	}
 
 	/**
@@ -235,6 +237,78 @@ final class VulnHub_Jira_Ticketer {
 		}
 
 		return $read;
+	}
+
+	/**
+	 * Answer `vulnhub_ticket_transitions`.
+	 *
+	 * @param array<string,mixed>|null $result Result from an earlier ITSM plugin.
+	 * @param array<string,mixed>      $ticket Ticket row.
+	 * @return array<string,mixed>|null
+	 */
+	public function ticket_transitions( ?array $result, array $ticket ): ?array {
+		if ( null !== $result ) {
+			return $result;
+		}
+
+		$connector = vulnhub_jira_connector();
+
+		if ( ! $connector ) {
+			return null;
+		}
+
+		if ( 'jira' !== (string) ( $ticket['provider'] ?? '' ) ) {
+			return array(
+				'ok'          => false,
+				'message'     => __( 'This ticket was recorded by hand, so there is no Jira workflow to move it through. Set its status on this page instead.', 'vulnhub' ),
+				'transitions' => array(),
+			);
+		}
+
+		return $connector->transitions_for( (string) ( $ticket['external_key'] ?? '' ) );
+	}
+
+	/**
+	 * Answer `vulnhub_apply_ticket_transition`.
+	 *
+	 * @param array<string,mixed>|null $result Result from an earlier ITSM plugin.
+	 * @param array<string,mixed>      $ticket Ticket row.
+	 * @param string                   $id     Transition id.
+	 * @param array<string,string>     $values Required field values.
+	 * @param string                   $note   Optional comment posted with the move.
+	 * @return array<string,mixed>|null
+	 */
+	public function apply_ticket_transition( ?array $result, array $ticket, string $id, array $values, string $note ): ?array {
+		if ( null !== $result ) {
+			return $result;
+		}
+
+		$connector = vulnhub_jira_connector();
+
+		if ( ! $connector ) {
+			return null;
+		}
+
+		if ( 'jira' !== (string) ( $ticket['provider'] ?? '' ) ) {
+			return array(
+				'ok'      => false,
+				'message' => __( 'This ticket was recorded by hand, so there is no Jira workflow to move it through.', 'vulnhub' ),
+			);
+		}
+
+		$moved = $connector->apply_transition( (string) ( $ticket['external_key'] ?? '' ), $id, $values, $note );
+
+		/*
+		 * Read the issue straight back. The status, its category, the
+		 * resolution and -- when the move closed the ticket -- the start of
+		 * the verification clock all come from that refresh, so the screen
+		 * never shows a status VulnHub has not actually recorded.
+		 */
+		if ( ! empty( $moved['ok'] ) ) {
+			$connector->refresh_ticket( null, $ticket );
+		}
+
+		return $moved;
 	}
 
 	/**

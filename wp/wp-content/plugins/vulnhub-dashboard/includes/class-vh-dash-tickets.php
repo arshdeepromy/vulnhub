@@ -1021,12 +1021,37 @@ final class VulnHub_Dash_Tickets {
 	 * @param int  $id     Ticket id, or 0 for the dialog, which is told later.
 	 * @param bool $inline True on the ticket page.
 	 */
-	public static function comments_body( int $id = 0, bool $inline = false ): string {
+	public static function comments_body( int $id = 0, bool $inline = false, ?array $ticket = null ): string {
 		$out = '<div class="vh-comments' . ( $inline ? ' vh-comments--inline' : '' ) . '"'
 			. ( $id > 0 ? ' data-vh-comments-for="' . (int) $id . '"' : '' ) . '>';
 
-		$out .= '<div class="vh-comments__list" data-vh-comments-list role="status" aria-live="polite">'
-			. '<p class="vh-meta">' . esc_html__( 'Loading the comments…', 'vulnhub' ) . '</p></div>';
+		/*
+		 * Reading the conversation is a round trip to Jira -- the better part
+		 * of a second -- and until it lands the panel used to be an empty
+		 * "Loading…". The newest comment is already on the ticket row from the
+		 * last refresh, so show that, dated, and let the fetch replace it.
+		 */
+		$seed = $ticket ? Tickets::last_comment( $ticket ) : null;
+
+		$out .= '<div class="vh-comments__list" data-vh-comments-list role="status" aria-live="polite">';
+
+		if ( $seed && '' !== trim( (string) ( $seed['body'] ?? '' ) ) ) {
+			$public = ! array_key_exists( 'public', $seed ) || (bool) $seed['public'];
+
+			$out .= '<ul class="vh-comments__items">'
+				. '<li class="vh-comment' . ( $public ? '' : ' vh-comment--internal' ) . '">'
+				. '<div class="vh-comment__head"><strong>' . esc_html( (string) ( $seed['author'] ?: __( 'Unknown', 'vulnhub' ) ) ) . '</strong>'
+				. '<span class="vh-chip vh-chip--xs vh-chip--' . ( $public ? 'good' : 'neutral' ) . '">'
+				. esc_html( $public ? __( 'reply', 'vulnhub' ) : __( 'internal', 'vulnhub' ) ) . '</span>'
+				. '<span class="vh-meta">' . esc_html( vh_ago( (string) ( $seed['created'] ?? '' ) ) ) . '</span></div>'
+				. '<div class="vh-comment__body">' . esc_html( vh_trim( (string) $seed['body'], 400 ) ) . '</div>'
+				. '</li></ul>'
+				. '<p class="vh-meta">' . esc_html__( 'Reading the rest from Jira…', 'vulnhub' ) . '</p>';
+		} else {
+			$out .= '<p class="vh-meta">' . esc_html__( 'Loading the comments…', 'vulnhub' ) . '</p>';
+		}
+
+		$out .= '</div>';
 
 		if ( self::can_comment() ) {
 			$out .= '<div class="vh-comments__reply">'
@@ -1070,25 +1095,274 @@ final class VulnHub_Dash_Tickets {
 	}
 
 	/**
+	 * Can this person move a ticket through its workflow from here?
+	 *
+	 * The same bar as commenting -- writing to somebody else's ticket -- plus
+	 * an ITSM plugin that actually offers the moves.
+	 */
+	public static function can_transition(): bool {
+		return current_user_can( Caps::RAISE_TICKET ) && has_filter( 'vulnhub_apply_ticket_transition' );
+	}
+
+	/**
+	 * The button that opens the status dialog, for a Jira-backed ticket.
+	 *
+	 * @param array<string,mixed> $t Ticket row.
+	 */
+	public static function transition_button( array $t ): string {
+		if ( ! self::can_transition() || 'jira' !== (string) $t['provider'] ) {
+			return '';
+		}
+
+		return '<button type="button" class="vh-btn vh-btn--ghost vh-btn--sm" data-vh-move="' . (int) $t['id'] . '"'
+			. ' data-vh-move-key="' . esc_attr( (string) $t['external_key'] ) . '">'
+			. esc_html__( 'Change status', 'vulnhub' ) . '</button>';
+	}
+
+	/**
+	 * The dialog the button opens.
+	 *
+	 * Everything inside it is filled by JavaScript from
+	 * `GET /tickets/{id}/transitions`, because what a workflow offers depends
+	 * on the issue's current status and on what the connecting account may do
+	 * -- neither of which is knowable when the page is rendered. Asking Jira
+	 * on open also keeps the round trip off the page load.
+	 */
+	public static function transition_dialog(): string {
+		if ( ! self::can_transition() ) {
+			return '';
+		}
+
+		return '<dialog id="vh-ticket-move" class="vh-review vh-move__dialog" aria-labelledby="vh-move-title">'
+			. '<form method="dialog" class="vh-modal__x"><button aria-label="' . esc_attr__( 'Close', 'vulnhub' ) . '">&times;</button></form>'
+			. '<h2 id="vh-move-title">' . esc_html__( 'Change status', 'vulnhub' ) . '</h2>'
+			. '<p class="vh-review__lede" data-vh-move-lede>' . esc_html__( 'Reading what the workflow offers…', 'vulnhub' ) . '</p>'
+			. '<div class="vh-review__body">'
+				. '<div class="vh-move__form" data-vh-move-form hidden>'
+					. '<label class="vh-move__row"><span>' . esc_html__( 'Move to', 'vulnhub' ) . '</span>'
+					. '<select data-vh-move-to></select></label>'
+					// Required fields are built here, from what Jira says the
+					// chosen transition's screen demands.
+					. '<div data-vh-move-fields></div>'
+					. '<div class="vh-notice vh-notice--warn" data-vh-move-warn hidden></div>'
+					. '<label class="vh-move__row vh-move__row--wide"><span>' . esc_html__( 'Comment (optional)', 'vulnhub' ) . '</span>'
+					. '<textarea data-vh-move-note rows="2" placeholder="'
+					. esc_attr__( 'Posted on the ticket with the move.', 'vulnhub' ) . '"></textarea></label>'
+				. '</div>'
+			. '</div>'
+			. '<div class="vh-review__foot">'
+				. '<span class="vh-review__status" data-vh-move-status role="status"></span>'
+				// Shown when the workflow is a dead end here: the move still
+				// has to be possible somewhere.
+				. '<a class="vh-btn vh-btn--ghost" data-vh-move-jira target="_blank" rel="noopener noreferrer" hidden>'
+				. esc_html__( 'Open in Jira', 'vulnhub' ) . '</a>'
+				. '<button type="button" class="vh-btn vh-btn--ghost" data-vh-move-cancel>' . esc_html__( 'Cancel', 'vulnhub' ) . '</button>'
+				. '<button type="button" class="vh-btn vh-btn--primary" data-vh-move-go disabled>' . esc_html__( 'Move ticket', 'vulnhub' ) . '</button>'
+			. '</div></dialog>';
+	}
+
+	/**
+	 * How much of a ticket is actually done, as a bar.
+	 *
+	 * Assets, not findings: a ticket is handed to somebody as a list of
+	 * machines to touch, so "6 of 10 hosts clear" is the sentence they are
+	 * working to. A host counts only when every finding the ticket raised
+	 * against it is fixed -- one outstanding patch and the machine is not done.
+	 *
+	 * The numbers come from the finding rows, which every sync refreshes, so
+	 * the bar is current even when the last verification run is days old. That
+	 * is deliberate: see the stale note in last_check_html().
+	 *
+	 * @param array<string,mixed>      $t        Ticket row.
+	 * @param array<string,int|string> $progress Row from Tickets::progress(), or
+	 *                                           null to look it up.
+	 */
+	public static function progress_html( array $t, ?array $progress = null ): string {
+		$scope = (int) $t['asset_count'] > 0 || 'assets' === (string) $t['source_view'];
+
+		if ( $scope ) {
+			$counts = Tickets::asset_outcomes( $t );
+			$total  = (int) $counts['total'];
+			$done   = (int) $counts['resolved'];
+			$label  = static fn( int $d, int $n ): string => sprintf(
+				/* translators: 1: assets done, 2: assets on the ticket. */
+				__( '%1$d of %2$d assets done', 'vulnhub' ),
+				$d,
+				$n
+			);
+			$meta   = $total > 0 && ( (int) $counts['retired'] + (int) $counts['removed'] ) > 0
+				? sprintf(
+					/* translators: %d: number of assets. */
+					__( '%d no longer relevant', 'vulnhub' ),
+					(int) $counts['retired'] + (int) $counts['removed']
+				)
+				: '';
+		} else {
+			$progress = $progress ?? Tickets::progress_for( (int) $t['id'] );
+
+			if ( ! $progress ) {
+				return '';
+			}
+
+			$total = (int) $progress['assets'];
+			$done  = (int) $progress['assets_fixed'];
+			$label = static fn( int $d, int $n ): string => sprintf(
+				/* translators: 1: assets fixed, 2: assets on the ticket. */
+				__( '%1$d of %2$d assets fixed', 'vulnhub' ),
+				$d,
+				$n
+			);
+			$meta  = sprintf(
+				/* translators: 1: findings fixed, 2: findings on the ticket. */
+				__( '%1$d of %2$d findings', 'vulnhub' ),
+				(int) $progress['findings_fixed'],
+				(int) $progress['findings']
+			);
+		}
+
+		if ( $total < 1 ) {
+			return '';
+		}
+
+		$pct  = (int) round( $done / $total * 100 );
+		$tone = 0 === $done ? 'none' : ( $done >= $total ? 'good' : 'part' );
+
+		// As of when, so the bar is never read as a live scan.
+		$as_of = (string) ( $progress['as_of'] ?? '' );
+		$title = '' !== $as_of
+			? sprintf(
+				/* translators: 1: the bar's label, 2: time ago, e.g. "13 hours ago". */
+				__( '%1$s — scanner data %2$s', 'vulnhub' ),
+				$label( $done, $total ),
+				vh_ago( $as_of )
+			)
+			: $label( $done, $total );
+
+		return '<div class="vh-tprog vh-tprog--' . esc_attr( $tone ) . '" title="' . esc_attr( $title ) . '">'
+			. '<div class="vh-tprog__track" role="img" aria-label="' . esc_attr( $title ) . '">'
+			. '<span style="width:' . (int) $pct . '%"></span></div>'
+			. '<span class="vh-tprog__label">' . esc_html( $label( $done, $total ) ) . '</span>'
+			. ( '' !== $meta ? '<span class="vh-tprog__meta">' . esc_html( $meta ) . '</span>' : '' )
+			. '</div>';
+	}
+
+	/**
+	 * Has the scanner answered again since this check, and differently?
+	 *
+	 * A verification verdict is frozen at the moment it was reached, and a
+	 * sync lands every night. SD-1234 read "3 of 10 findings fixed" above a
+	 * table showing all ten fixed, and both were true -- of different days.
+	 * Leaving the older sentence on top made the newer one look like the
+	 * mistake, so when the two disagree this returns the pair, and the caller
+	 * leads with `now` and files `was` underneath its own date.
+	 *
+	 * Null when there is nothing to reconcile: a scope ticket, a ticket with
+	 * no findings, no sync since the check, or a sync that did not change the
+	 * count. In that case the verdict stands on its own, as it should.
+	 *
+	 * @param array<string,mixed>           $t        Ticket row.
+	 * @param array<string,mixed>           $last     Stored last check.
+	 * @param array<string,int|string>|null $progress Row from Tickets::progress().
+	 * @return array{now:string,was:string,tone:string}|null
+	 */
+	private static function superseded( array $t, array $last, ?array $progress ): ?array {
+		if ( (int) $t['asset_count'] > 0 || 'assets' === (string) $t['source_view'] ) {
+			return null;
+		}
+
+		$progress = $progress ?? Tickets::progress_for( (int) $t['id'] );
+
+		if ( ! $progress || ! isset( $last['fixed'] ) ) {
+			return null;
+		}
+
+		$checked = strtotime( (string) ( $last['checked_at'] ?? '' ) . ' UTC' );
+		$as_of   = strtotime( (string) ( $progress['as_of'] ?? '' ) . ' UTC' );
+
+		if ( ! $checked || ! $as_of || $as_of <= $checked ) {
+			return null;
+		}
+		if ( (int) $last['fixed'] === (int) $progress['findings_fixed'] ) {
+			return null;
+		}
+
+		$fixed = (int) $progress['findings_fixed'];
+		$total = (int) $progress['findings'];
+		$done  = $fixed >= $total;
+
+		/*
+		 * What the scanner holds now, and only that. The remainder is not
+		 * split into "still detected" and "not rescanned": that distinction
+		 * comes from comparing each asset's scan time against the ticket, and
+		 * it is the verification run's to make, not a stored state's.
+		 */
+		$now = $done
+			? sprintf(
+				/* translators: 1: number of findings, 2: time ago, e.g. "14 hours ago". */
+				__( 'Tenable shows all %1$d findings fixed — scan data %2$s', 'vulnhub' ),
+				$total,
+				vh_ago( (string) $progress['as_of'] )
+			)
+			: sprintf(
+				/* translators: 1: findings fixed, 2: findings on the ticket, 3: time ago. */
+				__( 'Tenable shows %1$d of %2$d findings fixed — scan data %3$s', 'vulnhub' ),
+				$fixed,
+				$total,
+				vh_ago( (string) $progress['as_of'] )
+			);
+
+		// The verdict, in its own numbers, under its own date.
+		$was = sprintf(
+			/* translators: 1: time ago, 2: fixed, 3: total, 4: still detected, 5: not rescanned. */
+			__( 'the check %1$s said %2$d of %3$d fixed, %4$d still detected, %5$d not rescanned', 'vulnhub' ),
+			vh_ago( (string) ( $last['checked_at'] ?? '' ) ),
+			(int) $last['fixed'],
+			$total,
+			(int) ( $last['open'] ?? 0 ),
+			(int) ( $last['unknown'] ?? 0 )
+		);
+
+		return array(
+			'now'  => $now,
+			'was'  => $was,
+			'tone' => $done ? 'good' : 'neutral',
+		);
+	}
+
+	/**
 	 * The last check, in a line.
 	 *
 	 * @param array<string,mixed> $t Ticket row.
 	 */
-	public static function last_check_html( array $t ): string {
+	public static function last_check_html( array $t, ?array $progress = null ): string {
 		$last = Tickets::last_check( $t );
 		$due  = Tickets::due_date( $t );
 		$out  = '';
 
 		if ( $last ) {
-			$state = (string) ( $last['state'] ?? '' );
-			$tone  = match ( $state ) {
-				Tickets::VERIFY_CONFIRMED  => 'good',
-				Tickets::VERIFY_STILL_OPEN => 'bad',
-				default                    => 'neutral',
-			};
-			$out .= '<span class="vh-check-last__head vh-tone--' . esc_attr( $tone ) . '">' . esc_html( vh_trim( (string) ( $last['headline'] ?? '' ), 110 ) ) . '</span>';
-			/* translators: %s: time ago. */
-			$out .= '<span class="vh-meta">' . esc_html( sprintf( __( 'checked %s', 'vulnhub' ), vh_ago( (string) ( $last['checked_at'] ?? '' ) ) ) ) . '</span>';
+			$since = self::superseded( $t, $last, $progress );
+
+			if ( $since ) {
+				/*
+				 * The scanner has answered again since this check ran, and
+				 * differently. Today's answer leads; the verdict keeps its own
+				 * words but moves below its own date, where it reads as the
+				 * record it is rather than as a claim about now.
+				 */
+				$out .= '<span class="vh-check-last__head vh-tone--' . esc_attr( $since['tone'] ) . '">'
+					. esc_html( $since['now'] ) . '</span>';
+				$out .= '<span class="vh-meta vh-check-last__was">' . esc_html( $since['was'] ) . '</span>';
+			} else {
+				$state = (string) ( $last['state'] ?? '' );
+				$tone  = match ( $state ) {
+					Tickets::VERIFY_CONFIRMED  => 'good',
+					Tickets::VERIFY_STILL_OPEN => 'bad',
+					default                    => 'neutral',
+				};
+				$out .= '<span class="vh-check-last__head vh-tone--' . esc_attr( $tone ) . '">' . esc_html( vh_trim( (string) ( $last['headline'] ?? '' ), 110 ) ) . '</span>';
+				/* translators: %s: time ago. */
+				$out .= '<span class="vh-meta">' . esc_html( sprintf( __( 'checked %s', 'vulnhub' ), vh_ago( (string) ( $last['checked_at'] ?? '' ) ) ) ) . '</span>';
+			}
 		} else {
 			$out .= '<span class="vh-meta">' . esc_html__( 'Not checked yet', 'vulnhub' ) . '</span>';
 		}
@@ -1207,7 +1481,9 @@ final class VulnHub_Dash_Tickets {
 			</div>
 		</div>
 		<?php echo self::check_panel(); // phpcs:ignore WordPress.Security.EscapeOutput ?>
-		<?php echo self::last_check_html( $t ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
+		<?php $vh_prog = Tickets::progress_for( (int) $t['id'] ); ?>
+		<?php echo self::progress_html( $t, $vh_prog ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
+		<?php echo self::last_check_html( $t, $vh_prog ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
 
 		<?php if ( '' !== $msg ) : ?>
 			<p class="vh-flash vh-flash--good" role="status"><?php echo esc_html( $msg ); ?></p>
@@ -1220,7 +1496,10 @@ final class VulnHub_Dash_Tickets {
 					<dt><?php esc_html_e( 'Request type', 'vulnhub' ); ?></dt>
 					<dd><?php echo esc_html( Tickets::kind_label( (string) $t['kind'] ) ); ?></dd>
 					<dt><?php esc_html_e( 'Status', 'vulnhub' ); ?></dt>
-					<dd><span class="vh-chip vh-chip--<?php echo 'done' === $t['status_category'] ? 'good' : 'neutral'; ?>"><?php echo esc_html( (string) ( $t['status'] ?: '—' ) ); ?></span></dd>
+					<dd class="vh-dd--act">
+						<span class="vh-chip vh-chip--<?php echo 'done' === $t['status_category'] ? 'good' : 'neutral'; ?>"><?php echo esc_html( (string) ( $t['status'] ?: '—' ) ); ?></span>
+						<?php echo self::transition_button( $t ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
+					</dd>
 					<dt><?php esc_html_e( 'Tracked in', 'vulnhub' ); ?></dt>
 					<dd><?php echo esc_html( Tickets::PROVIDER_JSM === (string) $t['provider'] ? __( 'Jira Service Management, updated by hand', 'vulnhub' ) : __( 'Jira, synced', 'vulnhub' ) ); ?></dd>
 					<dt><?php esc_html_e( 'Raised', 'vulnhub' ); ?></dt>
@@ -1248,7 +1527,7 @@ final class VulnHub_Dash_Tickets {
 				<?php if ( 'jira' === (string) $t['provider'] ) : ?>
 					<div class="vh-panel__sub">
 						<h3><?php esc_html_e( 'Comments', 'vulnhub' ); ?></h3>
-						<?php echo self::comments_body( (int) $t['id'], true ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
+						<?php echo self::comments_body( (int) $t['id'], true, $t ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
 					</div>
 				<?php endif; ?>
 
@@ -1310,6 +1589,8 @@ final class VulnHub_Dash_Tickets {
 		} else {
 			self::render_findings( $t );
 		}
+
+		echo self::transition_dialog(); // phpcs:ignore WordPress.Security.EscapeOutput
 	}
 
 	/**

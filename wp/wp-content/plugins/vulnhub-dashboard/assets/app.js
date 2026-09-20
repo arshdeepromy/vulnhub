@@ -3202,3 +3202,239 @@ document.addEventListener( 'click', function ( e ) {
 		} );
 	} );
 }() );
+
+/* ---------------------------------------------------------------------
+ * Change status: move a ticket through its Jira workflow from here.
+ *
+ * What a workflow offers depends on the issue's current status and on what
+ * the connecting account may do, so the set is read from Jira when the
+ * dialog opens, never assumed. Required fields are built from what Jira
+ * says that transition's screen demands — a close screen that wants a
+ * resolution gets a select of the resolutions Jira itself offers.
+ * ------------------------------------------------------------------ */
+( function () {
+	'use strict';
+
+	var cfg = window.VulnHubApp || { i18n: {} };
+
+	function el( tag, cls, text ) {
+		var node = document.createElement( tag );
+		if ( cls ) { node.className = cls; }
+		if ( null != text ) { node.textContent = String( text ); }
+		return node;
+	}
+
+	function ago( iso ) {
+		var then = Date.parse( ( iso || '' ).replace( ' ', 'T' ) + 'Z' );
+		if ( isNaN( then ) ) { return ''; }
+		var secs = Math.max( 0, Math.round( ( Date.now() - then ) / 1000 ) );
+		var steps = [ [ 86400, 'd' ], [ 3600, 'h' ], [ 60, 'm' ] ];
+		for ( var i = 0; i < steps.length; i++ ) {
+			if ( secs >= steps[ i ][ 0 ] ) { return Math.floor( secs / steps[ i ][ 0 ] ) + steps[ i ][ 1 ] + ' ago'; }
+		}
+		return 'just now';
+	}
+
+	var state = { id: 0, transitions: [], progress: null };
+
+	/* The fields the chosen transition needs, and the warning it deserves. */
+	function onChoice( dlg ) {
+		var pick   = dlg.querySelector( '[data-vh-move-to]' );
+		var holder = dlg.querySelector( '[data-vh-move-fields]' );
+		var warn   = dlg.querySelector( '[data-vh-move-warn]' );
+		var go     = dlg.querySelector( '[data-vh-move-go]' );
+		var chosen = null;
+
+		state.transitions.forEach( function ( t ) {
+			if ( t.id === pick.value ) { chosen = t; }
+		} );
+
+		holder.textContent = '';
+		warn.hidden = true;
+		go.disabled = ! chosen;
+
+		if ( ! chosen ) { return; }
+
+		/* A transition VulnHub cannot fill in correctly is offered, then
+		   refused with the reason — hiding it would look like Jira does not
+		   allow the move at all, which is a different and wrong message. */
+		if ( chosen.unsupported && chosen.unsupported.length ) {
+			warn.textContent = 'Moving to ' + chosen.to + ' needs ' + chosen.unsupported.join( ', ' )
+				+ ', which VulnHub cannot fill in correctly. Make this move in Jira.';
+			warn.hidden = false;
+			go.disabled = true;
+			return;
+		}
+
+		( chosen.fields || [] ).forEach( function ( field ) {
+			var row = el( 'label', 'vh-move__row' );
+			row.appendChild( el( 'span', null, field.name ) );
+
+			var input;
+			if ( 'select' === field.kind ) {
+				input = el( 'select' );
+				input.appendChild( el( 'option', null, '—' ) );
+				input.firstChild.value = '';
+				( field.options || [] ).forEach( function ( option ) {
+					var node = el( 'option', null, option.label );
+					node.value = option.id;
+					input.appendChild( node );
+				} );
+			} else {
+				input = el( 'input' );
+				input.type = 'text';
+			}
+
+			input.setAttribute( 'data-vh-move-field', field.id );
+			input.required = true;
+			row.appendChild( input );
+			holder.appendChild( row );
+		} );
+
+		/* Closing while the scanner still sees findings is allowed — it can be
+		   a false positive, or work tracked elsewhere — but never silently. */
+		var p = state.progress;
+		if ( 'done' === chosen.category && p && p.findings > p.findings_fixed ) {
+			warn.textContent = 'Tenable still shows ' + ( p.findings - p.findings_fixed ) + ' of '
+				+ p.findings + ' findings on this ticket unfixed, as at ' + ago( p.as_of )
+				+ '. Closing it anyway is recorded, and the ticket goes to awaiting verification.';
+			warn.hidden = false;
+		}
+	}
+
+	function load( dlg, id ) {
+		var lede = dlg.querySelector( '[data-vh-move-lede]' );
+		var form = dlg.querySelector( '[data-vh-move-form]' );
+		var pick = dlg.querySelector( '[data-vh-move-to]' );
+
+		form.hidden = true;
+		lede.textContent = 'Reading what the workflow offers…';
+
+		return wp.apiFetch( { path: '/vulnhub/v1/tickets/' + id + '/transitions' } )
+			.then( function ( result ) {
+				if ( ! result || ! result.ok ) {
+					lede.textContent = ( result && result.message ) || 'The available statuses could not be read.';
+					return;
+				}
+
+				state.transitions = result.transitions || [];
+				state.progress    = result.progress || null;
+
+				if ( ! state.transitions.length ) {
+					/* Jira answered, with nothing. That is a real answer — a
+					   workflow often has no move out of a closed status — so
+					   say which status it is stuck in and offer the way out,
+					   rather than leaving an empty dropdown to be read as a
+					   loading failure. */
+					lede.textContent = result.status
+						? 'This ticket is ' + result.status + ', and its Jira workflow offers no move out of that status for your account. Open it in Jira if it has to change.'
+						: 'Jira offers no status change on this ticket for your account.';
+
+					var out = dlg.querySelector( '[data-vh-move-jira]' );
+					if ( out && result.url ) { out.href = result.url; out.hidden = false; }
+
+					/* Nothing to move to, so there is no Move button. A
+					   disabled primary button still reads as the thing to
+					   press, and the answer here is Jira, not this dialog. */
+					dlg.querySelector( '[data-vh-move-go]' ).hidden = true;
+					return;
+				}
+
+				lede.textContent = 'This moves the ticket in Jira. VulnHub reads the result straight back.';
+				pick.textContent = '';
+
+				state.transitions.forEach( function ( t ) {
+					var node = el( 'option', null, t.to + ( t.name && t.name !== t.to ? ' (' + t.name + ')' : '' ) );
+					node.value = t.id;
+					pick.appendChild( node );
+				} );
+
+				form.hidden = false;
+				onChoice( dlg );
+			} )
+			.catch( function ( error ) {
+				lede.textContent = ( error && error.message ) || cfg.i18n.error || 'The available statuses could not be read.';
+			} );
+	}
+
+	function submit( dlg ) {
+		var go     = dlg.querySelector( '[data-vh-move-go]' );
+		var status = dlg.querySelector( '[data-vh-move-status]' );
+		var pick   = dlg.querySelector( '[data-vh-move-to]' );
+		var note   = dlg.querySelector( '[data-vh-move-note]' );
+		var fields = {};
+		var missing = null;
+
+		dlg.querySelectorAll( '[data-vh-move-field]' ).forEach( function ( input ) {
+			var value = ( input.value || '' ).trim();
+			if ( ! value && ! missing ) { missing = input; }
+			fields[ input.getAttribute( 'data-vh-move-field' ) ] = value;
+		} );
+
+		if ( missing ) {
+			status.textContent = 'Fill in what Jira needs first.';
+			missing.focus();
+			return;
+		}
+
+		go.disabled = true;
+		status.textContent = 'Moving the ticket…';
+
+		wp.apiFetch( {
+			path: '/vulnhub/v1/tickets/' + state.id + '/transitions',
+			method: 'POST',
+			data: { transition: pick.value, fields: fields, note: ( note.value || '' ).trim() }
+		} )
+			.then( function ( result ) {
+				status.textContent = ( result && result.message ) || 'Moved.';
+				// The status, the verification clock and the findings all just
+				// changed server side. Redraw from what was recorded.
+				window.location.reload();
+			} )
+			.catch( function ( error ) {
+				status.textContent = ( error && error.message ) || cfg.i18n.error || 'The ticket was not moved.';
+				go.disabled = false;
+			} );
+	}
+
+	document.addEventListener( 'click', function ( event ) {
+		if ( ! event.target.closest ) { return; }
+
+		var open = event.target.closest( '[data-vh-move]' );
+		if ( open ) {
+			event.preventDefault();
+			var dlg = document.getElementById( 'vh-ticket-move' );
+			if ( ! dlg ) { return; }
+
+			state.id = parseInt( open.dataset.vhMove, 10 );
+			dlg.querySelector( '#vh-move-title' ).textContent =
+				'Change status' + ( open.dataset.vhMoveKey ? ' — ' + open.dataset.vhMoveKey : '' );
+			dlg.querySelector( '[data-vh-move-status]' ).textContent = '';
+			var move = dlg.querySelector( '[data-vh-move-go]' );
+			move.disabled = true;
+			move.hidden   = false;
+
+			var out = dlg.querySelector( '[data-vh-move-jira]' );
+			if ( out ) { out.hidden = true; }
+			if ( ! dlg.open ) { dlg.showModal(); }
+			load( dlg, state.id );
+			return;
+		}
+
+		var cancel = event.target.closest( '[data-vh-move-cancel]' );
+		if ( cancel ) {
+			var box = cancel.closest( 'dialog' );
+			if ( box ) { box.close(); }
+			return;
+		}
+
+		var go = event.target.closest( '[data-vh-move-go]' );
+		if ( go ) { submit( go.closest( 'dialog' ) ); }
+	} );
+
+	document.addEventListener( 'change', function ( event ) {
+		if ( event.target.matches && event.target.matches( '[data-vh-move-to]' ) ) {
+			onChoice( event.target.closest( 'dialog' ) );
+		}
+	} );
+}() );

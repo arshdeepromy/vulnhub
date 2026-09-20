@@ -328,15 +328,18 @@ final class Tickets {
 	}
 
 	/**
-	 * Query tickets.
+	 * The WHERE clause behind a ticket query, and its parameters.
+	 *
+	 * Shared by `query()` and `state_counts()` so a tab's count and the rows
+	 * that tab shows can never be built from two different filters -- the
+	 * fastest way to put a number on screen that clicking it disagrees with.
 	 *
 	 * @param array<string,mixed> $args Filters.
-	 * @return array{rows:array<int,array<string,mixed>>,total:int}
+	 * @return array{sql:string,params:array<int,mixed>}
 	 */
-	public static function query( array $args = array() ): array {
+	private static function where_for( array $args ): array {
 		global $wpdb;
 
-		$t      = vh_table( 'tickets' );
 		$where  = array( '1=1' );
 		$params = array();
 
@@ -361,6 +364,7 @@ final class Tickets {
 			$params[] = (string) $args['project_key'];
 		}
 		if ( ! empty( $args['search'] ) ) {
+			// The wildcards live in the parameter, never in the SQL fragment.
 			$like    = '%' . $wpdb->esc_like( (string) $args['search'] ) . '%';
 			$where[] = '(external_key LIKE %s OR summary LIKE %s OR assignee LIKE %s)';
 			array_push( $params, $like, $like, $like );
@@ -373,7 +377,62 @@ final class Tickets {
 			$where[] = $ids ? 'id IN (' . implode( ',', $ids ) . ')' : '1=0';
 		}
 
-		$where_sql = implode( ' AND ', $where );
+		return array(
+			'sql'    => implode( ' AND ', $where ),
+			'params' => $params,
+		);
+	}
+
+	/**
+	 * How many tickets are open and how many are closed, under the filters
+	 * that are *not* about open versus closed.
+	 *
+	 * The Tickets list separates the two, so each tab has to be able to say
+	 * how many rows it holds without running the list query three times.
+	 * `status_category`, `open` and `ids` are dropped from the incoming args:
+	 * the first two are the axis being counted, and a drill-down from the
+	 * report brings its own ids that would make both tabs meaningless.
+	 *
+	 * @param array<string,mixed> $args The list's other filters.
+	 * @return array{open:int,closed:int,all:int}
+	 */
+	public static function state_counts( array $args = array() ): array {
+		global $wpdb;
+
+		unset( $args['status_category'], $args['open'] );
+
+		$filter = self::where_for( $args );
+		$sql    = 'SELECT status_category = \'done\' AS closed, COUNT(*) AS n FROM '
+			. vh_table( 'tickets' ) . ' WHERE ' . $filter['sql'] . ' GROUP BY closed';
+
+		$rows = (array) ( $filter['params']
+			? $wpdb->get_results( $wpdb->prepare( $sql, ...$filter['params'] ), ARRAY_A ) // phpcs:ignore
+			: $wpdb->get_results( $sql, ARRAY_A ) ); // phpcs:ignore
+
+		$out = array( 'open' => 0, 'closed' => 0, 'all' => 0 );
+
+		foreach ( $rows as $row ) {
+			$out[ (int) $row['closed'] ? 'closed' : 'open' ] = (int) $row['n'];
+		}
+
+		$out['all'] = $out['open'] + $out['closed'];
+
+		return $out;
+	}
+
+	/**
+	 * Query tickets.
+	 *
+	 * @param array<string,mixed> $args Filters.
+	 * @return array{rows:array<int,array<string,mixed>>,total:int}
+	 */
+	public static function query( array $args = array() ): array {
+		global $wpdb;
+
+		$t         = vh_table( 'tickets' );
+		$filter    = self::where_for( $args );
+		$where_sql = $filter['sql'];
+		$params    = $filter['params'];
 
 		$total = (int) ( $params
 			? $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$t} WHERE {$where_sql}", ...$params ) ) // phpcs:ignore
@@ -587,6 +646,77 @@ final class Tickets {
 			WHEN {$irrelevant} THEN 'retired'
 			WHEN {$met} THEN 'resolved'
 			ELSE 'open' END";
+	}
+
+	/**
+	 * How far each ticket's remediation has actually got, read from the
+	 * findings themselves rather than from the last verification run.
+	 *
+	 * A verification verdict is a snapshot: it says what Tenable held at the
+	 * moment somebody asked. The finding rows are refreshed by every sync, so
+	 * they are the live answer to "how much of this ticket is done" -- and the
+	 * two drift apart the moment a sync lands after a check. Both are shown,
+	 * each with its own date, instead of letting the older one pass for now.
+	 *
+	 * An asset counts as fixed only when *every* finding the ticket raised
+	 * against it is fixed: a host with one patch still outstanding is not done.
+	 *
+	 * @param array<int,int> $ticket_ids Ticket ids.
+	 * @return array<int,array{findings:int,findings_fixed:int,assets:int,assets_fixed:int,as_of:string}>
+	 *         Keyed by ticket id. Tickets that cover no findings are absent.
+	 */
+	public static function progress( array $ticket_ids ): array {
+		global $wpdb;
+
+		$ids = array_values( array_unique( array_filter( array_map( 'intval', $ticket_ids ) ) ) );
+
+		if ( ! $ids ) {
+			return array();
+		}
+
+		$placeholders = implode( ', ', array_fill( 0, count( $ids ), '%d' ) );
+
+		$rows = (array) $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT tf.ticket_id,
+					COUNT(*) AS findings,
+					SUM(f.state = \'fixed\') AS findings_fixed,
+					COUNT(DISTINCT f.asset_id) AS assets,
+					COUNT(DISTINCT CASE WHEN f.state <> \'fixed\' THEN f.asset_id END) AS assets_open,
+					MAX(f.last_synced_at) AS as_of
+				 FROM ' . vh_table( 'ticket_findings' ) . ' tf
+				 INNER JOIN ' . vh_table( 'findings' ) . " f ON f.id = tf.finding_id
+				 WHERE tf.ticket_id IN ({$placeholders})
+				 GROUP BY tf.ticket_id", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				...$ids
+			),
+			ARRAY_A
+		);
+
+		$out = array();
+
+		foreach ( $rows as $row ) {
+			$assets = (int) $row['assets'];
+
+			$out[ (int) $row['ticket_id'] ] = array(
+				'findings'       => (int) $row['findings'],
+				'findings_fixed' => (int) $row['findings_fixed'],
+				'assets'         => $assets,
+				'assets_fixed'   => max( 0, $assets - (int) $row['assets_open'] ),
+				'as_of'          => (string) ( $row['as_of'] ?? '' ),
+			);
+		}
+
+		return $out;
+	}
+
+	/**
+	 * `progress()` for one ticket, or null when it covers no findings.
+	 *
+	 * @return array{findings:int,findings_fixed:int,assets:int,assets_fixed:int,as_of:string}|null
+	 */
+	public static function progress_for( int $ticket_id ): ?array {
+		return self::progress( array( $ticket_id ) )[ $ticket_id ] ?? null;
 	}
 
 	/**

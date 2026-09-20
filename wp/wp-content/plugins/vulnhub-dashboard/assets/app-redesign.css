@@ -2855,3 +2855,92 @@ dialog.vh-ask {
 dialog.vh-ask::backdrop { background: rgba(4, 8, 18, .6); }
 .vh-ask__msg { margin: 0 0 16px; font-size: 13.5px; line-height: 1.55; color: inherit; }
 .vh-ask__foot { display: flex; justify-content: flex-end; gap: 10px; }
+
+/* ---------------------------------------------------------------------
+ * Remediation progress: how much of a ticket is actually done.
+ *
+ * Sits under the "Covers" count on the list and under the summary on the
+ * ticket page, and counts hosts rather than findings — a ticket is handed
+ * to somebody as a list of machines to touch. Read from the finding rows
+ * every sync refreshes, so it stays current between verification runs.
+ * ------------------------------------------------------------------- */
+.vh-tprog { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; min-width: 122px; max-width: 190px; }
+.vh-tprog__track {
+	height: 5px; border-radius: 999px; background: var(--vh-neutral-bg);
+	overflow: hidden; border: 1px solid var(--vh-line);
+}
+.vh-tprog__track > span {
+	display: block; height: 100%; border-radius: inherit;
+	background: var(--vh-sev-medium); transition: width .3s ease;
+}
+.vh-tprog--good .vh-tprog__track > span { background: var(--vh-good); }
+.vh-tprog--none .vh-tprog__track > span { background: transparent; }
+.vh-tprog__label { font-size: 11.5px; color: var(--vh-ink-2); font-variant-numeric: tabular-nums; }
+.vh-tprog--good .vh-tprog__label { color: var(--vh-good-ink, var(--vh-good)); }
+.vh-tprog__meta { font-size: 11px; color: var(--vh-muted); font-variant-numeric: tabular-nums; }
+
+/* On the ticket page it is a headline, not a table cell. The bar now sits
+   between the page head and the last-check line, so that line's own
+   full-width rule (which keyed off being the head's next sibling) is
+   restated here rather than left silently unmatched. */
+.vh-page-head + .vh-tprog,
+.vh-check-panel + .vh-tprog { max-width: 320px; margin: 0 0 10px; gap: 4px; }
+.vh-tprog + .vh-check-last { max-width: none; margin: 0 0 14px; }
+.vh-page-head + .vh-tprog .vh-tprog__track,
+.vh-check-panel + .vh-tprog .vh-tprog__track { height: 7px; }
+.vh-page-head + .vh-tprog .vh-tprog__label,
+.vh-check-panel + .vh-tprog .vh-tprog__label { font-size: 13px; }
+
+/* The comment already on the ticket, shown while Jira is being read. It is
+   one refresh old, so it is dimmed until the fetch replaces it. */
+.vh-comments__list .vh-comment + .vh-meta { opacity: .75; }
+
+/* A verdict the scanner has since overtaken. It keeps its words and its date,
+   but sits under today's answer and is marked as the record it is — the rule
+   down the side is what stops it reading as a second, contradictory claim. */
+.vh-check-last__was {
+	border-left: 2px solid var(--vh-line);
+	padding-left: 7px; margin-top: 1px; opacity: .85;
+}
+
+/* ---------------------------------------------------------------------
+ * "Change status": moving a ticket through its Jira workflow from here.
+ * The rows are built by JavaScript from whatever the chosen transition's
+ * screen requires, so the layout has to hold an unknown number of them.
+ * ------------------------------------------------------------------- */
+.vh-move__dialog { max-width: 560px; }
+.vh-move__form:not([hidden]) { display: flex; flex-direction: column; gap: 11px; }
+.vh-move__row { display: grid; grid-template-columns: 132px 1fr; align-items: center; gap: 10px; }
+.vh-move__row > span { font-size: 12.5px; color: var(--vh-ink-2); }
+.vh-move__row select,
+.vh-move__row input[type="text"],
+.vh-move__row textarea {
+	width: 100%; padding: 7px 9px; border-radius: 8px;
+	border: 1px solid var(--vh-line); background: var(--vh-neutral-bg);
+	color: var(--vh-ink); font: inherit; font-size: 13px;
+}
+.vh-move__row textarea { resize: vertical; min-height: 54px; }
+.vh-move__row--wide { align-items: start; }
+.vh-move__row--wide > span { padding-top: 7px; }
+.vh-move__form [data-vh-move-fields]:empty { display: none; }
+.vh-move__form .vh-notice { margin: 0; font-size: 12.5px; }
+
+/* Status and its button sit on one line in the ticket's detail list. */
+.vh-dd--act { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+
+@media (max-width: 560px) {
+	.vh-move__row { grid-template-columns: 1fr; gap: 4px; }
+	.vh-move__row--wide > span { padding-top: 0; }
+}
+
+/* Tabs that carry a count — Open / Closed / All on the Tickets list. The
+   number is part of the tab, not a badge shouting for attention: it answers
+   "is there anything over there" before the tab is pressed. */
+.vh-tabs--count { margin-bottom: 14px; width: fit-content; max-width: 100%; }
+.vh-tabs--count .vh-tabs__tab { flex: 0 0 auto; padding: 0 18px; }
+.vh-tabs__n {
+	font-variant-numeric: tabular-nums; font-size: 11.5px; font-weight: 600;
+	color: var(--vh-muted); background: var(--vh-neutral-bg);
+	border-radius: 999px; padding: 1px 7px; min-width: 22px; text-align: center;
+}
+.vh-tabs__tab.is-active .vh-tabs__n { color: var(--vh-ink-2); }

@@ -98,6 +98,39 @@ needs a nonce and `vulnhub_view`, and is audited as `export.ticket_report`.
 - Both files have a BOM, and cells that could be read as formulas are
   neutralised.
 
+## Open, Closed, All: the list is open tickets by default
+
+Open versus closed is the first question the Tickets list answers, so it is a
+tab rather than one value inside a filter. Day to day a closed ticket is in the
+way, and "where did it go" deserves an obvious answer rather than a dropdown
+nobody thinks to change.
+
+- `tstate` = `open` (the default) | `closed` | `all`. It is not one of the
+  names the filter form owns, so `hidden_filters()` writes it through Apply on
+  its own.
+- Each tab carries its own count, from `Tickets::state_counts()`. That counts
+  under the filters still in force — search, request type, verification — but
+  with `status_category`, `open` and `ids` stripped, since those are the axis
+  being counted. It shares `Tickets::where_for()` with `Tickets::query()`, so a
+  tab's number and the rows that tab shows cannot be built from two different
+  filters. A count that disagrees with its own list is the fastest way to lose
+  someone's trust in the screen.
+- **The Status filter is the finer grain of the same axis**, so it no longer
+  offers "Done" — that is the Closed tab. Picking Done from an old link still
+  works and moves the tab to Closed; picking an open-side status while on
+  Closed moves it back to Open. Two controls for one axis is how a filter
+  starts disagreeing with a tab.
+- **A drill-down from the report defaults to All, not Open.** Those links carry
+  an explicit set of ids (Met SLA, for instance, is only ever about closed
+  tickets), and narrowing them to open tickets would silently answer a
+  question nobody asked with an empty table.
+- **An empty Open tab says where the rows went**: "No open tickets match. 1
+  closed ticket matches — it is on the Closed tab."
+- The four tiles above the list are links now, one per `docs/FILTERS.md`:
+  Open and Closed go to their tabs, and the two verification tiles go to All
+  narrowed to that verification state. Each was checked to return exactly the
+  number it shows.
+
 ## Raising a vulnerability ticket: review, then send
 
 A person pressing **Ticket** or **Raise ticket for selected** gets **exactly one
@@ -371,6 +404,52 @@ linking to `&outcome=`, and a table of every asset with its state then and now.
 Outcomes are always calculated at read time, never stored, so they follow the
 latest sync without a job to keep them current.
 
+## Remediation progress: the bar under every ticket
+
+A verification verdict is a snapshot — it says what the scanner held at the
+moment somebody asked. The finding rows are refreshed by every sync. The two
+drift apart the moment a sync lands after a check, and they did: SD-1234 read
+*"Tenable shows 3 of 10 findings fixed, 7 not rescanned"* directly above a table
+showing all ten `fixed`. Both were true, of different days — the check ran the
+evening the ticket was raised, before the hosts had been rescanned; the sync two
+nights later brought back ten fixes.
+
+So the list and the ticket page now carry both, each with its own date.
+
+- **The bar** (`VulnHub_Dash_Tickets::progress_html()`, fed by
+  `Tickets::progress()`) counts **assets, not findings**: a ticket is handed to
+  somebody as a list of machines to touch, so "6 of 10 assets fixed" is the
+  sentence they are working to. A host counts only when *every* finding the
+  ticket raised against it is fixed — one outstanding patch and the machine is
+  not done. The findings ratio sits underneath as the smaller number.
+  - Scope tickets have no findings, so theirs reads from
+    `Tickets::asset_outcomes()` instead: assets **Done** over assets on the
+    ticket, with anything retired or removed noted beside it.
+  - `Tickets::progress()` takes a *list* of ticket ids and answers in one
+    grouped query. The list renders fifty rows; this is not a per-row lookup.
+  - Nothing is stored. The bar follows the latest sync the same way outcomes
+    do, and its tooltip says how old that scan data is.
+- **The last-check line leads with whichever answer is newer.**
+  `VulnHub_Dash_Tickets::superseded()` asks one question: has a sync landed
+  since this check ran, and did it change the count? If not, the verdict stands
+  alone exactly as before. If it has, the cell flips:
+
+  > **Tenable shows all 10 findings fixed — scan data 14 hours ago**
+  > *the check 3 days ago said 3 of 10 fixed, 0 still detected, 7 not rescanned*
+
+  The first attempt kept the verdict on top and appended the newer numbers
+  underneath. That was worse: the loudest sentence in the cell still said "3 of
+  10 fixed" beside a table showing ten, so the new line read as the
+  contradiction rather than the correction. Today's answer has to lead.
+  The verdict is not rewritten in today's numbers — nobody verified anything
+  today — it keeps its own words under its own date, with a rule down the side
+  marking it as the record it is.
+
+  The remainder of the current sentence is deliberately *not* split into "still
+  detected" and "not rescanned". That distinction comes from comparing each
+  asset's scan time against the ticket, which is the verification run's job;
+  a stored finding state cannot honestly make it.
+
 ## Checking tickets: Verify
 
 The Tickets list has **Verify all tickets** and a **Verify** button on each
@@ -469,6 +548,32 @@ never launched twice. The steps are:
      gets a progress line and nothing changes.
    - **Asset tickets** are summarised from their live outcomes.
 
+   `judge_finding()` decides each finding in this order, and the order is the
+   whole point:
+
+   1. No Tenable identity on the asset → **unknown**, nothing can be rescanned.
+   2. Tenable's state is **FIXED** → **fixed**. An explicit FIXED is the
+      scanner's own positive statement, carrying its own date, so it counts
+      whenever it was recorded.
+   3. No scan since the ticket closed → **unknown**.
+   4. No record of the finding at all, and the asset *has* been rescanned →
+      **fixed**: the plugin no longer fires.
+   5. Anything else → **open**, and on a resolved ticket the finding is
+      reopened.
+
+   Step 2 used to sit *below* step 3, which made it unreachable for any ticket
+   closed after its fix had already been confirmed. SD-1234 closed with ten
+   findings Tenable had marked FIXED, with dates, and every one came back
+   "remediation is unproven" — purely because no scan had happened in the
+   hours between the last sync and somebody pressing Close. Requiring a further
+   rescan before believing FIXED adds nothing: had the vulnerability returned,
+   a scan would have had to run to find it, and the state would read REOPENED.
+
+   The freshness gate still guards the two readings that genuinely depend on a
+   scan having run — an *absent* finding (absence only means something if
+   somebody looked) and a still-open one (stale data must never be read as
+   "still detected").
+
 The result is stored on the ticket as `payload_json.last_check`
 (`Tickets::set_last_check()`). `Tickets::upsert()` keeps it when a sync
 replaces the rest of the payload. The list shows it in **Last check**, with
@@ -513,6 +618,51 @@ and neither is reliable:
 A check does not write to Jira itself. Whether a verification comments on or
 reopens an issue is still the Jira connector's own setting.
 
+## Changing a ticket's status without leaving VulnHub
+
+**Change status** sits beside Status on the ticket page, for Jira-backed
+tickets, behind `Caps::RAISE_TICKET` — the same bar as commenting, because
+both write to somebody else's ticket.
+
+- **The offered set is always read live.** Transition ids are workflow
+  specific, and which ones exist depends on the issue's current status *and*
+  on what the connecting account may do. `GET /vulnhub/v1/tickets/{id}/transitions`
+  (filter `vulnhub_ticket_transitions`) asks Jira on open, so nothing is
+  guessed from a status name — and the round trip stays off the page load.
+- **Required fields are built from Jira's own answer.** The read expands
+  `transitions.fields`, keeps only what that screen makes `required`, and drops
+  the ones Jira fills itself (`summary`, `issuetype`, `project`, `reporter`).
+  A field with `allowedValues` becomes a select of exactly those values — this
+  is how a Close screen that demands a resolution gets the real resolution
+  list rather than a guess.
+- **What cannot be rendered honestly is refused, not hidden.** A cascading
+  select, or an array-valued field like components, lands in `unsupported`:
+  the transition is still offered, then declined with the reason and a pointer
+  to Jira. Hiding it would read as "Jira will not allow this move", which is a
+  different and untrue message.
+- **The browser is not trusted.** `apply_transition()` re-reads the offered set
+  before writing: it is the only way to know the transition is still valid and
+  how to shape each value, and a workflow can move under a form that has been
+  open a while. An unknown id, a missing required field and a value outside
+  `allowedValues` are all refused before any write.
+- **Closing a ticket the scanner disagrees with is allowed, and recorded.**
+  Refusing outright would be the wrong call — a finding can be a false
+  positive, or the work can be tracked elsewhere — but it is never silent. The
+  dialog says how many findings are still unfixed and how old that scan data
+  is, before the move; the `ticket.transition` audit entry keeps
+  `findings_open` and `closed_with_open`.
+- **The result is read straight back.** A successful move calls
+  `refresh_ticket()`, so the status, its category, the resolution and — when
+  the move closed the ticket — `mark_closed()` and the start of the
+  verification clock all come from Jira rather than from what was asked for.
+  The cached conversation is dropped at the same time.
+- Writes are bounded by the project allowlist already:
+  `refuse_outside_allowlist()` resolves the project from the issue key on every
+  non-GET, transitions included. OAuth needs `write:jira-work`, which is in
+  `DEFAULT_SCOPES`.
+- A ticket recorded by hand (`provider = jsm`) has no Jira workflow, and keeps
+  its own status form on the same page.
+
 ## Comments: reading and replying without leaving VulnHub
 
 **View** on the Tickets list opens a dialog with the whole conversation, and
@@ -525,6 +675,19 @@ the same component is rendered inline on the ticket page — from one function
   reply box. A comment body is set as text, never as HTML: it is somebody
   else's input arriving from another system. Reading also refreshes
   `last_comment`, since it is the freshest look anyone has had at the ticket.
+- **Opening a ticket does not wait for Jira.** The round trip is the better
+  part of a second and it was the only slow thing on the ticket page. Two
+  changes, together:
+  - The newest comment is already on the ticket row from the last refresh, so
+    the panel is rendered *with it*, dated, by `comments_body()` — the markup
+    mirrors `commentNode()` in `app.js` exactly, so the fetch replacing it is
+    not a jump. No more empty "Loading…".
+  - `VulnHub_Jira_Connector::comments()` caches a good read for five minutes
+    (`COMMENTS_TTL`). Walking a list of tickets then costs one Jira call per
+    ticket rather than one per click. Only a *successful* read is cached — a
+    failure should be retried, not held. Posting a comment and refreshing a
+    ticket both call `forget_comments()`, so the only staleness possible is
+    somebody else's comment, for at most five minutes.
 - **Replying:** `POST` the same route (filter `vulnhub_post_ticket_comment`,
   `can_raise`), with `body` and `public`.
   - **An internal note is the default, everywhere.** A reply notifies whoever

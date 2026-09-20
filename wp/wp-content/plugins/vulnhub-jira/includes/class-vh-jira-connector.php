@@ -42,6 +42,18 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 	private const COMMENT_MAX = 30000;
 
 	/**
+	 * Transient prefix and lifetime for a cached issue conversation.
+	 *
+	 * Five minutes: long enough that walking a list of tickets pays the Jira
+	 * round trip once per ticket rather than once per click, short enough that
+	 * a comment somebody left in Jira shows up while they are still thinking
+	 * about it. Anything written from here -- a posted comment, a Refresh --
+	 * clears the entry, so the only staleness possible is somebody else's.
+	 */
+	private const COMMENTS_CACHE = 'vh_jira_comments_';
+	private const COMMENTS_TTL   = 300;
+
+	/**
 	 * Fields requested from Jira. Asking for a narrow set is what keeps the
 	 * enhanced search fast and its pages full.
 	 *
@@ -1201,12 +1213,30 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 	 *
 	 * @return array{ok:bool,message:string,comments:array<int,array<string,mixed>>}
 	 */
-	public function comments( string $key, int $max = 50 ): array {
+	public function comments( string $key, int $max = 50, bool $fresh = false ): array {
 		if ( ! $this->is_enabled() ) {
 			return array( 'ok' => false, 'message' => __( 'Jira is not enabled.', 'vulnhub' ), 'comments' => array() );
 		}
 		if ( '' === trim( $key ) ) {
 			return array( 'ok' => false, 'message' => __( 'That ticket has no Jira issue key.', 'vulnhub' ), 'comments' => array() );
+		}
+
+		/*
+		 * Opening a ticket used to wait the better part of a second on this
+		 * round trip, every time, including the back-and-forth of reading two
+		 * tickets in a row. A conversation on a remediation ticket moves in
+		 * hours, so a minute of cache costs nobody anything -- and posting a
+		 * comment, or asking for a refresh, clears it rather than leaving the
+		 * writer looking at their own missing reply.
+		 */
+		$cache = self::COMMENTS_CACHE . md5( $key . '|' . $max );
+
+		if ( ! $fresh ) {
+			$hit = get_transient( $cache );
+
+			if ( is_array( $hit ) ) {
+				return $hit;
+			}
 		}
 
 		$response = $this->client()->issue_comments( $key, $max );
@@ -1231,7 +1261,296 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 			$out[] = $this->normalise_comment( (array) $raw );
 		}
 
-		return array( 'ok' => true, 'message' => '', 'comments' => $out );
+		$read = array( 'ok' => true, 'message' => '', 'comments' => $out );
+
+		// Only a good read is cached: a failure should be retried, not held.
+		set_transient( $cache, $read, self::COMMENTS_TTL );
+
+		return $read;
+	}
+
+	/**
+	 * Forget the cached conversation on an issue.
+	 *
+	 * Called after writing a comment, and whenever somebody asks for the
+	 * ticket to be refreshed: those are the two moments where a cached answer
+	 * would be visibly wrong.
+	 */
+	public function forget_comments( string $key ): void {
+		foreach ( array( 1, 50 ) as $max ) {
+			delete_transient( self::COMMENTS_CACHE . md5( $key . '|' . $max ) );
+		}
+	}
+
+	/**
+	 * The status moves Jira will accept on an issue right now, normalised.
+	 *
+	 * Transition ids are workflow specific and the set depends on the issue's
+	 * current status and on what the connecting account is permitted to do, so
+	 * this is always asked live rather than guessed from a status name.
+	 *
+	 * Each transition carries the fields its screen makes **required**.
+	 * Optional ones are dropped: a form that asks for everything a Jira screen
+	 * could hold is a worse version of Jira. Anything required that cannot be
+	 * rendered honestly -- a cascading select, an array of components -- is
+	 * reported in `unsupported`, and the caller refuses the move and sends the
+	 * person to Jira rather than posting a guess.
+	 *
+	 * @return array{ok:bool,message:string,transitions:array<int,array<string,mixed>>}
+	 */
+	public function transitions_for( string $key ): array {
+		if ( ! $this->is_enabled() ) {
+			return array( 'ok' => false, 'message' => __( 'Jira is not enabled.', 'vulnhub' ), 'transitions' => array() );
+		}
+		if ( '' === trim( $key ) ) {
+			return array( 'ok' => false, 'message' => __( 'That ticket has no Jira issue key.', 'vulnhub' ), 'transitions' => array() );
+		}
+
+		$response = $this->client()->transitions( $key, true );
+
+		if ( ! $response->ok() ) {
+			return array(
+				'ok'          => false,
+				'message'     => sprintf(
+					/* translators: 1: issue key, 2: HTTP status, 3: error message. */
+					__( 'Could not read the available statuses for %1$s (HTTP %2$d): %3$s', 'vulnhub' ),
+					$key,
+					$response->status,
+					vh_trim( $response->error_message(), 160 )
+				),
+				'transitions' => array(),
+			);
+		}
+
+		$out = array();
+
+		foreach ( (array) ( $response->data()['transitions'] ?? array() ) as $raw ) {
+			if ( ! is_array( $raw ) || empty( $raw['id'] ) ) {
+				continue;
+			}
+			// `isAvailable` is only present when Jira evaluated the conditions;
+			// absent means unconditional, not unavailable.
+			if ( array_key_exists( 'isAvailable', $raw ) && ! $raw['isAvailable'] ) {
+				continue;
+			}
+
+			$fields      = array();
+			$unsupported = array();
+
+			foreach ( (array) ( $raw['fields'] ?? array() ) as $id => $field ) {
+				if ( empty( $field['required'] ) ) {
+					continue;
+				}
+				// Jira fills these itself on a transition; asking is noise.
+				if ( in_array( (string) $id, array( 'summary', 'issuetype', 'project', 'reporter' ), true ) ) {
+					continue;
+				}
+
+				$shape = $this->transition_field( (string) $id, (array) $field );
+
+				if ( null === $shape ) {
+					$unsupported[] = (string) ( $field['name'] ?? $id );
+					continue;
+				}
+
+				$fields[] = $shape;
+			}
+
+			$out[] = array(
+				'id'           => (string) $raw['id'],
+				'name'         => (string) ( $raw['name'] ?? '' ),
+				'to'           => (string) ( $raw['to']['name'] ?? '' ),
+				'category'     => self::status_category( (string) ( $raw['to']['statusCategory']['key'] ?? '' ) ),
+				'fields'       => $fields,
+				'unsupported'  => $unsupported,
+			);
+		}
+
+		return array( 'ok' => true, 'message' => '', 'transitions' => $out );
+	}
+
+	/**
+	 * One required transition field, as something a form can actually render,
+	 * or null when it cannot be rendered honestly.
+	 *
+	 * @param array<string,mixed> $field Jira's field definition.
+	 * @return array<string,mixed>|null
+	 */
+	private function transition_field( string $id, array $field ): ?array {
+		$type  = (string) ( $field['schema']['type'] ?? '' );
+		$items = (string) ( $field['schema']['items'] ?? '' );
+		$name  = (string) ( $field['name'] ?? $id );
+
+		// A field with a fixed set of answers -- resolution is the one that
+		// actually shows up on a close screen -- becomes a select.
+		if ( isset( $field['allowedValues'] ) && is_array( $field['allowedValues'] ) ) {
+			$options = array();
+
+			foreach ( $field['allowedValues'] as $value ) {
+				$value = (array) $value;
+				$vid   = (string) ( $value['id'] ?? '' );
+				$label = (string) ( $value['name'] ?? $value['value'] ?? $vid );
+
+				if ( '' === $vid || '' === $label ) {
+					continue;
+				}
+
+				$options[] = array( 'id' => $vid, 'label' => $label );
+			}
+
+			if ( ! $options ) {
+				return null;
+			}
+
+			// An array-valued select (components, labels, fix versions) would
+			// need multi-select and a different wire shape. Not guessed.
+			if ( 'array' === $type ) {
+				return null;
+			}
+
+			return array( 'id' => $id, 'name' => $name, 'kind' => 'select', 'options' => $options );
+		}
+
+		if ( in_array( $type, array( 'string', 'number' ), true ) && '' === $items ) {
+			return array( 'id' => $id, 'name' => $name, 'kind' => 'string' );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Move an issue to another status.
+	 *
+	 * @param string               $key    Issue key.
+	 * @param string               $id     Transition id from transitions_for().
+	 * @param array<string,string> $values Field id => the chosen value's id, or free text.
+	 * @param string               $note   Optional comment posted with the move.
+	 * @return array{ok:bool,message:string}
+	 */
+	public function apply_transition( string $key, string $id, array $values = array(), string $note = '' ): array {
+		if ( ! $this->is_enabled() ) {
+			return array( 'ok' => false, 'message' => __( 'Jira is not enabled.', 'vulnhub' ) );
+		}
+		if ( '' === trim( $key ) || '' === trim( $id ) ) {
+			return array( 'ok' => false, 'message' => __( 'That move is missing its ticket or its target status.', 'vulnhub' ) );
+		}
+
+		/*
+		 * The offered set is read again here rather than trusted from the
+		 * browser: it is the only way to know the transition is still valid,
+		 * what its screen requires, and how to shape each value. A workflow
+		 * can move under a form that has been open for a while.
+		 */
+		$offered = $this->transitions_for( $key );
+
+		if ( empty( $offered['ok'] ) ) {
+			return array( 'ok' => false, 'message' => (string) $offered['message'] );
+		}
+
+		$chosen = null;
+
+		foreach ( $offered['transitions'] as $transition ) {
+			if ( (string) $transition['id'] === trim( $id ) ) {
+				$chosen = $transition;
+				break;
+			}
+		}
+
+		if ( null === $chosen ) {
+			return array(
+				'ok'      => false,
+				'message' => sprintf(
+					/* translators: %s: issue key. */
+					__( 'That status is no longer available on %s. Reload the ticket to see what the workflow offers now.', 'vulnhub' ),
+					$key
+				),
+			);
+		}
+
+		if ( ! empty( $chosen['unsupported'] ) ) {
+			return array(
+				'ok'      => false,
+				'message' => sprintf(
+					/* translators: 1: status name, 2: list of field names. */
+					__( 'Moving to %1$s needs %2$s, which VulnHub cannot fill in correctly. Make this move in Jira.', 'vulnhub' ),
+					(string) $chosen['to'],
+					implode( ', ', array_map( 'strval', (array) $chosen['unsupported'] ) )
+				),
+			);
+		}
+
+		$fields = array();
+
+		foreach ( (array) $chosen['fields'] as $field ) {
+			$value = trim( (string) ( $values[ (string) $field['id'] ] ?? '' ) );
+
+			if ( '' === $value ) {
+				return array(
+					'ok'      => false,
+					'message' => sprintf(
+						/* translators: 1: field name, 2: status name. */
+						__( '%1$s is required to move this ticket to %2$s.', 'vulnhub' ),
+						(string) $field['name'],
+						(string) $chosen['to']
+					),
+				);
+			}
+
+			if ( 'select' === (string) $field['kind'] ) {
+				$ids = array_column( (array) $field['options'], 'id' );
+
+				if ( ! in_array( $value, $ids, true ) ) {
+					return array(
+						'ok'      => false,
+						/* translators: %s: field name. */
+						'message' => sprintf( __( 'That is not one of the values Jira offers for %s.', 'vulnhub' ), (string) $field['name'] ),
+					);
+				}
+
+				$fields[ (string) $field['id'] ] = array( 'id' => $value );
+				continue;
+			}
+
+			$fields[ (string) $field['id'] ] = $value;
+		}
+
+		$note     = trim( $note );
+		$response = $this->client()->transition(
+			$key,
+			(string) $chosen['id'],
+			'' !== $note ? VulnHub_Jira_Adf::doc()->paragraph( $note )->to_array() : null,
+			$fields
+		);
+
+		if ( ! $response->ok() ) {
+			return array(
+				'ok'      => false,
+				'message' => sprintf(
+					/* translators: 1: issue key, 2: status name, 3: HTTP status, 4: error message. */
+					__( 'Jira refused to move %1$s to %2$s (HTTP %3$d): %4$s', 'vulnhub' ),
+					$key,
+					(string) $chosen['to'],
+					$response->status,
+					vh_trim( $response->error_message(), 200 )
+				),
+			);
+		}
+
+		// The conversation and the status both just changed at the far end.
+		$this->forget_comments( $key );
+
+		$this->log( sprintf( 'Moved %s to "%s" (transition %s).', $key, (string) $chosen['to'], (string) $chosen['id'] ) );
+
+		return array(
+			'ok'      => true,
+			'message' => sprintf(
+				/* translators: 1: issue key, 2: status name. */
+				__( '%1$s moved to %2$s.', 'vulnhub' ),
+				$key,
+				(string) $chosen['to']
+			),
+			'status'  => (string) $chosen['to'],
+		);
 	}
 
 	/**
@@ -1280,6 +1599,9 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 				'message' => sprintf( __( 'That comment is longer than the %s characters Jira accepts.', 'vulnhub' ), number_format_i18n( self::COMMENT_MAX ) ),
 			);
 		}
+
+		// Whatever happens below, the cached conversation is now suspect.
+		$this->forget_comments( $key );
 
 		$response = $this->client()->request_comment( $key, $body, $public );
 
@@ -1406,6 +1728,9 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 				'message' => __( 'That ticket has no Jira issue key to refresh.', 'vulnhub' ),
 			);
 		}
+
+		// "Refresh" means live, so the cached conversation goes too.
+		$this->forget_comments( $key );
 
 		$response = $this->client()->get_issue( $key, $this->sync_fields() );
 

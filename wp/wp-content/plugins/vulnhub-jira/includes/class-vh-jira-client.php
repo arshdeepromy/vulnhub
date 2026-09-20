@@ -689,9 +689,20 @@ final class VulnHub_Jira_Client {
 
 	/**
 	 * GET /rest/api/3/issue/{issueIdOrKey}/transitions.
+	 *
+	 * @param bool $with_fields Ask for each transition's screen fields too.
+	 *                          Off by default: the automations only need the
+	 *                          ids, and the expansion is a bigger payload per
+	 *                          issue across a whole sync. On for anything that
+	 *                          offers the move to a person, who has to be told
+	 *                          what the workflow will demand.
 	 */
-	public function transitions( string $key ): \VulnHub\Core\Http_Response {
-		return $this->call( 'GET', self::API . '/issue/' . rawurlencode( $key ) . '/transitions' );
+	public function transitions( string $key, bool $with_fields = false ): \VulnHub\Core\Http_Response {
+		return $this->call(
+			'GET',
+			self::API . '/issue/' . rawurlencode( $key ) . '/transitions',
+			$with_fields ? array( 'expand' => 'transitions.fields' ) : array()
+		);
 	}
 
 	/**
@@ -700,9 +711,17 @@ final class VulnHub_Jira_Client {
 	 * @param string                   $key           Issue key.
 	 * @param string                   $transition_id Transition id from transitions().
 	 * @param array<string,mixed>|null $comment_adf   Optional ADF comment posted with the move.
+	 * @param array<string,mixed>      $fields        Field values the transition screen
+	 *                                                requires, already in Jira's own
+	 *                                                shape (e.g. `resolution` =>
+	 *                                                `array( 'id' => '10000' )`).
 	 */
-	public function transition( string $key, string $transition_id, ?array $comment_adf = null ): \VulnHub\Core\Http_Response {
+	public function transition( string $key, string $transition_id, ?array $comment_adf = null, array $fields = array() ): \VulnHub\Core\Http_Response {
 		$body = array( 'transition' => array( 'id' => $transition_id ) );
+
+		if ( $fields ) {
+			$body['fields'] = $fields;
+		}
 
 		if ( $comment_adf ) {
 			$body['update'] = array(
