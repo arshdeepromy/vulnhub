@@ -504,7 +504,7 @@ $vh_active   = $vh_selected ? vulnhub()->connectors->get( $vh_selected ) : null;
 
 				<p class="vh-intg__meta">
 					<?php if ( ! empty( $vh_h['last'] ) ) : ?>
-						<span title="<?php echo esc_attr( vh_date( (string) $vh_h['last']['finished_at'], 'j M Y, H:i:s' ) ); ?>">
+						<span data-vh-last-sync="<?php echo esc_attr( (string) $vh_id ); ?>" title="<?php echo esc_attr( vh_date( (string) $vh_h['last']['finished_at'], 'j M Y, H:i:s' ) ); ?>">
 							<?php
 							printf(
 								/* translators: 1: relative time, 2: duration. */
@@ -559,6 +559,20 @@ $vh_active   = $vh_selected ? vulnhub()->connectors->get( $vh_selected ) : null;
 						<button type="button" class="vh-btn vh-btn--sm vh-btn--ghost" data-vh-action="sync" data-vh-connector="<?php echo esc_attr( (string) $vh_id ); ?>">
 							<?php esc_html_e( 'Sync now', 'vulnhub' ); ?>
 						</button>
+						<?php if ( $vh_c->supports_full_sync() ) : ?>
+							<?php
+							/*
+							 * The card is where people actually press these, and it
+							 * offered only the incremental sync -- so the one control
+							 * that re-reads everything lived a click away on Configure,
+							 * where nobody looking at a stale card thinks to go.
+							 */
+							?>
+							<button type="button" class="vh-btn vh-btn--sm vh-btn--ghost" data-vh-action="sync" data-vh-full="1" data-vh-connector="<?php echo esc_attr( (string) $vh_id ); ?>"
+								data-vh-sync-confirm="<?php esc_attr_e( 'Run a full resync? It downloads everything the source holds rather than only what changed, so it takes much longer than a normal sync. It runs in the background and you can watch it here.', 'vulnhub' ); ?>">
+								<?php esc_html_e( 'Full resync', 'vulnhub' ); ?>
+							</button>
+						<?php endif; ?>
 					<?php endif; ?>
 				</footer>
 

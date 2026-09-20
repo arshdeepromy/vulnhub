@@ -264,6 +264,31 @@ final class Logger {
 	private const STALL_SECONDS = 600;
 
 	/**
+	 * Is this run still genuinely going?
+	 *
+	 * "status = running" is not enough on its own: a sync killed mid-run
+	 * leaves its row stranded at 'running' for ever, and trusting that alone
+	 * would let a dead process keep claiming the connector is busy. The
+	 * heartbeat is what separates working from stopped, measured against the
+	 * same STALL_SECONDS the reaper uses, so the two cannot disagree.
+	 *
+	 * @param array<string,mixed>|null $run A sync_runs row.
+	 */
+	public function run_is_live( ?array $run ): bool {
+		if ( ! is_array( $run ) || 'running' !== (string) ( $run['status'] ?? '' ) ) {
+			return false;
+		}
+
+		$started = (int) ( strtotime( (string) ( $run['started_at'] ?? '' ) . ' UTC' ) ?: 0 );
+		$stats   = json_decode( (string) ( $run['stats_json'] ?? '' ), true );
+		$beat    = is_array( $stats ) && ! empty( $stats['heartbeat'] )
+			? (int) ( strtotime( (string) $stats['heartbeat'] . ' UTC' ) ?: $started )
+			: $started;
+
+		return $beat > 0 && ( time() - $beat ) <= self::STALL_SECONDS;
+	}
+
+	/**
 	 * Live status for a connector's most recent run, for the progress poller.
 	 *
 	 * When a run is in flight this returns where it is, how fast it is going,

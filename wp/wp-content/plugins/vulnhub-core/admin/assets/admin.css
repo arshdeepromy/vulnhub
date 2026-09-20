@@ -273,3 +273,28 @@
 /* On load every progress box reports its last result, which on a card repeats
    the status above it. Shown while a run is live, or after Sync now is pressed. */
 .vh-intg__card:not(.is-syncing) .vh-sync-progress:not(:has(.vh-sync-progress__bar)) { display: none; }
+
+/* ---------------------------------------------------------------------
+ * Asking, in the page rather than in browser chrome.
+ *
+ * Styled in BOTH stylesheets on purpose: admin.js runs on the wp-admin
+ * screen and on the portal's mirror of it, and those load different CSS --
+ * admin.css is not enqueued on the portal at all, so rules kept only there
+ * left the dialog unstyled and full-width where people actually use it.
+ * ------------------------------------------------------------------- */
+dialog.vh-ask:not([open]) { display: none; }
+dialog.vh-ask {
+	position: fixed; inset: 0; margin: auto; z-index: 120;
+	width: min(460px, calc(100vw - 32px));
+	box-sizing: border-box;
+	border: 1px solid var(--vh-line, #2a3550);
+	border-radius: 14px;
+	padding: 20px 22px 16px;
+	background: var(--vh-surface, #111827);
+	color: var(--vh-ink, #e6edf7);
+	text-align: left;
+	box-shadow: 0 24px 60px rgba(0, 0, 0, .45);
+}
+dialog.vh-ask::backdrop { background: rgba(4, 8, 18, .6); }
+.vh-ask__msg { margin: 0 0 16px; font-size: 13.5px; line-height: 1.55; color: inherit; }
+.vh-ask__foot { display: flex; justify-content: flex-end; gap: 10px; }

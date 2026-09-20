@@ -369,6 +369,29 @@ abstract class Connector {
 			);
 		}
 
+		/*
+		 * A run that is going right now supersedes an older finished one.
+		 *
+		 * Without this, a connector mid-sync reported "Last sync failed" from
+		 * an attempt it had already moved past -- so a transient failure (a
+		 * DNS blip, a timeout) kept the card red and the header counting a
+		 * failure while the thing was busy succeeding. What a reader wants
+		 * from this line is "is it working *now*", and the answer is yes.
+		 *
+		 * Guarded by the heartbeat: a stranded 'running' row from a killed
+		 * process must not be able to hide a real failure behind a sync that
+		 * is not happening. The last completed run still travels as `last`,
+		 * so the card keeps showing when it last finished and how long it took.
+		 */
+		if ( $this->logger->run_is_live( $last ) ) {
+			return array(
+				'state'  => 'idle',
+				'label'  => __( 'Syncing now', 'vulnhub' ),
+				'detail' => __( 'A sync is running. How it went will show here when it finishes.', 'vulnhub' ),
+				'last'   => $completed ?: null,
+			);
+		}
+
 		if ( $completed && 'failed' === $completed['status'] ) {
 			return array(
 				'state'  => 'error',

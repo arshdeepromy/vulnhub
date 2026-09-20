@@ -33,6 +33,49 @@
 	 * void -- a pressed button and complete silence. It gets its own
 	 * container and its own classes instead.
 	 */
+	/**
+	 * Ask, in the page.
+	 *
+	 * window.confirm() cannot be styled, cannot say more than one paragraph
+	 * readably, and looks like a browser warning rather than part of the
+	 * product. This is the same question in a dialog the page owns.
+	 *
+	 * @param {string}   message What is about to happen.
+	 * @param {string}   go      Label for the button that does it.
+	 * @param {Function} then    Called only if they say yes.
+	 */
+	function ask( message, go, then ) {
+		if ( typeof HTMLDialogElement === 'undefined' ) {
+			// No <dialog> support: better a browser box than no question.
+			if ( window.confirm( message ) ) { then(); }
+			return;
+		}
+
+		var dlg = document.createElement( 'dialog' );
+		dlg.className = 'vh-ask';
+		dlg.innerHTML =
+			'<p class="vh-ask__msg"></p>' +
+			'<div class="vh-ask__foot">' +
+				'<button type="button" class="vh-btn vh-btn--sm" data-no></button>' +
+				'<button type="button" class="vh-btn vh-btn--sm vh-btn--primary" data-yes></button>' +
+			'</div>';
+
+		dlg.querySelector( '.vh-ask__msg' ).textContent = message;
+		dlg.querySelector( '[data-no]' ).textContent = 'Cancel';
+		dlg.querySelector( '[data-yes]' ).textContent = go;
+
+		document.body.appendChild( dlg );
+
+		var close = function () { dlg.close(); dlg.remove(); };
+
+		dlg.querySelector( '[data-no]' ).addEventListener( 'click', close );
+		dlg.querySelector( '[data-yes]' ).addEventListener( 'click', function () { close(); then(); } );
+		dlg.addEventListener( 'cancel', function () { dlg.remove(); } );
+
+		dlg.showModal();
+		dlg.querySelector( '[data-no]' ).focus();
+	}
+
 	function flash( message, type ) {
 		var wrap = document.querySelector( '.vulnhub-wrap' );
 		// The portal renders its admin body as `.vh-adm__body` (with the
@@ -104,20 +147,36 @@
 			var full = button.getAttribute( 'data-vh-full' ) === '1';
 			// Not data-vh-confirm: the portal's app.js confirms those itself, which
 			// would ask twice on the portal copy of this screen.
-			var ask  = button.getAttribute( 'data-vh-sync-confirm' );
+			var question = button.getAttribute( 'data-vh-sync-confirm' );
 
-			if ( ask && ! window.confirm( ask ) ) {
+			if ( question ) {
+				ask( question, full ? 'Run full resync' : 'Sync now', function () { run(); } );
 				return;
 			}
+
+			run();
+		}
+
+		function run() {
+			var full = button.getAttribute( 'data-vh-full' ) === '1';
 
 			busy( button, cfg.i18n.syncing );
 			api( '/connectors/' + id + '/sync', { method: 'POST', data: full ? { force: true, full: true } : { force: true } } )
 				.then( function ( result ) {
 					flash( result.message || 'Sync finished.', result.ok ? 'success' : 'error' );
+
+					/*
+					 * No reload. The sync runs in the background and this
+					 * screen already polls it into the progress line below the
+					 * card -- reloading a second after starting threw that
+					 * away, replaced a live view with a page flash, and lost
+					 * whatever else was on screen. The poller takes it from
+					 * here and updates the card when it finishes.
+					 */
 					if ( result.ok ) {
-						window.setTimeout( function () {
-							window.location.reload();
-						}, 1200 );
+						// The poller lives in another closure on this page, so
+						// say what happened rather than reaching into it.
+						document.dispatchEvent( new CustomEvent( 'vulnhub:sync-started', { detail: { connector: id } } ) );
 					}
 				} )
 				.catch( function ( error ) {
@@ -311,14 +370,25 @@
 		var total = pr.records_total || 0;
 		var done = pr.records_done || 0;
 		var active = 'process' === d.phase;
-		var pct = ( active && total > 0 ) ? Math.min( 99, Math.round( 100 * done / total ) ) : ( active ? 100 : 0 );
+
+		/*
+		 * records_total is only a floor -- the connector sets it to the asset
+		 * count because the real total is not known until every record is
+		 * parsed, and findings then push records_done well past it. So it is a
+		 * ratio only while it still is one: past the floor this showed
+		 * "98,000 / 587 records" against a bar pinned at 99%, which is a
+		 * progress bar lying twice. Past it, count up and say so.
+		 */
+		var ratio = total > 0 && done <= total;
+		var pct = ( active && ratio ) ? Math.min( 99, Math.round( 100 * done / total ) ) : ( active ? 100 : 0 );
+		var counted = ratio ? num( done ) + ' / ' + num( total ) + ' records' : num( done ) + ' records';
 		var meta = active
-			? ( num( done ) + ' / ' + num( total ) + ' records' + ( d.rate ? ' · ' + d.rate + '/s' : '' ) + ( d.eta != null ? ' · ~' + dur( d.eta ) + ' left' : '' ) )
+			? ( counted + ( d.rate ? ' · ' + d.rate + '/s' : '' ) + ( ratio && d.eta != null ? ' · ~' + dur( d.eta ) + ' left' : '' ) )
 			: ( 'download' === d.phase ? 'Waiting for the download to finish…' : 'Finishing up…' );
 
 		var pBar = progressRow(
 			'Process',
-			( active && total > 0 ) ? '' : ( active ? ' is-indeterminate' : '' ),
+			( active && ratio ) ? '' : ( active ? ' is-indeterminate' : '' ),
 			active ? pct : 0,
 			meta
 		);
@@ -370,10 +440,31 @@
 				'<div class="vh-sync-progress__done vh-sync-progress__done--good">' +
 				esc( 'Sync complete — ' + num( d.processed ) + ' records in ' + dur( ( d.duration_ms || 0 ) / 1000 ) ) +
 				'</div>';
+
+			// The card still says when it last synced. Without a reload that
+			// line is now wrong, and a wrong timestamp beside a "complete" is
+			// worse than no timestamp.
+			freshen( box, d );
 			return false;
 		}
 
 		return false;
+	}
+
+	/**
+	 * Update a card's "Synced … · took …" line from a finished run.
+	 *
+	 * @param {Element} box The progress box, which knows its connector id.
+	 * @param {Object}  d   The sync-status payload.
+	 */
+	function freshen( box, d ) {
+		var id = box.getAttribute( 'data-vh-sync-progress' );
+		var el = id && document.querySelector( '[data-vh-last-sync="' + id + '"]' );
+
+		if ( ! el ) { return; }
+
+		el.textContent = 'Synced just now · took ' + dur( ( d.duration_ms || 0 ) / 1000 );
+		el.removeAttribute( 'title' );
 	}
 
 	function poll( id ) {
@@ -404,6 +495,27 @@
 			if ( card ) { card.classList.add( 'is-syncing' ); }
 			window.setTimeout( function () { poll( b.dataset.vhConnector ); }, 600 );
 		}
+	} );
+
+	/*
+	 * A sync was accepted. Look for it, and keep looking for a few seconds: a
+	 * run that has been queued but has not yet written its first status reads
+	 * as "idle", and a single look would give up on it and leave the card
+	 * showing nothing at all.
+	 */
+	document.addEventListener( 'vulnhub:sync-started', function ( e ) {
+		var id = e.detail && e.detail.connector;
+		if ( ! id ) { return; }
+
+		var tries = 0;
+		( function look() {
+			if ( timers[ id ] ) { return; }   // already live; the poller has it
+
+			poll( id );
+			tries++;
+
+			if ( tries < 8 ) { window.setTimeout( look, 1500 ); }
+		}() );
 	} );
 
 	function init() {

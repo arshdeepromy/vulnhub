@@ -797,17 +797,32 @@ final class VulnHub_Dash_Portal {
 
 		/*
 		 * Connector health for the context bar. `$conn_bad` also drives the red
-		 * dot on the Integrations nav row. One cheap `last_run` per connector.
+		 * dot on the Integrations nav row.
+		 *
+		 * Ask the connector, do not re-derive it. Reading `last_run` directly
+		 * was cheaper by a query per connector and wrong in two ways that both
+		 * showed on screen: it counted connectors nobody has turned on -- a
+		 * disabled AWS whose last attempt failed months ago was reported as "1
+		 * connector failing" beside a header calling it "not enabled" -- and it
+		 * knew nothing of a sync running right now, so a transient failure kept
+		 * the badge red while the next run was already succeeding. health() is
+		 * the one definition of failing, and the Integrations header counts the
+		 * same way, so the two cannot disagree again.
 		 */
 		$conn_total = 0;
 		$conn_bad   = 0;
+		$conn_on    = 0;
 
-		if ( function_exists( 'vulnhub' ) && isset( vulnhub()->connectors, vulnhub()->logger ) ) {
-			foreach ( (array) vulnhub()->connectors->all() as $cid => $conn ) {
+		if ( function_exists( 'vulnhub' ) && isset( vulnhub()->connectors ) ) {
+			foreach ( (array) vulnhub()->connectors->all() as $conn ) {
 				++$conn_total;
-				$lr = vulnhub()->logger->last_run( (string) $cid );
-				if ( $lr && 'failed' === ( $lr['status'] ?? '' ) ) {
+
+				$state = (string) ( $conn->health()['state'] ?? '' );
+
+				if ( 'error' === $state ) {
 					++$conn_bad;
+				} elseif ( 'off' !== $state ) {
+					++$conn_on;
 				}
 			}
 		}
@@ -839,8 +854,15 @@ final class VulnHub_Dash_Portal {
 							$conn_bad > 0
 								/* translators: %s: number of connectors whose last run failed. */
 								? sprintf( _n( '%s connector failing', '%s connectors failing', $conn_bad, 'vulnhub' ), number_format_i18n( $conn_bad ) )
-								/* translators: %s: total connector count. */
-								: sprintf( _n( '%s connector idle', '%s connectors idle', $conn_total, 'vulnhub' ), number_format_i18n( $conn_total ) )
+								/*
+								 * The ones actually in use, said the way the
+								 * Integrations header says it. Counting every
+								 * connector and calling them "idle" read as
+								 * "10 connectors idle" on a site where three
+								 * were working and one was mid-sync.
+								 */
+								/* translators: %s: connectors that are enabled and not failing. */
+								: sprintf( _n( '%s connector active', '%s connectors active', $conn_on, 'vulnhub' ), number_format_i18n( $conn_on ) )
 						);
 						?>
 					</span>
