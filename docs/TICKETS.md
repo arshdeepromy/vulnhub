@@ -450,6 +450,58 @@ So the list and the ticket page now carry both, each with its own date.
   asset's scan time against the ticket, which is the verification run's job;
   a stored finding state cannot honestly make it.
 
+## Two bars, and what counts as done
+
+A remediation ticket is measured twice, because the two numbers move at
+different speeds and each answers a question the other cannot.
+
+    863 of 1,318 findings fixed      ~65%
+    116 of 314 assets clear          ~37%
+
+At about four findings per machine, two thirds of the findings can be fixed
+while only a third of the machines are clear, because an asset counts only when
+*every* finding raised against it is done. One bar with the other number
+footnoted underneath read as a contradiction, so both are drawn.
+
+**"Fixed" is anything that is not outstanding**, and outstanding is narrower
+than "not fixed":
+
+```sql
+NOT ( state IN ('open','reopened') AND archived_at IS NULL AND exception_id = 0 )
+```
+
+A finding archived with its asset, or covered by an accepted exception, is not
+work anybody can do. Counting those as unfixed held an entire asset out of the
+cleared column on the strength of four archived rows — the bar read 115 of 314
+where 116 were clear.
+
+**The denominators are always the original counts.** The ticket was raised about
+this many findings on this many assets, and a finding that leaves the board is
+counted as done rather than removed from the total: a shrinking denominator
+flatters progress without anybody noticing.
+
+## Sending the list again, current
+
+A scope ticket travels as a CSV, and that CSV is a photograph of the day it was
+raised. **Send an updated list to Jira** on the ticket page rebuilds it.
+
+- **From the ticket's own assets, never from its filter.** The saved filter is
+  the condition that selected them — "workstations not in Tenable" — so
+  re-running it today returns the machines still missing an agent and *drops
+  the ones that have been done*. The team would get a shorter list with nothing
+  to say what left it. `Tickets::assets_for()` returns the assets the ticket was
+  raised about, each carrying today's outcome, so the file shows two rows as
+  `Covered` where twenty-three still read `Not in Tenable`.
+- **The file is dated**, because Jira has no replace. Two attachments called
+  `assets.csv` on one ticket is somebody working from the wrong one.
+- **Internal first, then an ordinary comment.** A ticket VulnHub created through
+  the issue API is an issue, not a service desk *request*, so the desk API 404s
+  on it and there is no internal note to post. The file went up through the same
+  issue API and is already visible to anyone who can see the issue, so the
+  comment falls back rather than leaving the attachment unexplained — and the
+  result is checked either way. The first version ignored it and reported "left
+  a note" when no note had been posted.
+
 ## Checking tickets: Verify
 
 The Tickets list has **Verify all tickets** and a **Verify** button on each

@@ -181,6 +181,17 @@ final class Rest {
 
 		register_rest_route(
 			self::NS,
+			'/tickets/(?P<id>\d+)/attachment',
+			array(
+				// Sending a file to somebody else's ticket is a raise-level act.
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'refresh_ticket_attachment' ),
+				'permission_callback' => array( $this, 'can_raise' ),
+			)
+		);
+
+		register_rest_route(
+			self::NS,
 			'/tickets/(?P<id>\d+)/transitions',
 			array(
 				array(
@@ -616,6 +627,35 @@ final class Rest {
 
 		if ( null === $result ) {
 			return new WP_Error( 'vulnhub_no_itsm', __( 'No ticketing integration is active.', 'vulnhub' ), array( 'status' => 409 ) );
+		}
+
+		return new WP_REST_Response( $result );
+	}
+
+	/**
+	 * Rebuild the ticket's asset list and attach it again, current.
+	 */
+	public function refresh_ticket_attachment( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$ticket = Tickets::get( (int) $request['id'] );
+
+		if ( ! $ticket ) {
+			return new WP_Error( 'vulnhub_not_found', __( 'Ticket not found.', 'vulnhub' ), array( 'status' => 404 ) );
+		}
+
+		/**
+		 * Filters rebuilding and re-attaching a ticket's asset list.
+		 *
+		 * @param array<string,mixed>|null $result Result.
+		 * @param array<string,mixed>      $ticket Ticket row.
+		 */
+		$result = apply_filters( 'vulnhub_refresh_ticket_attachment', null, $ticket );
+
+		if ( null === $result ) {
+			return new WP_Error( 'vulnhub_no_itsm', __( 'No ticketing integration is active.', 'vulnhub' ), array( 'status' => 409 ) );
+		}
+
+		if ( empty( $result['ok'] ) ) {
+			return new WP_Error( 'vulnhub_attach_failed', (string) ( $result['message'] ?? __( 'The list was not attached.', 'vulnhub' ) ), array( 'status' => 502 ) );
 		}
 
 		return new WP_REST_Response( $result );

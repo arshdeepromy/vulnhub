@@ -3528,4 +3528,33 @@ document.addEventListener( 'click', function ( e ) {
 			onChoice( event.target.closest( 'dialog' ) );
 		}
 	} );
+
+	/* ---- "Send an updated list to Jira" on a scope ticket ---- */
+	document.addEventListener( 'click', function ( event ) {
+		var button = event.target.closest ? event.target.closest( '[data-vh-reattach]' ) : null;
+		if ( ! button ) { return; }
+		event.preventDefault();
+
+		var id     = parseInt( button.dataset.vhReattach, 10 );
+		var status = button.parentNode.querySelector( '[data-vh-reattach-status]' );
+		var label  = button.textContent;
+
+		button.disabled = true;
+		button.textContent = 'Rebuilding and attaching…';
+		if ( status ) { status.textContent = ''; }
+
+		wp.apiFetch( { path: '/vulnhub/v1/tickets/' + id + '/attachment', method: 'POST' } )
+			.then( function ( result ) {
+				/* Stays on screen: the file name is the thing somebody needs
+				   to quote, and a toast that vanishes takes it with it. */
+				if ( status ) { status.textContent = ( result && result.message ) || 'Attached.'; }
+				button.textContent = label;
+				button.disabled = false;
+			} )
+			.catch( function ( error ) {
+				if ( status ) { status.textContent = ( error && error.message ) || cfg.i18n.error || 'The list was not attached.'; }
+				button.textContent = label;
+				button.disabled = false;
+			} );
+	} );
 }() );

@@ -100,7 +100,22 @@ add_action(
 add_action(
 	\VulnHub\Core\Scheduler::HOOK_HOUSEKEEP,
 	static function (): void {
-		\VulnHub\Core\Duplicates::run();
+		/*
+		 * Detection only, by default. The merge is NOT run unattended.
+		 *
+		 * The first live merge did not survive the next full sync: the CMDB
+		 * re-asserted itself, un-retired the row that had been folded away,
+		 * gave it a different hostname, and ended up writing two *different*
+		 * CI keys across the pair. Worse, the safety guard reads `cmdb_id`,
+		 * and the retired row came back with a `cmdb_key` but an empty
+		 * `cmdb_id` -- so the guard would not have fired and the pair would
+		 * have been merged again the next night, and the night after,
+		 * flapping against the CMDB import for ever.
+		 *
+		 * Until that is understood, this flags and leaves alone. Merging is a
+		 * deliberate act: `Duplicates::merge()`.
+		 */
+		\VulnHub\Core\Duplicates::scan();
 	},
 	20
 );

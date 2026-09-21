@@ -2864,7 +2864,9 @@ dialog.vh-ask::backdrop { background: rgba(4, 8, 18, .6); }
  * to somebody as a list of machines to touch. Read from the finding rows
  * every sync refreshes, so it stays current between verification runs.
  * ------------------------------------------------------------------- */
-.vh-tprog { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; min-width: 122px; max-width: 190px; }
+.vh-tprog { display: flex; flex-direction: column; gap: 7px; margin-top: 6px; min-width: 132px; max-width: 200px; }
+/* Each bar is its own stack: track, sentence, optional quieter line. */
+.vh-tprog__row { display: flex; flex-direction: column; gap: 2px; }
 .vh-tprog__track {
 	height: 5px; border-radius: 999px; background: var(--vh-neutral-bg);
 	overflow: hidden; border: 1px solid var(--vh-line);
@@ -2874,9 +2876,12 @@ dialog.vh-ask::backdrop { background: rgba(4, 8, 18, .6); }
 	background: var(--vh-sev-medium); transition: width .3s ease;
 }
 .vh-tprog--good .vh-tprog__track > span { background: var(--vh-good); }
+.vh-tprog__row.vh-tprog--good .vh-tprog__track > span { background: var(--vh-good); }
 .vh-tprog--none .vh-tprog__track > span { background: transparent; }
+.vh-tprog__row.vh-tprog--none .vh-tprog__track > span { background: transparent; }
 .vh-tprog__label { font-size: 11.5px; color: var(--vh-ink-2); font-variant-numeric: tabular-nums; }
 .vh-tprog--good .vh-tprog__label { color: var(--vh-good-ink, var(--vh-good)); }
+.vh-tprog__row.vh-tprog--good .vh-tprog__label { color: var(--vh-good-ink, var(--vh-good)); }
 .vh-tprog__meta { font-size: 11px; color: var(--vh-muted); font-variant-numeric: tabular-nums; }
 
 /* On the ticket page it is a headline, not a table cell. The bar now sits

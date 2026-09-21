@@ -1189,66 +1189,94 @@ final class VulnHub_Dash_Tickets {
 		if ( $scope ) {
 			$counts = Tickets::asset_outcomes( $t );
 			$total  = (int) $counts['total'];
-			$done   = (int) $counts['resolved'];
-			$label  = static fn( int $d, int $n ): string => sprintf(
-				/* translators: 1: assets done, 2: assets on the ticket. */
-				__( '%1$d of %2$d assets done', 'vulnhub' ),
-				$d,
-				$n
-			);
-			$meta   = $total > 0 && ( (int) $counts['retired'] + (int) $counts['removed'] ) > 0
+
+			if ( $total < 1 ) {
+				return '';
+			}
+
+			$aside = ( (int) $counts['retired'] + (int) $counts['removed'] ) > 0
 				? sprintf(
 					/* translators: %d: number of assets. */
 					__( '%d no longer relevant', 'vulnhub' ),
 					(int) $counts['retired'] + (int) $counts['removed']
 				)
 				: '';
-		} else {
-			$progress = $progress ?? Tickets::progress_for( (int) $t['id'] );
 
-			if ( ! $progress ) {
-				return '';
-			}
-
-			$total = (int) $progress['assets'];
-			$done  = (int) $progress['assets_fixed'];
-			$label = static fn( int $d, int $n ): string => sprintf(
-				/* translators: 1: assets fixed, 2: assets on the ticket. */
-				__( '%1$d of %2$d assets fixed', 'vulnhub' ),
-				$d,
-				$n
-			);
-			$meta  = sprintf(
-				/* translators: 1: findings fixed, 2: findings on the ticket. */
-				__( '%1$d of %2$d findings', 'vulnhub' ),
-				(int) $progress['findings_fixed'],
-				(int) $progress['findings']
-			);
+			return '<div class="vh-tprog">'
+				. self::progress_bar(
+					(int) $counts['resolved'],
+					$total,
+					/* translators: 1: assets done, 2: assets on the ticket. */
+					__( '%1$s of %2$s assets done', 'vulnhub' ),
+					$aside
+				)
+				. '</div>';
 		}
 
+		$progress = $progress ?? Tickets::progress_for( (int) $t['id'] );
+
+		if ( ! $progress || (int) $progress['findings'] < 1 ) {
+			return '';
+		}
+
+		/*
+		 * Two bars, not one with the other number whispered underneath.
+		 *
+		 * They answer different questions and move at different speeds: at
+		 * 4.2 findings per asset, two thirds of the findings can be fixed
+		 * while only a third of the machines are actually clear, because an
+		 * asset counts only when every finding on it is done. Showing one and
+		 * footnoting the other invited exactly the question of which was
+		 * wrong.
+		 */
+		$as_of = (string) ( $progress['as_of'] ?? '' );
+		$aside = '' !== $as_of
+			/* translators: %s: time ago, e.g. "13 hours ago". */
+			? sprintf( __( 'scanner data %s', 'vulnhub' ), vh_ago( $as_of ) )
+			: '';
+
+		return '<div class="vh-tprog">'
+			. self::progress_bar(
+				(int) $progress['findings_fixed'],
+				(int) $progress['findings'],
+				/* translators: 1: findings fixed, 2: findings on the ticket. */
+				__( '%1$s of %2$s findings fixed', 'vulnhub' )
+			)
+			. self::progress_bar(
+				(int) $progress['assets_fixed'],
+				(int) $progress['assets'],
+				/* translators: 1: assets clear, 2: assets on the ticket. */
+				__( '%1$s of %2$s assets clear', 'vulnhub' ),
+				$aside
+			)
+			. '</div>';
+	}
+
+	/**
+	 * One bar: the track, the sentence, and optionally a quieter line under it.
+	 *
+	 * The denominator is always what the ticket was raised about. A finding
+	 * that leaves the board is counted as done, never removed from the total:
+	 * a shrinking denominator flatters progress without anybody noticing.
+	 *
+	 * @param string $format A sprintf format taking the done and total counts.
+	 */
+	private static function progress_bar( int $done, int $total, string $format, string $aside = '' ): string {
 		if ( $total < 1 ) {
 			return '';
 		}
 
+		$done = max( 0, min( $done, $total ) );
 		$pct  = (int) round( $done / $total * 100 );
 		$tone = 0 === $done ? 'none' : ( $done >= $total ? 'good' : 'part' );
 
-		// As of when, so the bar is never read as a live scan.
-		$as_of = (string) ( $progress['as_of'] ?? '' );
-		$title = '' !== $as_of
-			? sprintf(
-				/* translators: 1: the bar's label, 2: time ago, e.g. "13 hours ago". */
-				__( '%1$s — scanner data %2$s', 'vulnhub' ),
-				$label( $done, $total ),
-				vh_ago( $as_of )
-			)
-			: $label( $done, $total );
+		$label = sprintf( $format, number_format_i18n( $done ), number_format_i18n( $total ) );
 
-		return '<div class="vh-tprog vh-tprog--' . esc_attr( $tone ) . '" title="' . esc_attr( $title ) . '">'
-			. '<div class="vh-tprog__track" role="img" aria-label="' . esc_attr( $title ) . '">'
+		return '<div class="vh-tprog__row vh-tprog--' . esc_attr( $tone ) . '">'
+			. '<div class="vh-tprog__track" role="img" aria-label="' . esc_attr( $label ) . '">'
 			. '<span style="width:' . (int) $pct . '%"></span></div>'
-			. '<span class="vh-tprog__label">' . esc_html( $label( $done, $total ) ) . '</span>'
-			. ( '' !== $meta ? '<span class="vh-tprog__meta">' . esc_html( $meta ) . '</span>' : '' )
+			. '<span class="vh-tprog__label">' . esc_html( $label ) . '</span>'
+			. ( '' !== $aside ? '<span class="vh-tprog__meta">' . esc_html( $aside ) . '</span>' : '' )
 			. '</div>';
 	}
 
@@ -1585,6 +1613,23 @@ final class VulnHub_Dash_Tickets {
 						</a>
 					</p>
 					<p class="vh-sub vh-muted"><?php esc_html_e( 'The filter can match different assets now. The table below is the assets the ticket was raised about, whatever the filter says today.', 'vulnhub' ); ?></p>
+					<?php if ( self::can_transition() && 'jira' === (string) $t['provider'] ) : ?>
+						<?php
+						/*
+						 * Rebuilt from the ticket's own assets, not its filter
+						 * -- re-running the filter would drop the ones that
+						 * have since been done, which is the opposite of a
+						 * progress report.
+						 */
+						?>
+						<p class="vh-raise__links">
+							<button type="button" class="vh-btn vh-btn--sm" data-vh-reattach="<?php echo (int) $t['id']; ?>">
+								<?php esc_html_e( 'Send an updated list to Jira', 'vulnhub' ); ?>
+							</button>
+							<span class="vh-meta" data-vh-reattach-status role="status"></span>
+						</p>
+						<p class="vh-sub vh-muted"><?php esc_html_e( 'Attaches today’s list of these same assets, with where each one stands, and leaves an internal note saying so. Jira keeps earlier attachments, so the file is dated.', 'vulnhub' ); ?></p>
+					<?php endif; ?>
 				</section>
 			<?php endif; ?>
 		</div>

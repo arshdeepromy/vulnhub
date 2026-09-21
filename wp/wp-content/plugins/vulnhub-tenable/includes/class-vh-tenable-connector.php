@@ -1013,7 +1013,21 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 		 * megabytes -- and skipping it is the whole point of the mode.
 		 */
 		if ( ! empty( $state['assets_only'] ) ) {
-			$this->log( 'Assets-only run: skipping the vulnerability export.' );
+			$this->log( sprintf( 'Assets-only run: skipping the vulnerability export. %d asset chunk(s) to process.', $a_saved ) );
+
+			/*
+			 * Hand the chunk count over before returning.
+			 *
+			 * Returning early here skips the block below that normally records
+			 * it, and the processing loop counts `for ($i = 1; $i <= 0; $i++)`
+			 * -- so the first assets-only run downloaded 559 assets, imported
+			 * none of them, and reported success. A run that quietly does
+			 * nothing is worse than one that fails.
+			 */
+			$state['process']['asset_chunks'] = $a_saved;
+			$state['process']['vuln_chunks']  = 0;
+			$state['process']['chunk']        = 1;
+			$state['process']['stage']        = 'assets';
 
 			$state['download']['status'] = 'done';
 			$state['phase']              = 'process';

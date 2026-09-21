@@ -143,6 +143,7 @@ final class VulnHub_Jira_Ticketer {
 		add_filter( 'vulnhub_post_ticket_comment', array( $this, 'post_ticket_comment' ), 10, 4 );
 		add_filter( 'vulnhub_ticket_transitions', array( $this, 'ticket_transitions' ), 10, 2 );
 		add_filter( 'vulnhub_apply_ticket_transition', array( $this, 'apply_ticket_transition' ), 10, 5 );
+		add_filter( 'vulnhub_refresh_ticket_attachment', array( $this, 'refresh_attachment' ), 10, 2 );
 	}
 
 	/**
@@ -237,6 +238,170 @@ final class VulnHub_Jira_Ticketer {
 		}
 
 		return $read;
+	}
+
+	/**
+	 * Answer `vulnhub_refresh_ticket_attachment`: send the list again, current.
+	 *
+	 * A scope ticket travels as a CSV, and that CSV is a photograph of the day
+	 * it was raised. Weeks later two of the twenty-five machines have an agent
+	 * and nobody working the ticket can tell which -- the file still lists all
+	 * twenty-five as outstanding.
+	 *
+	 * **Rebuilt from the ticket's own assets, never from its filter.** The
+	 * saved filter is "workstations not in Tenable", so re-running it today
+	 * returns the machines still missing an agent and *drops the ones that
+	 * have been done*. The team would get a shorter list with no explanation
+	 * of what left it -- the opposite of a progress report. `assets_for()`
+	 * returns the assets the ticket was raised about, whatever the filter says
+	 * now, each carrying today's outcome.
+	 *
+	 * The file is dated because Jira keeps every attachment: there is no
+	 * replace, so two files called `assets.csv` on one ticket is somebody
+	 * working from the wrong one. The comment says which is current.
+	 *
+	 * @param array<string,mixed>|null $result Result from an earlier ITSM plugin.
+	 * @param array<string,mixed>      $ticket Ticket row.
+	 * @return array<string,mixed>|null
+	 */
+	public function refresh_attachment( ?array $result, array $ticket ): ?array {
+		if ( null !== $result ) {
+			return $result;
+		}
+
+		$connector = vulnhub_jira_connector();
+
+		if ( ! $connector ) {
+			return null;
+		}
+
+		$key = (string) ( $ticket['external_key'] ?? '' );
+
+		if ( 'jira' !== (string) ( $ticket['provider'] ?? '' ) || '' === $key ) {
+			return array(
+				'ok'      => false,
+				'message' => __( 'This ticket was recorded by hand, so there is no Jira issue to attach a file to.', 'vulnhub' ),
+			);
+		}
+
+		if ( ! class_exists( 'VulnHub_Dash_Export' ) ) {
+			return array( 'ok' => false, 'message' => __( 'The export component is not available.', 'vulnhub' ) );
+		}
+
+		$counts = \VulnHub\Core\Tickets::asset_outcomes( $ticket );
+		$total  = (int) ( $counts['total'] ?? 0 );
+
+		if ( $total < 1 ) {
+			return array( 'ok' => false, 'message' => __( 'This ticket covers no assets, so there is no list to send.', 'vulnhub' ) );
+		}
+
+		$list = \VulnHub\Core\Tickets::assets_for( $ticket, array( 'limit' => 5000 ) );
+		$ids  = array_map( static fn( array $r ): int => (int) $r['asset_id'], (array) $list['rows'] );
+		$ids  = array_values( array_filter( $ids ) );
+
+		if ( ! $ids ) {
+			return array( 'ok' => false, 'message' => __( 'None of this ticket’s assets are still in the inventory.', 'vulnhub' ) );
+		}
+
+		// The columns it was raised with, so the file matches the first one.
+		$scope = json_decode( (string) ( $ticket['scope_json'] ?? '' ), true );
+		$cols  = is_array( $scope ) ? array_map( 'strval', (array) ( $scope['cols'] ?? array() ) ) : array();
+
+		$csv = \VulnHub_Dash_Export::assets_csv( $ids, $cols );
+
+		if ( empty( $csv['bytes'] ) ) {
+			return array( 'ok' => false, 'message' => __( 'The list could not be rebuilt.', 'vulnhub' ) );
+		}
+
+		$limit = self::attachment_limit();
+
+		if ( strlen( (string) $csv['bytes'] ) > $limit ) {
+			return array(
+				'ok'      => false,
+				/* translators: %s: size limit. */
+				'message' => sprintf( __( 'The rebuilt list is larger than the %s Jira accepts as an attachment.', 'vulnhub' ), size_format( $limit ) ),
+			);
+		}
+
+		$name   = sprintf( 'assets-%s-%s.csv', strtolower( $key ), gmdate( 'Y-m-d' ) );
+		$upload = $connector->client()->attach( $key, $name, (string) $csv['bytes'], 'text/csv' );
+
+		if ( ! $upload->ok() ) {
+			return array(
+				'ok'      => false,
+				'message' => sprintf(
+					/* translators: 1: file name, 2: HTTP status, 3: error. */
+					__( 'Attaching %1$s failed (HTTP %2$d): %3$s', 'vulnhub' ),
+					$name,
+					$upload->status,
+					vh_trim( $upload->error_message(), 160 )
+				),
+			);
+		}
+
+		$done = (int) ( $counts['resolved'] ?? 0 );
+		$note = sprintf(
+			/* translators: 1: file name, 2: done, 3: total. */
+			__( 'Refreshed list attached: %1$s. %2$d of %3$d now done; the file lists every asset this ticket was raised about, with where each one stands today. Earlier attachments are out of date.', 'vulnhub' ),
+			$name,
+			$done,
+			$total
+		);
+
+		/*
+		 * Internal first, like every other comment this product posts: a reply
+		 * notifies whoever raised the request and cannot be taken back.
+		 *
+		 * But a ticket VulnHub created through the issue API is an ordinary
+		 * issue, not a service desk *request*, and the desk API 404s on it --
+		 * so there is no such thing as an internal note there and the attempt
+		 * is refused. The file went up through the same issue API and is
+		 * already visible to anyone who can see the issue, so a comment beside
+		 * it reveals nothing further: fall back to an ordinary comment rather
+		 * than leave the attachment sitting there unexplained.
+		 *
+		 * The result is checked either way. The first version of this ignored
+		 * it and reported "left a note" while no note had been posted.
+		 */
+		$said = $connector->post_comment( $key, $note, false );
+
+		if ( empty( $said['ok'] ) ) {
+			$said = $connector->post_comment( $key, $note, true );
+		}
+
+		$connector->forget_comments( $key );
+
+		vulnhub()->logger->audit(
+			'ticket.attachment_refreshed',
+			sprintf( '%s: %s (%d rows, %d of %d done)', $key, $name, (int) $csv['rows'], $done, $total ),
+			'ticket',
+			(int) $ticket['id'],
+			array( 'file' => $name, 'rows' => (int) $csv['rows'], 'done' => $done, 'total' => $total )
+		);
+
+		return array(
+			'ok'      => true,
+			'message' => sprintf(
+				/* translators: 1: file name, 2: rows, 3: done, 4: total, 5: what happened to the note. */
+				__( 'Attached %1$s (%2$d rows). %3$d of %4$d assets are done. %5$s', 'vulnhub' ),
+				$name,
+				(int) $csv['rows'],
+				$done,
+				$total,
+				! empty( $said['ok'] )
+					? __( 'A comment on the ticket says so.', 'vulnhub' )
+					: sprintf(
+						/* translators: %s: why the comment failed. */
+						__( 'The explanatory comment could not be posted (%s), so say which file is current yourself.', 'vulnhub' ),
+						vh_trim( (string) ( $said['message'] ?? '' ), 120 )
+					)
+			),
+			'noted'   => ! empty( $said['ok'] ),
+			'file'    => $name,
+			'rows'    => (int) $csv['rows'],
+			'done'    => $done,
+			'total'   => $total,
+		);
 	}
 
 	/**

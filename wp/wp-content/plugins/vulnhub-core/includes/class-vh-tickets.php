@@ -710,11 +710,27 @@ final class Tickets {
 
 		$rows = (array) $wpdb->get_results(
 			$wpdb->prepare(
+				/*
+				 * "Outstanding" is the only thing that counts against
+				 * progress, and it is narrower than "not fixed".
+				 *
+				 * A finding that has been archived (its asset merged away or
+				 * decommissioned) or covered by an accepted exception is not
+				 * work anybody can do. Counting those as unfixed held a whole
+				 * asset out of the cleared column on the strength of four
+				 * archived rows -- the bar said 115 of 314 where 116 were
+				 * clear. Everything that is not outstanding counts as done.
+				 *
+				 * The denominators stay the original counts: the ticket was
+				 * raised about this many findings on this many assets, and
+				 * shrinking the denominator as findings leave would quietly
+				 * flatter the progress.
+				 */
 				'SELECT tf.ticket_id,
 					COUNT(*) AS findings,
-					SUM(f.state = \'fixed\') AS findings_fixed,
+					SUM( NOT ( f.state IN (\'open\', \'reopened\') AND f.archived_at IS NULL AND f.exception_id = 0 ) ) AS findings_fixed,
 					COUNT(DISTINCT f.asset_id) AS assets,
-					COUNT(DISTINCT CASE WHEN f.state <> \'fixed\' THEN f.asset_id END) AS assets_open,
+					COUNT(DISTINCT CASE WHEN f.state IN (\'open\', \'reopened\') AND f.archived_at IS NULL AND f.exception_id = 0 THEN f.asset_id END) AS assets_open,
 					MAX(f.last_synced_at) AS as_of
 				 FROM ' . vh_table( 'ticket_findings' ) . ' tf
 				 INNER JOIN ' . vh_table( 'findings' ) . " f ON f.id = tf.finding_id

@@ -330,6 +330,19 @@ final class Logger {
 		$done      = (int) ( $run['processed'] ?? 0 );
 		$stage     = is_array( $stats ) ? (string) ( $stats['stage'] ?? '' ) : '';
 		$elapsed   = max( 1, $now - $started );
+
+		/*
+		 * Bytes landing on disk count as a heartbeat.
+		 *
+		 * The heartbeat is written when a *chunk completes*, so a single large
+		 * chunk streaming for longer than STALL_SECONDS looks exactly like a
+		 * dead process -- and a healthy 1.4 GB download was reaped as "no
+		 * progress for 11 minutes" while it was still writing. A connector
+		 * that stages to disk can answer this filter with the newest mtime of
+		 * whatever it is writing; core stays ignorant of where that is.
+		 */
+		$disk      = (int) apply_filters( 'vulnhub_sync_disk_progress_at', 0, $connector );
+		$heartbeat = max( $heartbeat, $disk );
 		$hb_age    = max( 0, $now - $heartbeat );
 
 		// Stalled: reap it so it stops claiming to run, and report the truth.

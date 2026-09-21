@@ -52,6 +52,64 @@ add_action(
 		add_action( 'vulnhub_lifecycle_changed', array( \VulnHub\Core\Repo::class, 'forget_pruned_tenable' ), 10, 1 );
 
 		/*
+		 * A staged sync writes chunk files for minutes at a time without
+		 * finishing one, so the newest mtime under its staging directory is
+		 * the truest sign it is alive. Answered here because only this plugin
+		 * knows where it stages.
+		 */
+		add_filter(
+			'vulnhub_sync_disk_progress_at',
+			static function ( $latest, string $connector ) {
+				if ( 'tenable' !== $connector ) {
+					return $latest;
+				}
+
+				$dir = trailingslashit( (string) wp_upload_dir()['basedir'] ) . 'vulnhub-sync/tenable/';
+
+				if ( ! is_dir( $dir ) ) {
+					return $latest;
+				}
+
+				$newest = (int) $latest;
+
+				foreach ( (array) glob( $dir . '*' ) as $file ) {
+					$when = (int) @filemtime( $file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors
+
+					if ( $when > $newest ) {
+						$newest = $when;
+					}
+				}
+
+				return $newest;
+			},
+			10,
+			2
+		);
+
+		/*
+		 * The hourly agent reading. Answered here rather than in core because
+		 * only this connector can reach the endpoint -- core owns the history
+		 * table, the connector owns the API.
+		 */
+		/*
+		 * Confirm, a batch a day, which assets Tenable has actually dropped.
+		 * On housekeeping rather than the sync: it is a small number of
+		 * single-asset reads and must never lengthen an import.
+		 */
+		add_action(
+			\VulnHub\Core\Scheduler::HOOK_HOUSEKEEP,
+			static function (): void {
+				$tenable = vulnhub()->connectors->get( 'tenable' );
+
+				if ( $tenable instanceof VulnHub_Tenable_Connector ) {
+					\VulnHub\Core\Tenable_Dropped::verify( $tenable );
+				}
+			}
+		);
+
+
+
+		/*
 		 * The hourly agent reading. Answered here rather than in core because
 		 * only this connector can reach the endpoint -- core owns the history
 		 * table, the connector owns the API.
