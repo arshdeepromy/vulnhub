@@ -538,8 +538,21 @@ final class Repo {
 				continue;
 			}
 
+			/*
+			 * `ORDER BY last_seen DESC`, not bare `LIMIT 1`.
+			 *
+			 * An identifier is supposed to be unique, so for most of these the
+			 * ordering costs nothing and changes nothing. A serial is the
+			 * exception: when one machine has been rebuilt and every system
+			 * minted fresh ids for it, two rows legitimately carry the same
+			 * serial -- and without an ordering, which one a later feed bonds
+			 * to was decided by storage order. That is how a CMDB record
+			 * ended up attached to the older of two rows while all the live
+			 * telemetry sat on the newer one, and it would not reproduce on a
+			 * reimport. Most recently seen wins, and NULLs sort last.
+			 */
 			$row = $wpdb->get_row(
-				$wpdb->prepare( $select . " WHERE {$column} = %s LIMIT 1", $value ), // phpcs:ignore WordPress.DB.PreparedSQL
+				$wpdb->prepare( $select . " WHERE {$column} = %s ORDER BY last_seen DESC, id DESC LIMIT 1", $value ), // phpcs:ignore WordPress.DB.PreparedSQL
 				ARRAY_A
 			);
 
@@ -812,6 +825,8 @@ final class Repo {
 			'primary_source', 'tenable_uuid', 'intune_id', 'azure_ad_device_id', 'cmdb_id',
 			'defender_id', 'defender_onboarding', 'defender_health', 'defender_risk',
 			'defender_exposure', 'defender_managed_by', 'defender_coverage_state',
+			'agent_coverage_state', 'agent_status', 'agent_last_connect', 'agent_status_since',
+			'tenable_dropped_at', 'tenable_checked_at',
 			'azure_vm_id', 'aws_instance_id', 'gcp_instance_id',
 			'cloud_provider', 'cloud_account_id', 'cloud_region', 'patch_group', 'cmdb_key', 'sources_json',
 			'hostname', 'fqdn', 'netbios_name', 'ipv4', 'ipv6', 'mac_address', 'serial_number',
@@ -2312,6 +2327,44 @@ final class Repo {
 				$where[]  = 'defender_coverage_state = %s';
 				$params[] = $dstate;
 			}
+		}
+		/*
+		 * Tenable Agent coverage. Its own argument, and its own column: a
+		 * network scan satisfies `coverage` without an agent ever being
+		 * installed, so "scanned" and "has an agent" are different lists and
+		 * are regularly wanted together -- "servers Tenable scans but has no
+		 * agent on" is one query needing both.
+		 */
+		if ( ! empty( $args['agent'] ) ) {
+			$astate = (string) $args['agent'];
+
+			if ( 'gap' === $astate ) {
+				$agap    = Agent_Coverage::gap_states();
+				$where[] = "agent_coverage_state IN ('" . implode( "','", array_map( 'esc_sql', $agap ) ) . "')";
+			} elseif ( isset( Agent_Coverage::states()[ $astate ] ) ) {
+				$where[]  = 'agent_coverage_state = %s';
+				$params[] = $astate;
+			}
+		}
+		/*
+		 * How long an agent has been dark. Measured from Tenable's own
+		 * `last_connect`, not from when VulnHub first noticed: the sampling
+		 * started this week and the agent may have been off for a month, and
+		 * dating it from our first reading would understate every one of them.
+		 */
+		if ( ! empty( $args['agent_dark'] ) ) {
+			$days = max( 1, min( 365, (int) $args['agent_dark'] ) );
+
+			$where[]  = "agent_status = 'off' AND agent_last_connect IS NOT NULL AND agent_last_connect < %s";
+			$params[] = gmdate( 'Y-m-d H:i:s', time() - $days * DAY_IN_SECONDS );
+		}
+		/*
+		 * Confirmed gone from Tenable while the CMDB still runs it. Never
+		 * inferred from a sync's absences -- see Tenable_Dropped -- so this is
+		 * simply reading the verdict that check left behind.
+		 */
+		if ( ! empty( $args['tenable_dropped'] ) ) {
+			$where[] = 'tenable_dropped_at IS NOT NULL';
 		}
 		if ( ! empty( $args['has_vulns'] ) ) {
 			$where[] = '(open_critical + open_high + open_medium + open_low) > 0';

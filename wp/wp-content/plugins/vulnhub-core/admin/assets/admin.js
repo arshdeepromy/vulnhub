@@ -150,7 +150,7 @@
 			var question = button.getAttribute( 'data-vh-sync-confirm' );
 
 			if ( question ) {
-				ask( question, full ? 'Run full resync' : 'Sync now', function () { run(); } );
+				ask( question, full ? 'Run full resync' : ( button.getAttribute( 'data-vh-assets-only' ) === '1' ? 'Refresh assets' : 'Sync now' ), function () { run(); } );
 				return;
 			}
 
@@ -159,9 +159,14 @@
 
 		function run() {
 			var full = button.getAttribute( 'data-vh-full' ) === '1';
+			var assetsOnly = button.getAttribute( 'data-vh-assets-only' ) === '1';
+
+			var payload = { force: true };
+			if ( full ) { payload.full = true; }
+			else if ( assetsOnly ) { payload.assets_only = true; }
 
 			busy( button, cfg.i18n.syncing );
-			api( '/connectors/' + id + '/sync', { method: 'POST', data: full ? { force: true, full: true } : { force: true } } )
+			api( '/connectors/' + id + '/sync', { method: 'POST', data: payload } )
 				.then( function ( result ) {
 					flash( result.message || 'Sync finished.', result.ok ? 'success' : 'error' );
 

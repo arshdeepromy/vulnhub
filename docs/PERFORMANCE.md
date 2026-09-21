@@ -252,6 +252,26 @@ answer, and **no stale-while-revalidate**: `bust()` ticks
 never answered from before it. Verified: `bust()` and `bust('findings')` both
 force a genuine recompute.
 
+**A cache is only as honest as the last thing that forgot to bust it
+(2026-09-21).** "Raise a ticket for every critical finding on a product, and
+the product stays in the *Not raised* list." It did, for the ten minutes that
+cached aggregate had left. `Ticket = Not raised` is `f.ticket_id = 0`, and
+`Tickets::attach_findings()` is the one place that column is ever written --
+but it did not call `bust()`, so the epoch never moved and the pre-raise answer
+stood. The symptom is indistinguishable from the raise having failed, which is
+the worst kind of stale: it invites somebody to raise the ticket a second time.
+
+The same omission sat in the verifier, where reopening a finding writes
+`findings.state` -- the column both tab aggregates group on -- so a Verify that
+put work back on the board left the board reading as it did before. Both now
+bust, guarded by `class_exists( 'VulnHub_Dash_Widgets' )` because core and the
+connectors do not depend on the dashboard plugin.
+
+The rule this keeps proving: **a write that any cached screen filters on has to
+bust, and the place to do it is the single function that performs the write** --
+not the caller, of which there are several, one of which will always be added
+later without knowing about the cache.
+
 ### Where it landed
 
 | page | before | after (first click) | after (repeat) |

@@ -31,6 +31,7 @@ declare( strict_types = 1 );
 
 use VulnHub\Core\Caps;
 use VulnHub\Core\Coverage;
+use VulnHub\Core\Agent_Coverage;
 use VulnHub\Core\Defender_Coverage;
 use VulnHub\Core\Repo;
 use VulnHub\Core\Tickets;
@@ -67,7 +68,7 @@ final class VulnHub_Dash_Tickets {
 	 * list can be reopened exactly as it was asked.
 	 */
 	private const ASSET_QUERY_KEYS = array(
-		'search', 'asset_type', 'team_id', 'location_id', 'coverage', 'defender', 'known',
+		'search', 'asset_type', 'team_id', 'location_id', 'coverage', 'agent', 'defender', 'known',
 		'hosting', 'life', 'needs_user', 'primary_source', 'operating_system', 'patch_group',
 		'eol', 'has', 'missing', 'orderby', 'order',
 	);
@@ -140,6 +141,10 @@ final class VulnHub_Dash_Tickets {
 					break;
 				case 'coverage':
 					$out[] = __( 'Scan coverage', 'vulnhub' ) . ': ' . ( 'gap' === $value ? __( 'Any coverage gap', 'vulnhub' ) : Coverage::label( $value ) );
+					break;
+
+				case 'agent':
+					$out[] = __( 'Tenable agent', 'vulnhub' ) . ': ' . ( 'gap' === $value ? __( 'Needs an agent', 'vulnhub' ) : Agent_Coverage::label( $value ) );
 					break;
 				case 'defender':
 					$out[] = __( 'Endpoint', 'vulnhub' ) . ': ' . ( 'gap' === $value ? __( 'No Defender sensor', 'vulnhub' ) : Defender_Coverage::label( $value ) );
@@ -379,6 +384,7 @@ final class VulnHub_Dash_Tickets {
 		$known = self::q( 'known' );
 
 		return match ( true ) {
+			'' !== self::q( 'agent' )      => 'tenable_agent',
 			'' !== self::q( 'coverage' )   => 'tenable_coverage',
 			'' !== self::q( 'defender' )   => 'defender_coverage',
 			'not:cmdb' === $known, str_contains( self::q( 'missing' ), 'cmdb' ) => 'cmdb_gap',

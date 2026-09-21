@@ -20,7 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 define( 'VULNHUB_VERSION', '1.0.0' );
-define( 'VULNHUB_DB_VERSION', '29' );
+define( 'VULNHUB_DB_VERSION', '33' );
 define( 'VULNHUB_FILE', __FILE__ );
 define( 'VULNHUB_DIR', plugin_dir_path( __FILE__ ) );
 define( 'VULNHUB_URL', plugin_dir_url( __FILE__ ) );
@@ -69,6 +69,40 @@ add_action(
 		\VulnHub\Core\Defender_Coverage::recalculate();
 	},
 	5
+);
+
+/*
+ * Agent coverage rides the same recalculation, for the same reason.
+ *
+ * "Is it in Tenable" and "does it have a Tenable Agent" are read side by side
+ * on one row of the asset table, so they must never be two different ages.
+ * Hooked here, not called from inside `Coverage::recalculate()`, so the
+ * scanning path stays ignorant of it.
+ */
+add_action(
+	'vulnhub_coverage_recalculated',
+	static function (): void {
+		\VulnHub\Core\Agent_Coverage::recalculate();
+	},
+	5
+);
+
+/*
+ * One chassis, two records: find them nightly and fold in the ones the CMDB
+ * vouches for.
+ *
+ * A rebuilt machine gets brand-new identifiers from every system that manages
+ * it, so nothing ties the new records to the old ones but the serial. Left
+ * alone that shows up as a live machine the CMDB has apparently never heard
+ * of. Run after housekeeping rather than inside a sync: it reads the whole
+ * estate and must not lengthen an import.
+ */
+add_action(
+	\VulnHub\Core\Scheduler::HOOK_HOUSEKEEP,
+	static function (): void {
+		\VulnHub\Core\Duplicates::run();
+	},
+	20
 );
 
 /*

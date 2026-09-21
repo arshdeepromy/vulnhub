@@ -261,6 +261,17 @@ final class VulnHub_Tenable_Verifier {
 			}
 		}
 
+		/*
+		 * Reopening a finding changes `findings.state`, which the dashboard
+		 * widgets and the Vulnerabilities tabs group on from an epoch-keyed
+		 * cache. Without this, a Verify that put work back on the board left
+		 * the board reading the way it did before -- and the obvious
+		 * conclusion is that Verify did nothing.
+		 */
+		if ( $resolved && $still_open > 0 && class_exists( 'VulnHub_Dash_Widgets' ) ) {
+			VulnHub_Dash_Widgets::bust();
+		}
+
 		$summary = array(
 			'resolved' => $resolved,
 			'fixed'    => $confirmed,

@@ -516,6 +516,75 @@ to the obvious one.
 
 ---
 
+## 4b. One chassis, two records: rebuilt machines
+
+A reimaged machine is enrolled afresh by every system that manages it. Intune
+issues a new device id, Defender a new one, Tenable a new agent uuid, Entra a
+new device object — and usually the hostname changes too. Nothing connects the
+new records to the old ones except the serial burned into the chassis, so the
+estate ends up holding the machine twice, and the half the CMDB is attached to
+is not necessarily the half everything else is reporting into.
+
+That is what `assets.duplicate_of` and `VulnHub\Core\Duplicates` are for.
+
+**Serial alone is never enough.** `match_asset()` treats a serial as a strong
+identifier but refuses it when the identifiers disagree
+(`identities_agree()`), and that refusal is load-bearing: nine pairs of servers
+on this estate share a VMware UUID because they are DR replicas of each other,
+sitting at two sites with two CI numbers, both in service. Merging those on
+serial would destroy real inventory. The same evidence — one serial, two rows —
+means "rebuilt" in one case and "cloned" in the other.
+
+**The CMDB is what tells them apart.** Two rows carrying *different* CI numbers
+are two configuration items by the system of record's own reckoning, whatever
+the chassis says. One CI across the group (or one row carrying it and the other
+carrying none) is a rebuild.
+
+**Which row survives is decided by the agent, not the scan.** A scanner keeps
+listing a record long after the machine behind it is gone — the export still
+contains it, so `last_seen` advances and makes a dead record look like the
+liveliest thing on the estate. An agent check-in only happens when something is
+powered on and talking. So the survivor is the row whose agent spoke most
+recently, and the CI is moved onto it.
+
+**Three conditions before anything merges unattended**, each one the scar of a
+case that would otherwise have been destroyed:
+
+| condition | why |
+|---|---|
+| at least one CI, and never two different ones | the CMDB vouches that this is one machine |
+| not both agents connected | two agents checking in at once is two running machines |
+| survivor chosen by agent check-in | a scan date cannot tell a live machine from a listed one |
+
+Anything failing those stays flagged and untouched.
+
+**What a merge does.** Findings the survivor already has are merged by value —
+the more recent sighting wins and the superseded row is archived in place,
+because `vh_fingerprint()` folds the asset id in and re-pointing 174 colliding
+rows would break the unique key. Only findings the survivor has never seen
+actually move, and their fingerprints are recomputed. Nothing is deleted: the
+losing row is retired, keeps pointing at its survivor through `duplicate_of`,
+and every superseded finding keeps its `prev_state`.
+
+**The telemetry identifiers deliberately stay on the retired row.** Those stale
+Intune, Defender and Tenable objects still exist upstream and are still
+syncing. Leaving their ids where they are means those feeds keep matching the
+retired row and keep it out of scope — instead of matching nothing, falling
+through to the serial, and minting a fresh duplicate every night. Merging
+locally contains upstream duplication; it cannot cure it. The real fix is
+retiring the stale device objects at source.
+
+Runs nightly on `HOOK_HOUSEKEEP` at priority 20, after the lifecycle sweep, and
+is idempotent: a pair already folded in is skipped rather than re-merged.
+
+**One bug worth remembering.** The identifier lookup in `match_asset()` was
+`... WHERE {$column} = %s LIMIT 1` with no `ORDER BY`. For a genuinely unique
+id that is harmless; for a serial held by two rows it meant the row a later
+feed bonded to was decided by storage order. That is exactly how a CMDB record
+ended up attached to the older of two records while all the live telemetry sat
+on the newer one — and it would not have reproduced on a reimport. It now
+orders by `last_seen DESC, id DESC`.
+
 ## 5. Shared mock fixtures — use these, do not invent your own
 
 `\VulnHub\Core\Mock` generates one deterministic fleet that **every** connector must

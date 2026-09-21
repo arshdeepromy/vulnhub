@@ -31,6 +31,7 @@ declare( strict_types = 1 );
 
 use VulnHub\Core\Caps;
 use VulnHub\Core\Coverage;
+use VulnHub\Core\Agent_Coverage;
 use VulnHub\Core\Defender_Coverage;
 use VulnHub\Core\Eol;
 use VulnHub\Core\Os;
@@ -163,6 +164,8 @@ final class VulnHub_Dash_Export {
 					'team'          => array( $own, __( 'Team', 'vulnhub' ), static fn( array $r ): string => self::team_name( (int) $r['team_id'] ) ),
 					'site'          => array( $own, __( 'Site', 'vulnhub' ), static fn( array $r ): string => self::location_name( (int) $r['location_id'] ) ),
 					'coverage'      => array( $cov, __( 'Tenable coverage', 'vulnhub' ), static fn( array $r ): string => Coverage::label( (string) $r['coverage_state'] ) ),
+					'agent'         => array( $cov, __( 'Tenable agent', 'vulnhub' ), static fn( array $r ): string => Agent_Coverage::label( (string) ( $r['agent_coverage_state'] ?? '' ) ) ),
+					'agent_seen'    => array( $cov, __( 'Agent last check-in', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['agent_last_connect'] ?? '' ) ),
 					'last_scan'     => array( $cov, __( 'Last Tenable scan', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['tenable_last_scan'] ?? '' ) ),
 					'edr'           => array( $cov, __( 'EDR coverage', 'vulnhub' ), static fn( array $r ): string => self::edr_label( $r ) ),
 					'edr_last_seen' => array( $cov, __( 'Last Defender contact', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['defender_last_seen'] ?? '' ) ),
@@ -960,6 +963,9 @@ final class VulnHub_Dash_Export {
 				'team_id'             => self::get_int( 'team_id' ),
 				'location_id'         => self::get( 'location_id' ),
 				'coverage'            => self::get( 'coverage' ),
+				'agent'               => self::get( 'agent' ),
+				'agent_dark'          => (int) self::get( 'agent_dark' ),
+				'tenable_dropped'     => (int) self::get( 'dropped' ),
 				/*
 				 * Carried explicitly. The assets view resolves `known` into
 				 * source/without_source/sole_source before the button sees
@@ -1199,7 +1205,7 @@ final class VulnHub_Dash_Export {
 	 * @return string[]
 	 */
 	public static function asset_ticket_columns(): array {
-		return array( 'hostname', 'ipv4', 'asset_type', 'os', 'owner', 'team', 'site', 'lifecycle', 'coverage', 'last_scan', 'edr' );
+		return array( 'hostname', 'ipv4', 'asset_type', 'os', 'owner', 'team', 'site', 'lifecycle', 'coverage', 'agent', 'agent_seen', 'last_scan', 'edr' );
 	}
 
 	/**

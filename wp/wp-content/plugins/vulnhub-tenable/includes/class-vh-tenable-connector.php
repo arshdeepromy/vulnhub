@@ -142,7 +142,46 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 	 * @return array<int,array<string,mixed>>
 	 */
 	public function fields(): array {
+		/*
+		 * The agent support table is curated by hand and dated, because there
+		 * is no Tenable API for it. Say how old it is where somebody
+		 * configuring Tenable will see it -- a table nobody re-checks quietly
+		 * becomes the reason an estate is classified wrongly.
+		 */
+		$agent_table = \VulnHub\Core\Agent_Coverage::support_table();
+		$agent_note  = '' === $agent_table['checked']
+			? __( 'The Tenable Agent support table could not be read, so every asset without an agent shows as “OS unknown”.', 'vulnhub' )
+			: sprintf(
+				/* translators: 1: date the table was checked, 2: number of rows. */
+				__( 'Agent support table: %2$d operating systems, last checked against Tenable’s documentation on %1$s.', 'vulnhub' ),
+				$agent_table['checked'],
+				count( $agent_table['rows'] )
+			);
+
+		if ( \VulnHub\Core\Agent_Coverage::table_is_stale() ) {
+			$agent_note .= ' ' . __( 'That is over six months ago — worth re-reading the requirements page and adding a dated file beside it.', 'vulnhub' );
+		}
+
 		return array(
+			array(
+				'key'  => 'agent_support_note',
+				'type' => 'note',
+				'help' => $agent_note,
+			),
+			array(
+				'key'     => 'assets_interval_hours',
+				'label'   => __( 'Refresh assets every', 'vulnhub' ),
+				'type'    => 'select',
+				'default' => '0',
+				'options' => array(
+					'0'  => __( 'Only with a full sync', 'vulnhub' ),
+					'1'  => __( 'Every hour', 'vulnhub' ),
+					'4'  => __( 'Every 4 hours', 'vulnhub' ),
+					'12' => __( 'Every 12 hours', 'vulnhub' ),
+					'24' => __( 'Daily', 'vulnhub' ),
+				),
+				'help'    => __( 'The inventory moves far faster than the vulnerability picture: a machine is built, renamed or retired in minutes, while its findings only change when something rescans it. An assets-only run downloads the small asset export and skips the multi-gigabyte vulnerability one, so it can afford to run often. It never advances the vulnerability watermark, so the next normal sync still covers everything it would have.', 'vulnhub' ),
+			),
 			array(
 				'key'         => 'base_url',
 				'label'       => __( 'API base URL', 'vulnhub' ),
@@ -474,6 +513,64 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 		update_option( $this->full_request_option(), 1, false );
 	}
 
+	/** The option holding a pending assets-only request. */
+	private function assets_request_option(): string {
+		return 'vulnhub_assets_only_requested_' . $this->id();
+	}
+
+	/**
+	 * Ask for the next run to import assets and skip the vulnerability export.
+	 *
+	 * Its own option for the same reason the full-resync request has one:
+	 * settings are saved whole from an in-process copy, so a long sync writing
+	 * its watermark at the end would erase a request made while it ran.
+	 */
+	/** The HTTP status Tenable returns for one asset; 404 means it is gone. */
+	public function asset_http_status( string $uuid ): int {
+		return '' === trim( $uuid ) ? 0 : $this->client()->asset_status( $uuid );
+	}
+
+	public function request_assets_only(): void {
+		update_option( $this->assets_request_option(), 1, false );
+	}
+
+	/** True when an assets-only run has been asked for; clears the flag. */
+	private function take_assets_only_request(): bool {
+		if ( ! (int) get_option( $this->assets_request_option(), 0 ) ) {
+			return false;
+		}
+
+		delete_option( $this->assets_request_option() );
+
+		return true;
+	}
+
+	/** How often assets are refreshed on their own, in hours. 0 = never. */
+	public function assets_interval_hours(): int {
+		return max( 0, min( 168, (int) $this->get( 'assets_interval_hours', 0 ) ) );
+	}
+
+	/**
+	 * Is an assets-only run due on its own schedule?
+	 *
+	 * The inventory moves far faster than the vulnerability picture -- a
+	 * machine is built, renamed or retired in minutes, while its findings only
+	 * change when something rescans it. Refreshing assets hourly costs one
+	 * small export; refreshing findings hourly costs the 5 GB one. So they get
+	 * separate cadences, and this is the cheap one.
+	 */
+	public function assets_only_due(): bool {
+		$hours = $this->assets_interval_hours();
+
+		if ( $hours <= 0 ) {
+			return false;
+		}
+
+		$last = (int) get_option( 'vulnhub_assets_only_at_' . $this->id(), 0 );
+
+		return 0 === $last || time() - $last >= $hours * HOUR_IN_SECONDS;
+	}
+
 	/**
 	 * The pending-request flag lives in its own option, not in the connector
 	 * settings array. Settings are saved whole from an in-process copy, so a
@@ -699,6 +796,20 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 	 * @param array<string,mixed> $state Run state.
 	 */
 	private function advance_watermark( array $state ): void {
+		/*
+		 * An assets-only run must NOT move the watermark.
+		 *
+		 * The watermark is where the next incremental *vulnerability* export
+		 * starts from. This run downloaded no findings at all, so moving it
+		 * would tell the next run that a window had been covered when nothing
+		 * had looked at it -- every finding that changed in that window would
+		 * be skipped, silently and permanently. The asset side keeps its own
+		 * timestamp (`vulnhub_assets_only_at_*`).
+		 */
+		if ( ! empty( $state['assets_only'] ) ) {
+			return;
+		}
+
 		$start = strtotime( (string) ( $state['started'] ?? vh_now() ) . ' UTC' ) ?: time();
 		$this->settings->set( $this->id(), 'sync_watermark', $start );
 	}
@@ -765,11 +876,21 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 			$reason = $this->full_sync_reason();
 			$full   = '' !== $reason;
 			$since  = $this->since_for_run( $full );
+
+			/*
+			 * Assets-only is decided once, here, and carried in the state so a
+			 * resumed run stays what it started as -- the same discipline as
+			 * `is_full`. A full resync always includes findings: "everything
+			 * the source holds" cannot mean half of it.
+			 */
+			$assets_only = ! $full && ( ! empty( $args['assets_only'] ) || $this->take_assets_only_request() || $this->assets_only_due() );
+
 			$state  = array(
-				'phase'    => 'download',
-				'started'  => vh_now(),
-				'since'    => $since,
-				'is_full'  => $full,
+				'phase'       => 'download',
+				'started'     => vh_now(),
+				'since'       => $since,
+				'is_full'     => $full,
+				'assets_only' => $assets_only,
 				'download' => array( 'assets_chunks' => 0, 'vuln_chunks' => 0, 'bytes' => 0, 'status' => 'downloading' ),
 				'process'  => array( 'stage' => 'assets', 'chunk' => 1, 'records_done' => 0, 'records_total' => 0 ),
 			);
@@ -821,10 +942,10 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 
 			VH_Tenable_Store::clear( $conn );
 
-			return array( 'ok' => true, 'message' => $this->summary_message() );
+			return array( 'ok' => true, 'message' => $this->summary_message( ! empty( $state['assets_only'] ) ) );
 		}
 
-		return array( 'ok' => true, 'message' => $this->summary_message() );
+		return array( 'ok' => true, 'message' => $this->summary_message( ! empty( $state['assets_only'] ) ) );
 	}
 
 	/**
@@ -884,6 +1005,21 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 		if ( 'FINISHED' !== (string) ( $assets_job['status'] ?? '' ) ) {
 			$this->log( sprintf( 'Asset export did not finish (%s); will retry.', (string) ( $assets_job['status'] ?? 'no response' ) ) );
 			return $state; // still 'download'
+		}
+
+		/*
+		 * An assets-only run stops here. The vulnerability export is the
+		 * expensive half by orders of magnitude -- gigabytes against a few
+		 * megabytes -- and skipping it is the whole point of the mode.
+		 */
+		if ( ! empty( $state['assets_only'] ) ) {
+			$this->log( 'Assets-only run: skipping the vulnerability export.' );
+
+			$state['download']['status'] = 'done';
+			$state['phase']              = 'process';
+			$this->report_stage( $state );
+
+			return $state;
 		}
 
 		/* --- vulns --- */
@@ -983,6 +1119,21 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 				$this->report_stage( $state );
 			}
 
+			/*
+			 * Nothing was downloaded for the vulns stage, so there is nothing
+			 * to move on to. Going there anyway would read an empty chunk set
+			 * as "no findings" and could be mistaken for an estate that lost
+			 * its data.
+			 */
+			if ( ! empty( $state['assets_only'] ) ) {
+				update_option( 'vulnhub_assets_only_at_' . $this->id(), time(), false );
+
+				$state['phase'] = 'finalize';
+				$this->report_stage( $state );
+
+				return $state;
+			}
+
 			$state['process']['stage'] = 'vulns';
 			$state['process']['chunk'] = 1;
 			VH_Tenable_Store::write_state( $conn, $state );
@@ -1080,7 +1231,21 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 		$this->persist_run_summary();
 	}
 
-	private function summary_message(): string {
+	private function summary_message( bool $assets_only = false ): string {
+		/*
+		 * An assets-only run imported no findings because it was never asked
+		 * to. Reporting "0 vulnerability definitions and 0 findings" is true
+		 * and reads as an import that came back empty, which is the one thing
+		 * an operator must not have to guess about.
+		 */
+		if ( $assets_only ) {
+			return sprintf(
+				/* translators: %d: number of assets. */
+				__( 'Imported %d assets. Vulnerability findings were not part of this run and are unchanged.', 'vulnhub' ),
+				(int) $this->counts['assets']
+			);
+		}
+
 		return sprintf(
 			/* translators: 1: assets, 2: vulnerability definitions, 3: findings, 4: fixed findings, 5: reopened findings, 6: findings re-sent with nothing changed. */
 			__( 'Imported %1$d assets, %2$d vulnerability definitions and %3$d findings (%4$d already remediated, %5$d reopened, %6$d unchanged).', 'vulnhub' ),

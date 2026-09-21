@@ -192,6 +192,13 @@ final class Install {
 			defender_managed_by varchar(64) NOT NULL DEFAULT '',
 			defender_coverage_state varchar(24) NOT NULL DEFAULT 'unknown',
 			coverage_state varchar(24) NOT NULL DEFAULT 'unknown',
+			agent_coverage_state varchar(24) NOT NULL DEFAULT 'unknown',
+			agent_status varchar(8) NOT NULL DEFAULT '',
+			agent_last_connect datetime NULL DEFAULT NULL,
+			agent_status_since datetime NULL DEFAULT NULL,
+			tenable_dropped_at datetime NULL DEFAULT NULL,
+			tenable_checked_at datetime NULL DEFAULT NULL,
+			duplicate_of bigint(20) unsigned NULL DEFAULT NULL,
 			enrollment_type varchar(64) NOT NULL DEFAULT '',
 			join_type varchar(32) NOT NULL DEFAULT '',
 			has_agent tinyint(1) NOT NULL DEFAULT 0,
@@ -242,6 +249,10 @@ final class Install {
 			KEY defender_last_seen (defender_last_seen),
 			KEY defender_onboarding (defender_onboarding),
 			KEY defender_coverage_state (defender_coverage_state,asset_type),
+			KEY agent_coverage_state (agent_coverage_state,asset_type),
+			KEY agent_status (agent_status,agent_status_since),
+			KEY tenable_dropped_at (tenable_dropped_at),
+			KEY duplicate_of (duplicate_of),
 			KEY criticality (criticality),
 			KEY primary_source (primary_source),
 			KEY operating_system (operating_system),
@@ -431,6 +442,17 @@ final class Install {
 		 * knows the second half. Hostname is kept so a row still reads when
 		 * the asset itself has since been merged away or deleted.
 		 */
+		$sql[] = "CREATE TABLE {$p}agent_status (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			asset_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			status varchar(8) NOT NULL DEFAULT '',
+			changed_at datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
+			last_connect datetime NULL DEFAULT NULL,
+			PRIMARY KEY  (id),
+			KEY asset_changed (asset_id,changed_at),
+			KEY changed_at (changed_at)
+		) {$charset};";
+
 		$sql[] = "CREATE TABLE {$p}ticket_assets (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			ticket_id bigint(20) unsigned NOT NULL DEFAULT 0,

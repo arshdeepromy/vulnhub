@@ -57,6 +57,12 @@ final class Tickets {
 					'resolved' => 'tenable',
 					'scope'    => true,
 				),
+				'tenable_agent'          => array(
+					'label'    => __( 'Tenable agent', 'vulnhub' ),
+					'help'     => __( 'Get the Tenable Agent onto these assets. Met once Tenable reports an agent checking in.', 'vulnhub' ),
+					'resolved' => 'tenable_agent',
+					'scope'    => true,
+				),
 				'defender_coverage'      => array(
 					'label'    => __( 'Defender onboarding', 'vulnhub' ),
 					'help'     => __( 'Get the Defender sensor onto these assets. Met once Defender reports the asset onboarded.', 'vulnhub' ),
@@ -299,6 +305,21 @@ final class Tickets {
 			),
 			array( 'id' => $ticket_id )
 		);
+
+		/*
+		 * This is the only place `findings.ticket_id` is written, and it is a
+		 * write the screens filter on: "Not raised" is `f.ticket_id = 0`, and
+		 * the Vulnerabilities tabs answer that from an epoch-keyed cache.
+		 * Without this, raising a ticket for every critical finding on a
+		 * product left that product sitting in the "Not raised" list for the
+		 * ten minutes the cached aggregate had left to live -- reading exactly
+		 * like the raise had not worked.
+		 *
+		 * Guarded because core does not depend on the dashboard plugin.
+		 */
+		if ( class_exists( 'VulnHub_Dash_Widgets' ) ) {
+			\VulnHub_Dash_Widgets::bust();
+		}
 
 		return $attached;
 	}
@@ -630,6 +651,17 @@ final class Tickets {
 			case 'tenable':
 				$irrelevant .= " OR {$a}.coverage_state IN ('" . esc_sql( Coverage::OUT_OF_SCOPE ) . "','" . esc_sql( Coverage::OTHER_DEVICE ) . "')";
 				$met         = "{$a}.coverage_state IN (" . Coverage::in_tenable_sql() . ')';
+				break;
+
+			/*
+			 * An agent is either on the machine or it is not, and "no agent
+			 * exists for this platform" is not an outstanding job -- it is the
+			 * answer. So agent-out-of-scope joins the irrelevant set rather
+			 * than sitting on somebody's list forever.
+			 */
+			case 'tenable_agent':
+				$irrelevant .= " OR {$a}.agent_coverage_state IN ('" . esc_sql( Agent_Coverage::NOT_POSSIBLE ) . "','" . esc_sql( Agent_Coverage::OUT_OF_SCOPE ) . "')";
+				$met         = "{$a}.agent_coverage_state = '" . esc_sql( Agent_Coverage::AGENT ) . "'";
 				break;
 			case 'defender':
 				$irrelevant .= " OR {$a}.defender_coverage_state IN ('" . esc_sql( Defender_Coverage::OUT_OF_SCOPE ) . "','" . esc_sql( Defender_Coverage::OTHER_DEVICE ) . "')";

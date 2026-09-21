@@ -50,6 +50,22 @@ add_action(
 		// A person deciding an asset's lifecycle overrides the full-resync
 		// prune's decision, so the prune must not later undo theirs.
 		add_action( 'vulnhub_lifecycle_changed', array( \VulnHub\Core\Repo::class, 'forget_pruned_tenable' ), 10, 1 );
+
+		/*
+		 * The hourly agent reading. Answered here rather than in core because
+		 * only this connector can reach the endpoint -- core owns the history
+		 * table, the connector owns the API.
+		 */
+		add_action(
+			\VulnHub\Core\Scheduler::HOOK_AGENT_STATUS,
+			static function (): void {
+				$tenable = vulnhub()->connectors->get( 'tenable' );
+
+				if ( $tenable instanceof VulnHub_Tenable_Connector ) {
+					\VulnHub\Core\Agent_Status::poll( $tenable );
+				}
+			}
+		);
 	}
 );
 

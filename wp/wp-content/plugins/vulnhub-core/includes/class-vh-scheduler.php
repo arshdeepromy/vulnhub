@@ -26,6 +26,16 @@ final class Scheduler {
 	public const HOOK_RESUME     = 'vulnhub_resume_syncs';
 	public const HOOK_HOUSEKEEP  = 'vulnhub_housekeeping';
 	public const HOOK_VERIFY     = 'vulnhub_cron_verify_closures';
+
+	/**
+	 * Read every Tenable agent's connected state and record what changed.
+	 *
+	 * Hourly, because that is the resolution of the online history it builds
+	 * and Tenable keeps none of its own -- every hour not sampled is an hour
+	 * nobody can ever ask about afterwards. It is one cheap paged read, not a
+	 * sync.
+	 */
+	public const HOOK_AGENT_STATUS = 'vulnhub_poll_agent_status';
 	public const HOOK_AUTOMATION = 'vulnhub_cron_run_automations';
 	public const HOOK_SNAPSHOT   = 'vulnhub_daily_snapshot';
 
@@ -174,6 +184,7 @@ final class Scheduler {
 		$standing = array(
 			self::HOOK_HOUSEKEEP  => 'vh_daily',
 			self::HOOK_VERIFY     => 'vh_hourly',
+			self::HOOK_AGENT_STATUS => 'vh_hourly',
 			self::HOOK_AUTOMATION => 'vh_15min',
 			self::HOOK_RESUME     => 'vh_5min',
 			self::HOOK_SNAPSHOT   => 'vh_daily',

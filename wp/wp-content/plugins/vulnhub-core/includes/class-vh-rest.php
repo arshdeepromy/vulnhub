@@ -901,6 +901,18 @@ final class Rest {
 		return new WP_REST_Response( $connector->test_connection() );
 	}
 
+	/** What to say about a queued sync. */
+	private static function sync_queued_message( bool $full, bool $assets_only ): string {
+		if ( $full ) {
+			return __( 'Full resync queued in the background — you can watch its progress here. It downloads everything the source holds, so it takes longer than a normal sync.', 'vulnhub' );
+		}
+		if ( $assets_only ) {
+			return __( 'Asset refresh queued in the background. It imports the inventory only and skips the vulnerability export, so it finishes quickly and leaves findings untouched.', 'vulnhub' );
+		}
+
+		return __( 'Sync started in the background — you can watch its progress here.', 'vulnhub' );
+	}
+
 	public function sync_connector( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$connector = vulnhub()->connectors->get( (string) $request['id'] );
 		if ( ! $connector ) {
@@ -918,9 +930,16 @@ final class Rest {
 		// Now the request is recorded on the connector and the run is queued.
 		$full = (bool) $request->get_param( 'full' );
 
+		// Assets only: the cheap half. Ignored alongside `full`, which by
+		// definition means everything the source holds.
+		$assets_only = ! $full && (bool) $request->get_param( 'assets_only' );
+
 		if ( $connector->async_sync() ) {
 			if ( $full && $connector->supports_full_sync() ) {
 				$connector->request_full_sync();
+			}
+			if ( $assets_only && method_exists( $connector, 'request_assets_only' ) ) {
+				$connector->request_assets_only();
 			}
 
 			\VulnHub\Core\Scheduler::queue_sync( (string) $connector->id() );
@@ -930,18 +949,17 @@ final class Rest {
 					'ok'      => true,
 					'queued'  => true,
 					'full'    => $full && $connector->supports_full_sync(),
-					'message' => $full && $connector->supports_full_sync()
-						? __( 'Full resync queued in the background — you can watch its progress here. It downloads everything the source holds, so it takes longer than a normal sync.', 'vulnhub' )
-						: __( 'Sync started in the background — you can watch its progress here.', 'vulnhub' ),
+					'message' => self::sync_queued_message( $full && $connector->supports_full_sync(), $assets_only ),
 				)
 			);
 		}
 
 		$result = $connector->sync(
 			array(
-				'mode'  => 'manual',
-				'force' => (bool) $request->get_param( 'force' ),
-				'full'  => $full,
+				'mode'        => 'manual',
+				'force'       => (bool) $request->get_param( 'force' ),
+				'full'        => $full,
+				'assets_only' => $assets_only,
 			)
 		);
 

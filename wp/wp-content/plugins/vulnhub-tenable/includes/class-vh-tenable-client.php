@@ -396,10 +396,63 @@ final class VulnHub_Tenable_Client {
 	 *
 	 * @return array<string,mixed> Empty when the asset cannot be read.
 	 */
+	/**
+	 * The HTTP status of an asset read, without the body.
+	 *
+	 * `asset()` returns an empty array for "gone" and for "the API was having
+	 * a bad minute" alike, and those must never be confused: one is a fact
+	 * about the estate, the other is a fact about the network. 404 is the only
+	 * status that means Tenable no longer holds the asset.
+	 */
+	public function asset_status( string $uuid ): int {
+		$response = $this->http->get( $this->url( '/assets/' . rawurlencode( $uuid ) ), array(), $this->headers(), array( 'retries' => 1 ) );
+
+		return (int) $response->status;
+	}
+
 	public function asset( string $uuid ): array {
 		$response = $this->http->get( $this->url( '/assets/' . rawurlencode( $uuid ) ), array(), $this->headers(), array( 'retries' => 2 ) );
 
 		return $response->ok() ? (array) ( $response->data()['info'] ?? $response->data() ) : array();
+	}
+
+	/**
+	 * One page of linked agents.
+	 *
+	 * `GET /scanners/{id}/agents`. This is the only place Tenable says whether
+	 * an agent is connected *now*: the asset record carries `last_seen` and
+	 * scan dates and nothing else. Scanner 1 is the cloud scanner every linked
+	 * agent reports to; `GET /agents` without one is refused (403).
+	 *
+	 * Note what is not here: history. Tenable keeps `status` as a snapshot and
+	 * `last_connect` as a single timestamp, so an online timeline can only be
+	 * accumulated by sampling this and recording the changes.
+	 *
+	 * @return array{agents:array<int,array<string,mixed>>,total:int}
+	 */
+	public function agents( int $offset = 0, int $limit = 200, int $scanner_id = 1 ): array {
+		$response = $this->http->get(
+			$this->url( '/scanners/' . $scanner_id . '/agents' ),
+			array(
+				'offset' => max( 0, $offset ),
+				'limit'  => max( 1, min( 5000, $limit ) ),
+			),
+			$this->headers(),
+			array( 'retries' => 2 )
+		);
+
+		if ( ! $response->ok() ) {
+			$this->trace( sprintf( 'Agent list failed (HTTP %d): %s', $response->status, $response->error_message() ) );
+
+			return array( 'agents' => array(), 'total' => 0 );
+		}
+
+		$data = (array) $response->data();
+
+		return array(
+			'agents' => (array) ( $data['agents'] ?? array() ),
+			'total'  => (int) ( $data['pagination']['total'] ?? 0 ),
+		);
 	}
 
 	/* -----------------------------------------------------------------

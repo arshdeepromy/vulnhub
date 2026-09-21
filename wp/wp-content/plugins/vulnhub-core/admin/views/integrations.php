@@ -327,6 +327,19 @@ $vh_active   = $vh_selected ? vulnhub()->connectors->get( $vh_selected ) : null;
 									<?php esc_html_e( 'Full resync', 'vulnhub' ); ?>
 								</button>
 							<?php endif; ?>
+							<?php if ( method_exists( $vh_active, 'request_assets_only' ) ) : ?>
+							<?php
+							/*
+							 * The cheap half on its own. The inventory changes by the minute
+							 * and the findings do not, so asking for the assets without the
+							 * multi-gigabyte vulnerability export is the common case here,
+							 * not an edge one.
+							 */
+							?>
+							<button type="button" class="vh-btn vh-btn--ghost vh-btn--sm" data-vh-action="sync" data-vh-assets-only="1" data-vh-connector="<?php echo esc_attr( $vh_active->id() ); ?>">
+								<?php esc_html_e( 'Sync assets only', 'vulnhub' ); ?>
+							</button>
+							<?php endif; ?>
 						<?php endif; ?>
 					</p>
 
@@ -572,6 +585,19 @@ $vh_active   = $vh_selected ? vulnhub()->connectors->get( $vh_selected ) : null;
 								data-vh-sync-confirm="<?php esc_attr_e( 'Run a full resync? It downloads everything the source holds rather than only what changed, so it takes much longer than a normal sync. It runs in the background and you can watch it here.', 'vulnhub' ); ?>">
 								<?php esc_html_e( 'Full resync', 'vulnhub' ); ?>
 							</button>
+						<?php endif; ?>
+						<?php if ( method_exists( $vh_c, 'request_assets_only' ) ) : ?>
+						<?php
+						/*
+						 * The cheap half on its own. The inventory changes by the minute
+						 * and the findings do not, so asking for the assets without the
+						 * multi-gigabyte vulnerability export is the common case here,
+						 * not an edge one.
+						 */
+						?>
+						<button type="button" class="vh-btn vh-btn--sm vh-btn--ghost" data-vh-action="sync" data-vh-assets-only="1" data-vh-connector="<?php echo esc_attr( (string) $vh_id ); ?>">
+							<?php esc_html_e( 'Sync assets only', 'vulnhub' ); ?>
+						</button>
 						<?php endif; ?>
 					<?php endif; ?>
 				</footer>

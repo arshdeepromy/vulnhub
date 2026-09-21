@@ -18,6 +18,8 @@ use VulnHub\Core\Mapping;
 use VulnHub\Core\Caps;
 use VulnHub\Core\Coverage;
 use VulnHub\Core\Defender_Coverage;
+use VulnHub\Core\Agent_Coverage;
+use VulnHub\Core\Agent_Status;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -1725,6 +1727,9 @@ final class VulnHub_Dash_App {
 			'team_id'          => self::qi( 'team_id' ),
 			'needs_user'       => self::q( 'needs_user' ),
 			'coverage'         => self::q( 'coverage' ),
+			'agent'            => self::q( 'agent' ),
+			'agent_dark'       => self::qi( 'agent_dark' ),
+			'tenable_dropped'  => self::qi( 'dropped' ),
 			'defender'         => self::q( 'defender' ),
 			'location_id'      => self::q( 'location_id' ),
 			'primary_source'   => self::q( 'primary_source' ),
@@ -1857,6 +1862,31 @@ final class VulnHub_Dash_App {
 							<span class="vh-chip vh-chip--<?php echo esc_attr( Coverage::tone( $vh_cov ) ); ?>"><?php echo esc_html( Coverage::label( $vh_cov ) ); ?></span>
 							<?php if ( ! empty( $a['tenable_last_scan'] ) ) : ?>
 								<span class="vh-meta"><?php echo esc_html( vh_ago( (string) $a['tenable_last_scan'] ) ); ?></span>
+							<?php endif; ?>
+						<?php else : ?>
+							<span class="vh-muted">—</span>
+						<?php endif; ?>
+					</td>
+					<td data-th="<?php esc_attr_e( 'Tenable agent', 'vulnhub' ); ?>">
+						<?php
+						/*
+						 * Not `has_agent`: that column means "has *an* agent"
+						 * and is set true outright by the Defender and Intune
+						 * importers for their own. This one is only ever
+						 * written from Tenable's own sources[].
+						 */
+						$vh_ag = (string) ( $a['agent_coverage_state'] ?? '' );
+						?>
+						<?php if ( $vh_ag ) : ?>
+							<span class="vh-chip vh-chip--<?php echo esc_attr( Agent_Coverage::tone( $vh_ag ) ); ?>"
+								title="<?php echo esc_attr( (string) ( Agent_Coverage::states()[ $vh_ag ]['help'] ?? '' ) ); ?>"><?php echo esc_html( Agent_Coverage::label( $vh_ag ) ); ?></span>
+							<?php if ( 'off' === (string) ( $a['agent_status'] ?? '' ) && ! empty( $a['agent_last_connect'] ) ) : ?>
+								<span class="vh-meta vh-tone--warn">
+									<?php
+									/* translators: %s: a human time difference such as "26 days ago". */
+									printf( esc_html__( 'dark since %s', 'vulnhub' ), esc_html( vh_ago( (string) $a['agent_last_connect'] ) ) );
+									?>
+								</span>
 							<?php endif; ?>
 						<?php else : ?>
 							<span class="vh-muted">—</span>
@@ -2535,7 +2565,8 @@ final class VulnHub_Dash_App {
 			</td>
 			<td class="vh-col-act">
 				<?php if ( current_user_can( Caps::RAISE_TICKET ) && empty( $f['ticket_key'] ) ) : ?>
-					<button type="button" class="vh-btn vh-btn--sm" data-vh-raise data-vh-finding="<?php echo esc_attr( (string) $f['id'] ); ?>"><?php esc_html_e( 'Ticket', 'vulnhub' ); ?></button>
+					<button type="button" class="vh-btn vh-btn--sm" data-vh-raise data-vh-finding="<?php echo esc_attr( (string) $f['id'] ); ?>"
+											title="<?php esc_attr_e( 'Raise a Jira request for this finding', 'vulnhub' ); ?>"><?php esc_html_e( 'Raise Jira request', 'vulnhub' ); ?></button>
 				<?php endif; ?>
 				<?php if ( current_user_can( Caps::REQUEST_EXCEPTION ) && (int) $f['exception_id'] === 0 ) : ?>
 					<?php // The portal's Exceptions view, not wp-admin: this row is also rendered by the findings-more REST route, where there is no portal post to infer the destination from. ?>
@@ -2923,6 +2954,83 @@ final class VulnHub_Dash_App {
 								<?php endif; ?>
 							<?php else : ?>—<?php endif; ?>
 						</dd>
+						<?php if ( ! empty( $a['tenable_dropped_at'] ) ) : ?>
+							<dt><?php esc_html_e( 'Dropped by Tenable', 'vulnhub' ); ?></dt>
+							<dd>
+								<span class="vh-chip vh-chip--bad"><?php esc_html_e( 'No longer in Tenable', 'vulnhub' ); ?></span>
+								<span class="vh-meta">
+									<?php
+									/*
+									 * Both halves of the claim, because either
+									 * alone would be the wrong conclusion: the
+									 * scanner was asked directly, and the CMDB
+									 * still runs the machine.
+									 */
+									printf(
+										/* translators: %s: time ago. */
+										esc_html__( 'confirmed %s by asking Tenable for it directly (404). The CMDB still reports it in service, so its findings below are frozen at the last scan and nothing is refreshing them.', 'vulnhub' ),
+										esc_html( vh_ago( (string) $a['tenable_dropped_at'] ) )
+									);
+									?>
+								</span>
+							</dd>
+						<?php endif; ?>
+						<dt><?php esc_html_e( 'Tenable agent', 'vulnhub' ); ?></dt>
+						<dd>
+							<?php
+							$vh_a_ag  = (string) ( $a['agent_coverage_state'] ?? '' );
+							$vh_a_st  = (string) ( $a['agent_status'] ?? '' );
+							$vh_a_con = (string) ( $a['agent_last_connect'] ?? '' );
+							$vh_a_sin = (string) ( $a['agent_status_since'] ?? '' );
+							?>
+							<?php if ( '' !== $vh_a_ag && 'unknown' !== $vh_a_ag ) : ?>
+								<span class="vh-chip vh-chip--<?php echo esc_attr( Agent_Coverage::tone( $vh_a_ag ) ); ?>"><?php echo esc_html( Agent_Coverage::label( $vh_a_ag ) ); ?></span>
+							<?php endif; ?>
+							<?php if ( '' !== $vh_a_st ) : ?>
+								<span class="vh-chip vh-chip--<?php echo 'on' === $vh_a_st ? 'good' : 'warn'; ?>">
+									<?php echo esc_html( 'on' === $vh_a_st ? __( 'Online', 'vulnhub' ) : __( 'Offline', 'vulnhub' ) ); ?>
+								</span>
+								<span class="vh-meta">
+									<?php
+									/*
+									 * Two different dates, and the difference matters.
+									 * `since` is when VulnHub first saw this state and
+									 * only ever goes back as far as the polling does;
+									 * `last_connect` is Tenable's own, and is the one
+									 * worth quoting for an agent that is dark.
+									 */
+									if ( 'off' === $vh_a_st && '' !== $vh_a_con ) {
+										printf(
+											/* translators: 1: date, 2: time ago. */
+											esc_html__( 'last checked in %1$s (%2$s)', 'vulnhub' ),
+											esc_html( vh_date( $vh_a_con, 'j M Y H:i' ) ),
+											esc_html( vh_ago( $vh_a_con ) )
+										);
+									} elseif ( '' !== $vh_a_con ) {
+										/* translators: %s: time ago. */
+										printf( esc_html__( 'checked in %s', 'vulnhub' ), esc_html( vh_ago( $vh_a_con ) ) );
+									}
+									?>
+								</span>
+								<?php $vh_a_hist = Agent_Status::history( (int) $a['id'], 12 ); ?>
+								<?php if ( count( $vh_a_hist ) > 1 ) : ?>
+									<details class="vh-agenthist">
+										<summary><?php echo esc_html( sprintf( /* translators: %d: number of changes. */ _n( '%d recorded change', '%d recorded changes', count( $vh_a_hist ), 'vulnhub' ), count( $vh_a_hist ) ) ); ?></summary>
+										<ul class="vh-agenthist__list">
+											<?php foreach ( $vh_a_hist as $vh_h ) : ?>
+												<li>
+													<span class="vh-chip vh-chip--xs vh-chip--<?php echo 'on' === $vh_h['status'] ? 'good' : 'warn'; ?>"><?php echo esc_html( 'on' === $vh_h['status'] ? __( 'online', 'vulnhub' ) : __( 'offline', 'vulnhub' ) ); ?></span>
+													<span class="vh-meta"><?php echo esc_html( vh_date( (string) $vh_h['changed_at'], 'j M Y H:i' ) ); ?></span>
+												</li>
+											<?php endforeach; ?>
+										</ul>
+										<p class="vh-meta"><?php esc_html_e( 'Tenable keeps no online history, so this begins when VulnHub started sampling and is only as fine as the hourly poll.', 'vulnhub' ); ?></p>
+									</details>
+								<?php endif; ?>
+							<?php elseif ( '' === $vh_a_ag || 'unknown' === $vh_a_ag ) : ?>
+								—
+							<?php endif; ?>
+						</dd>
 						<dt><?php esc_html_e( 'EDR coverage', 'vulnhub' ); ?></dt>
 						<dd>
 							<?php $vh_a_edr = (string) ( $a['defender_coverage_state'] ?? '' ); ?>
@@ -3110,7 +3218,8 @@ final class VulnHub_Dash_App {
 									<td><?php echo esc_html( $f['due_at'] ? vh_ago( (string) $f['due_at'] ) : '—' ); ?></td>
 									<td class="vh-col-act">
 										<?php if ( current_user_can( Caps::RAISE_TICKET ) && empty( $f['ticket_key'] ) ) : ?>
-											<button type="button" class="vh-btn vh-btn--sm" data-vh-raise data-vh-finding="<?php echo esc_attr( (string) $f['id'] ); ?>"><?php esc_html_e( 'Ticket', 'vulnhub' ); ?></button>
+											<button type="button" class="vh-btn vh-btn--sm" data-vh-raise data-vh-finding="<?php echo esc_attr( (string) $f['id'] ); ?>"
+											title="<?php esc_attr_e( 'Raise a Jira request for this finding', 'vulnhub' ); ?>"><?php esc_html_e( 'Raise Jira request', 'vulnhub' ); ?></button>
 										<?php elseif ( ! empty( $f['ticket_key'] ) ) : ?>
 											<a class="vh-mono" href="<?php echo esc_url( (string) $f['ticket_url'] ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( (string) $f['ticket_key'] ); ?></a>
 										<?php endif; ?>
@@ -3399,7 +3508,7 @@ final class VulnHub_Dash_App {
 				 * comparison screen, and must survive Apply -- which is exactly
 				 * what being left out of this list does for them.
 				 */
-				array( 'search', 'asset_type', 'team_id', 'coverage', 'defender', 'known', 'life', 'needs_user', 'location_id', 'hosting' )
+				array( 'search', 'asset_type', 'team_id', 'coverage', 'agent', 'agent_dark', 'dropped', 'defender', 'known', 'life', 'needs_user', 'location_id', 'hosting' )
 			);
 			?>
 			<label><?php esc_html_e( 'Search', 'vulnhub' ); ?>
@@ -3451,6 +3560,36 @@ final class VulnHub_Dash_App {
 					<?php foreach ( Coverage::states() as $vh_cov_state => $vh_cov_def ) : ?>
 						<option value="<?php echo esc_attr( (string) $vh_cov_state ); ?>" <?php selected( self::q( 'coverage' ), (string) $vh_cov_state ); ?>>
 							<?php echo esc_html( (string) $vh_cov_def['label'] ); ?>
+						</option>
+					<?php endforeach; ?>
+				</select>
+			</label>
+			<label>
+				<span><?php esc_html_e( 'Tenable agent', 'vulnhub' ); ?></span>
+				<select name="agent">
+					<option value=""><?php esc_html_e( 'Any agent state', 'vulnhub' ); ?></option>
+					<option value="gap" <?php selected( self::q( 'agent' ), 'gap' ); ?>><?php esc_html_e( 'Needs an agent', 'vulnhub' ); ?></option>
+					<?php foreach ( Agent_Coverage::states() as $vh_ag_state => $vh_ag_def ) : ?>
+						<option value="<?php echo esc_attr( (string) $vh_ag_state ); ?>" <?php selected( self::q( 'agent' ), (string) $vh_ag_state ); ?>
+							title="<?php echo esc_attr( (string) $vh_ag_def['help'] ); ?>">
+							<?php echo esc_html( (string) $vh_ag_def['label'] ); ?>
+						</option>
+					<?php endforeach; ?>
+				</select>
+			</label>
+			<label>
+				<span><?php esc_html_e( 'Agent dark for', 'vulnhub' ); ?></span>
+				<select name="agent_dark">
+					<option value=""><?php esc_html_e( 'Any', 'vulnhub' ); ?></option>
+					<?php foreach ( array( 1, 7, 14, 30, 90 ) as $vh_dark ) : ?>
+						<option value="<?php echo esc_attr( (string) $vh_dark ); ?>" <?php selected( self::qi( 'agent_dark' ), $vh_dark ); ?>>
+							<?php
+							printf(
+								/* translators: %d: number of days. */
+								esc_html( _n( 'Over %d day', 'Over %d days', $vh_dark, 'vulnhub' ) ),
+								(int) $vh_dark
+							);
+							?>
 						</option>
 					<?php endforeach; ?>
 				</select>
@@ -3529,6 +3668,10 @@ final class VulnHub_Dash_App {
 						<option value="<?php echo esc_attr( $vh_ls ); ?>" <?php selected( self::q( 'life' ), $vh_ls ); ?>><?php echo esc_html( (string) $vh_lm['label'] ); ?></option>
 					<?php endforeach; ?>
 				</select>
+			</label>
+			<label class="vh-check" title="<?php esc_attr_e( 'Tenable has been asked directly and no longer holds these assets, while the CMDB still reports them in service.', 'vulnhub' ); ?>">
+				<input type="checkbox" name="dropped" value="1" <?php checked( self::qi( 'dropped' ), 1 ); ?>>
+				<?php esc_html_e( 'Dropped by Tenable', 'vulnhub' ); ?>
 			</label>
 			<label class="vh-check">
 				<input type="checkbox" name="needs_user" value="1" <?php checked( self::q( 'needs_user' ), '1' ); ?>>
@@ -3686,6 +3829,10 @@ final class VulnHub_Dash_App {
 					<?php self::sort_th( 'hostname', __( 'Host', 'vulnhub' ), $orderby, $order, 'assets' ); ?>
 					<th>
 						<?php esc_html_e( 'Scan coverage', 'vulnhub' ); ?>
+						<span class="vh-th__src"><?php esc_html_e( 'Tenable', 'vulnhub' ); ?></span>
+					</th>
+					<th>
+						<?php esc_html_e( 'Agent', 'vulnhub' ); ?>
 						<span class="vh-th__src"><?php esc_html_e( 'Tenable', 'vulnhub' ); ?></span>
 					</th>
 					<th>

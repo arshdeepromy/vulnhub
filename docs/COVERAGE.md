@@ -100,6 +100,122 @@ feature that appears to do nothing.
 
 ---
 
+## Agent coverage is not scan coverage
+
+Tenable can reach an asset two ways: an agent checking in, or a network
+scanner sweeping it. `Coverage` answers "does Tenable know this asset", which
+either satisfies. It cannot answer "is there an agent on it", and an estate
+that reports only the first cannot tell an agent rollout from a scanner sweep.
+
+`Agent_Coverage` is that second dimension, in its own column
+(`assets.agent_coverage_state`), recomputed on the same
+`vulnhub_coverage_recalculated` hook as Defender's so the three states on one
+row are never three different ages.
+
+**Why not `assets.has_agent`.** That column means "has *an* agent". The
+Defender and Intune importers both set it to `true` outright, for their own
+agents — 87 assets here carry it while having no Tenable record at all. It is a
+useful flag and a useless answer to this question.
+
+**The evidence is `sources[]`.** Tenable's asset record lists an agent check-in
+as `NESSUS_AGENT` and a network sweep as `NESSUS_SCAN`. That is already synced
+into `raw_json`, so the dimension backfilled across the estate with no re-sync
+and no extra API calls. `agent_uuid` is *not* the signal: it comes back null on
+assets that demonstrably do have an agent.
+
+**"No agent" splits in two, and that is the point.** An agent cannot be
+installed on a hypervisor appliance, a service processor, or an OS older than
+the agent supports. Chasing those is the waste this dimension exists to stop,
+so they are `Agent out of scope` and are **not** counted as a gap; only
+`Agent required` and `Agent — OS unknown` are.
+
+| state | meaning | gap |
+|---|---|---|
+| `agent` | Tenable reports an agent checking in | no |
+| `agent_required` | no agent, and this OS can run one | **yes** |
+| `agent_os_unknown` | no agent, OS not in the support table | **yes** |
+| `agent_out_of_scope` | no agent exists for this platform, or the OS is below its minimum | no |
+| `out_of_scope` | not in service, or not a machine | no |
+
+**Where supportability comes from.** `data/agent-support-*.csv`, curated by
+hand and carrying the date it was checked. There is no Tenable API for it and
+their documentation is an HTML page with no contract, so nothing reads it at
+runtime: a docs redesign must never be able to silently reclassify an estate
+overnight. The newest dated file wins, rows match as lowercase substrings in
+file order (specific above general), and where a minimum is numeric the OS
+string's own version is compared as a safety net — which is how `Ubuntu 16.04`
+lands out of scope without anybody writing a row for it.
+
+The Tenable settings screen states the table's date and row count, and says so
+when it is over six months old. The parser tolerates a malformed row rather
+than fataling on one: this file is edited by hand, and an unquoted comma in a
+note makes a row wider than the header, which `array_combine()` turns into a
+fatal error on every page of the site.
+
+**On this estate**, at the time of writing: 642 with an agent, 134 agent
+required, 140 agent out of scope, 93 OS unknown. Every Tenable-known asset is
+agent-based — there is not one `NESSUS_SCAN` — so scan coverage and agent
+coverage agree today and would silently diverge the moment network scanning is
+used. The 93 unknown are a finding in their own right: their CMDB operating
+system reads `Linux` or `Windows` with no version, which is too coarse to
+decide anything.
+
+Filter: `agent=` on Assets & owners (`gap` for anything needing one), a column
+beside Scan coverage, both in the CSV export, and the `tenable_agent` ticket
+kind to raise the rollout as work — where an asset counts as done once Tenable
+reports an agent, and out-of-scope assets are excluded rather than left on
+somebody's list forever.
+
+## Agent online history — the part Tenable does not keep
+
+**What Tenable actually holds.** `GET /scanners/{id}/agents` is the only place
+in the API that says whether an agent is connected: `status` (`on`/`off`),
+`last_connect`, `last_scanned`, `linked_on`, `health_state_name`, and
+`asset_uuid` to join back. The asset record carries no online state at all —
+only `first_seen`, `last_seen` and the scan dates. `GET /agents` without a
+scanner id is refused (403); scanner 1 is the cloud scanner every linked agent
+reports to.
+
+**What it does not hold: history.** `status` is a snapshot of this instant and
+`last_connect` is one timestamp. There is no uptime series anywhere in the API,
+so "which hours was this machine up" cannot be asked of Tenable — it never
+stored the answer. The only way to have it is to sample and write down what
+changed, which is what `Agent_Status` does on the hourly
+`vulnhub_poll_agent_status`.
+
+**Transitions, not samples.** A row per poll over ~900 agents is ~22,000 rows a
+day and answers nothing better: the state between two identical readings is not
+in doubt. `vh_vulnhub_agent_status` gets a row only when an agent flips
+on↔off — a few hundred a week — and `assets.agent_status`,
+`agent_last_connect` and `agent_status_since` carry what is true now, so
+"offline since" is one indexed read rather than a scan of the history.
+
+The first reading of an asset is recorded as a change (the timeline needs an
+opening state) but counted separately, so a first run reports "654 first
+readings", not "654 machines just went down".
+
+**Two dates, and the difference matters.** `agent_status_since` is when VulnHub
+first saw the current state and can never reach back further than the polling
+does. `agent_last_connect` is Tenable's own, and is the one worth quoting for a
+dark agent — which is why the `agent_dark` filter measures from it. Dating
+"dark for N days" from our own first reading would understate every agent that
+was already off when sampling started.
+
+**The honest limits.** Resolution is the poll interval. History begins the day
+it is switched on; there is nothing to backfill from. And it says the *agent*
+was connected, which is a good proxy for the machine being up and not the same
+claim — a stopped agent service on a running server reads as offline, correctly
+for scanning and misleadingly for anything else.
+
+**On this estate** at first poll: 911 agents in 2.1s, 654 matched to assets,
+513 online, 141 offline, the longest dark for 26 days. 105 have been dark over
+a day, 46 over a week, none over 30 days.
+
+Filter `agent_dark=` (1/7/14/30/90 days) on Assets & owners, "dark since …"
+beside the agent chip in the list, and on the asset page the state, Tenable's
+own last check-in, and the recorded changes behind a disclosure that says where
+the history came from.
+
 ## Coverage by site
 
 The site breakdown existed but could not be used:

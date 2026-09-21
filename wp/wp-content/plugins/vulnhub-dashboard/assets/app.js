@@ -419,6 +419,82 @@
 		return d;
 	}
 
+	/*
+	 * Auto-dismiss, for the success state only.
+	 *
+	 * Once the issue exists the dialog has nothing left to say, and the list
+	 * behind it is out of date the moment the findings are ticketed -- so the
+	 * timer reloads rather than just closing, which is what the Close button
+	 * already did. The review state never gets a timer: a dialog that closes
+	 * while somebody is reading what is about to be sent is worse than one
+	 * they have to dismiss.
+	 *
+	 * Any sign of a human -- a pointer over it, focus moving inside it, a key
+	 * -- stops the clock for good. Five seconds is not long enough to read a
+	 * ticket key and decide to open it, and a countdown that ignores you while
+	 * you reach for a button is how a convenience becomes an obstacle.
+	 */
+	var closeTimer = null;
+
+	function stopCountdown( d, why ) {
+		if ( ! closeTimer ) { return; }
+		window.clearInterval( closeTimer );
+		closeTimer = null;
+
+		var status = d.querySelector( '[data-vh-review-status]' );
+		if ( status ) {
+			status.removeAttribute( 'aria-live' );
+			status.textContent = why || '';
+		}
+	}
+
+	function countdownToClose( d, seconds ) {
+		var status = d.querySelector( '[data-vh-review-status]' );
+		var left   = seconds;
+
+		stopCountdown( d, '' );
+
+		var say = function () {
+			status.textContent = 'Closing in ' + left + 's — the list refreshes.';
+		};
+
+		say();
+		/* Announced once, then silent: a screen reader counting down from five
+		   is noise, not information. */
+		status.setAttribute( 'aria-live', 'off' );
+
+		closeTimer = window.setInterval( function () {
+			left -= 1;
+
+			if ( left > 0 ) {
+				say();
+				return;
+			}
+
+			stopCountdown( d, '' );
+			d.close();
+			window.location.reload();
+		}, 1000 );
+
+		/*
+		 * One listener per dialog, attached once; the dialog is reused.
+		 *
+		 * `pointerover`, not `pointerenter`: enter does not bubble, so its
+		 * target is whichever child sits under the cursor and a listener on
+		 * the dialog never runs. It looked wired -- keydown cancelled, the
+		 * pointer did not -- and only a capture-phase probe showed the event
+		 * arriving at all. `focusin` and `keydown` bubble, so those are fine.
+		 */
+		if ( ! d.dataset.vhHoldWired ) {
+			d.dataset.vhHoldWired = '1';
+			[ 'pointerover', 'mouseover', 'focusin', 'keydown' ].forEach( function ( ev ) {
+				d.addEventListener( ev, function () { stopCountdown( d, 'Staying open.' ); } );
+			} );
+			// Dismissed by hand: nothing left to fire.
+			d.addEventListener( 'close', function () { stopCountdown( d, '' ); } );
+		}
+	}
+
 	function section( title ) {
 		var s = el( 'section', 'vh-review__sec' );
 		s.appendChild( el( 'h3', null, title ) );
@@ -705,8 +781,16 @@
 					send.textContent = result.redirect ? 'Open the ticket' : 'Close';
 					send.disabled = false;
 					send.onclick = function () {
+						stopCountdown( d, '' );
 						if ( result.redirect ) { window.location.href = result.redirect; } else { window.location.reload(); }
 					};
+
+					/* The lede still read "Nothing has been sent" above a
+					   notice saying what had just been created. */
+					var lede = d.querySelector( '.vh-review__lede' );
+					if ( lede ) { lede.textContent = 'Sent. The ticket exists in Jira now.'; }
+
+					countdownToClose( d, 5 );
 				} )
 				.catch( function ( error ) {
 					status.textContent = '';
@@ -721,6 +805,13 @@
 	function loadDraft( d, request, rebuilding ) {
 		var body = d.querySelector( '[data-vh-review-body]' );
 		var send = d.querySelector( '[data-vh-review-send]' );
+
+		// The dialog is reused, so a new review starts from the review state:
+		// no timer left running, and the lede back to what is true again.
+		stopCountdown( d, '' );
+		var lede = d.querySelector( '.vh-review__lede' );
+		if ( lede ) { lede.textContent = 'Nothing has been sent. This is exactly what will travel to Jira when you press Send.'; }
+
 		send.disabled = true;
 		send.textContent = 'Send to Jira';
 		if ( ! rebuilding ) { body.innerHTML = ''; }

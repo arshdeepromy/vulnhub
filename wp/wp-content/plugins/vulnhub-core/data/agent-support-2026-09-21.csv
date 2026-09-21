@@ -1,0 +1,65 @@
+# Tenable Agent — which operating systems can run one.
+#
+# There is no Tenable API for this, so this file is curated by hand from the
+# product documentation and carries the date it was checked. Nothing reads the
+# docs at runtime: an HTML page with no contract must never be allowed to
+# silently reclassify an estate.
+#
+# checked: 2026-09-21
+# source:  https://docs.tenable.com/nessus-agent/Content/SystemRequirements.htm
+#
+# match        a lowercase substring tested against the asset's operating
+#              system string. First match in file order wins, so put the
+#              specific rows above the general ones.
+# family       what to call it in the UI.
+# min_version  lowest major version that can run a current agent. Blank with
+#              supported=no means the agent does not exist for this platform
+#              at all.
+# supported    yes | no
+# note         why, in the words the person chasing it needs.
+match,family,min_version,supported,note
+ilom,Oracle ILOM,,no,Service processor (lights-out management) — not an operating system an agent runs on.
+idrac,Dell iDRAC,,no,Service processor — no agent.
+ilo,HPE iLO,,no,Service processor — no agent.
+ipmi,IPMI BMC,,no,Service processor — no agent.
+free bsd,FreeBSD,,no,"The Tenable Agent ships for Linux, Windows and macOS only."
+freebsd,FreeBSD,,no,"The Tenable Agent ships for Linux, Windows and macOS only."
+openbsd,OpenBSD,,no,"The Tenable Agent ships for Linux, Windows and macOS only."
+netbsd,NetBSD,,no,"The Tenable Agent ships for Linux, Windows and macOS only."
+solaris,Oracle Solaris,,no,No current Tenable Agent for Solaris.
+aix,IBM AIX,,no,No current Tenable Agent for AIX.
+hp-ux,HP-UX,,no,No current Tenable Agent for HP-UX.
+vmware esxi,VMware ESXi,,no,Hypervisor appliance — Tenable has no agent for ESXi. Scan the host through Tenable's vSphere integration instead.
+vcenter,VMware vCenter,,no,Appliance — no agent. Covered through the vSphere integration.
+nutanix,Nutanix AHV,,no,Hypervisor appliance — no agent.
+citrix hypervisor,Citrix Hypervisor,,no,Appliance — no agent.
+xenserver,XenServer,,no,Appliance — no agent.
+netapp,NetApp ONTAP,,no,Storage appliance — no agent.
+palo alto,Palo Alto PAN-OS,,no,Network appliance — no agent.
+cisco,Cisco IOS,,no,Network device — no agent.
+fortinet,FortiOS,,no,Network appliance — no agent.
+f5,F5 BIG-IP,,no,Network appliance — no agent.
+ubiquiti,Ubiquiti,,no,Network device — no agent.
+windows server 2003,Windows Server,2016,no,Long past agent support and past Microsoft support.
+windows server 2008,Windows Server,2016,no,Below the agent's minimum of Server 2016.
+windows server 2012,Windows Server,2016,no,Below the agent's minimum of Server 2016.
+windows server,Windows Server,2016,yes,Server 2016 and above run the agent.
+windows 7,Windows,10,no,Below the agent's minimum of Windows 10.
+windows 8,Windows,10,no,Below the agent's minimum of Windows 10.
+windows 10,Windows,10,yes,Windows 10 and above run the agent.
+windows 11,Windows,10,yes,Windows 11 runs the agent.
+amazon linux 2023,Amazon Linux,2,yes,Amazon Linux 2 and 2023 run the agent.
+amazon linux,Amazon Linux,2,yes,Amazon Linux 2 and above run the agent.
+red hat enterprise linux 5,Red Hat Enterprise Linux,7,no,Below the agent's minimum of RHEL 7.
+red hat enterprise linux 6,Red Hat Enterprise Linux,7,no,Below the agent's minimum of RHEL 7.
+red hat enterprise linux,Red Hat Enterprise Linux,7,yes,RHEL 7 and above run the agent.
+oracle linux,Oracle Linux,7,yes,Oracle Linux 7 and above run the agent.
+centos,CentOS,7,yes,CentOS 7 and above run the agent.
+rocky linux,Rocky Linux,8,yes,Rocky 8 and above run the agent.
+almalinux,AlmaLinux,8,yes,AlmaLinux 8 and above run the agent.
+ubuntu,Ubuntu,18,yes,Ubuntu 18.04 LTS and above run the agent.
+debian,Debian,10,yes,Debian 10 and above run the agent.
+suse,SUSE Linux Enterprise,12,yes,SLES 12 and above run the agent.
+fedora,Fedora,34,yes,Recent Fedora runs the agent.
+macos,macOS,11,yes,macOS 11 and above run the agent.
+mac os x,macOS,11,yes,macOS 11 and above run the agent.
