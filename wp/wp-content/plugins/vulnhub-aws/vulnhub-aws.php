@@ -24,6 +24,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 define( 'VULNHUB_AWS_DIR', plugin_dir_path( __FILE__ ) );
+define( 'VULNHUB_AWS_URL', plugin_dir_url( __FILE__ ) );
+if ( ! defined( 'VULNHUB_AWS_VERSION' ) ) { define( 'VULNHUB_AWS_VERSION', '0.3.0' ); }
 
 /*
  * Only the classes that depend on nothing of ours load at file scope.
@@ -36,6 +38,7 @@ define( 'VULNHUB_AWS_DIR', plugin_dir_path( __FILE__ ) );
  */
 require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-sigv4.php';
 require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-client.php';
+	require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-sso.php';
 require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-inspector.php';
 
 add_action(
@@ -46,13 +49,17 @@ add_action(
 		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-inventory.php';
 		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-explorer.php';
 		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-reachability.php';
+		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-network.php';
 		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-connector.php';
 		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-admin.php';
+		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-sso-auth.php';
 
 		VulnHub_AWS_Reachability::install();
+		VulnHub_AWS_Network::install();
 		VulnHub_AWS_Accounts::install();
 		VulnHub_AWS_Inventory::install();
 		VulnHub_AWS_Admin::init();
+		VulnHub_AWS_SSO_Auth::init();
 
 		// Registering here is what puts it on the Integrations screen beside
 		// the others, with the same form, health panel, Test connection,
@@ -94,6 +101,20 @@ add_action(
 	static function (): void {
 		register_rest_route(
 			'vulnhub-aws/v1',
+			'/network',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => static fn (): bool => is_user_logged_in() && current_user_can( \VulnHub\Core\Caps::VIEW ),
+				'callback'            => static function ( $req ) {
+					$acct = sanitize_text_field( (string) $req->get_param( 'account' ) );
+					$vpc  = sanitize_text_field( (string) $req->get_param( 'vpc' ) );
+					return rest_ensure_response( VulnHub_AWS_Network::arch_graph( $acct, $vpc ) );
+				},
+			)
+		);
+
+		register_rest_route(
+			'vulnhub-aws/v1',
 			'/cloudformation-template',
 			array(
 				'methods'             => 'GET',
@@ -114,3 +135,11 @@ add_action(
 		);
 	}
 );
+
+/**
+ * The Cloud Network map page registers on its own hooks, independent of the
+ * connector registry (it only reads the stored network tables).
+ */
+require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-network.php';
+require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-network-page.php';
+VulnHub_AWS_Network_Page::init();

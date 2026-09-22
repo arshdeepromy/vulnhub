@@ -55,6 +55,16 @@ final class VulnHub_AWS_Connector extends Connector {
 	}
 
 	/** Nothing here is mocked yet; a fake account would teach nobody anything. */
+	/**
+	 * Sync in the background. Reading every account the SSO login can see
+	 * takes minutes, which is far longer than a web request may run, so a
+	 * manual Sync now is dispatched to cron and watched rather than run
+	 * inline.
+	 */
+	public function async_sync(): bool {
+		return true;
+	}
+
 	public function supports_mock(): bool {
 		return false;
 	}
@@ -73,6 +83,26 @@ final class VulnHub_AWS_Connector extends Connector {
 				'key'  => 'setup',
 				'type' => 'note',
 				'help' => VulnHub_AWS_Setup::instructions( $first ),
+			),
+			array(
+				'key'  => 'sso',
+				'type' => 'note',
+				'help' => $this->sso_note(),
+			),
+			array(
+				'key'         => 'sso_start_url',
+				'label'       => __( 'AWS SSO start URL', 'vulnhub' ),
+				'type'        => 'text',
+				'placeholder' => 'https://d-xxxxxxxxxx.awsapps.com/start',
+				'help'        => __( 'Your IAM Identity Center access-portal URL. Save it, then use Authenticate above. No key is stored and nothing is created in AWS.', 'vulnhub' ),
+			),
+			array(
+				'key'         => 'sso_region',
+				'label'       => __( 'AWS SSO region', 'vulnhub' ),
+				'type'        => 'text',
+				'default'     => $first,
+				'placeholder' => 'ap-southeast-2',
+				'help'        => __( 'The region your Identity Center runs in.', 'vulnhub' ),
 			),
 			array(
 				'key'         => 'account_id',
@@ -161,6 +191,200 @@ final class VulnHub_AWS_Connector extends Connector {
 	}
 
 	/** A client built from the stored settings, or null when not configured. */
+	public function is_configured(): bool {
+		if ( class_exists( 'VulnHub_AWS_SSO_Auth' ) && VulnHub_AWS_SSO_Auth::is_connected() ) {
+			return true;
+		}
+
+		return parent::is_configured();
+	}
+
+	/** The SSO login button + status, shown in the integration card. */
+	private function sso_note(): string {
+		if ( ! class_exists( 'VulnHub_AWS_SSO_Auth' ) ) {
+			return "";
+		}
+
+		$btn = ' class="button vh-btn vh-btn--ghost vh-btn--sm"';
+		$pri = ' class="button button-primary vh-btn vh-btn--primary vh-btn--sm"';
+		$out = '<strong>' . esc_html__( 'Sign in with AWS SSO (recommended)', 'vulnhub' ) . '</strong><br>';
+
+		$pending = VulnHub_AWS_SSO_Auth::pending();
+
+		if ( $pending && ! empty( $pending['verify'] ) ) {
+			$out .= esc_html__( 'Step 1 — approve in the AWS tab', 'vulnhub' );
+
+			if ( ! empty( $pending['userCode'] ) ) {
+				$out .= ' ' . esc_html( sprintf( __( '(code %s)', 'vulnhub' ), (string) $pending['userCode'] ) );
+			}
+
+			$out .= ': <a' . $pri . ' target="_blank" rel="noopener noreferrer" href="' . esc_url( (string) $pending['verify'] ) . '">' . esc_html__( 'Open AWS approval', 'vulnhub' ) . ' &#8599;</a><br>';
+			$out .= esc_html__( 'Step 2 — after you click Allow:', 'vulnhub' );
+			$out .= ' <a' . $btn . ' href="' . esc_url( VulnHub_AWS_SSO_Auth::finish_url() ) . '">' . esc_html__( 'Complete authentication', 'vulnhub' ) . '</a>';
+
+			return $out;
+		}
+
+		if ( VulnHub_AWS_SSO_Auth::is_connected() ) {
+			$out .= esc_html__( 'Connected. VulnHub reads every account your SSO login can see with short-lived credentials it refreshes on its own — no key stored, nothing created in AWS.', 'vulnhub' );
+			$out .= ' <a' . $btn . ' href="' . esc_url( VulnHub_AWS_SSO_Auth::start_url() ) . '">' . esc_html__( 'Re-authenticate', 'vulnhub' ) . '</a>';
+			$out .= ' <a' . $btn . ' href="' . esc_url( VulnHub_AWS_SSO_Auth::disconnect_url() ) . '">' . esc_html__( 'Disconnect', 'vulnhub' ) . '</a>';
+
+			$tok  = json_decode( (string) $this->secret( 'sso_token' ), true );
+			$exp  = is_array( $tok ) ? (int) ( $tok['expires'] ?? 0 ) : 0;
+			$left = $exp - time();
+			$init = $left > 0
+				/* translators: %d: minutes. */
+				? sprintf( __( 'Access token valid \u2014 expires in %dm (auto-renews on sync).', 'vulnhub' ), (int) ceil( $left / 60 ) )
+				: __( 'Access token expired \u2014 re-authenticate to refresh the inventory.', 'vulnhub' );
+			$out .= '<br><span class="vh-sso-timer" data-vh-sso-exp="' . (int) $exp . '" style="font-size:.85em;opacity:.85;' . ( $left <= 0 ? 'color:#f87171;' : '' ) . '">' . esc_html( $init ) . '</span>';
+			$out .= '<script>(function(){var e=document.querySelector(".vh-sso-timer[data-vh-sso-exp]");if(!e||e.dataset.w)return;e.dataset.w=1;function f(){var x=parseInt(e.dataset.vhSsoExp,10)*1000-Date.now();if(x<=0){e.textContent="\u26A0 Access token expired \u2014 re-authenticate to refresh the inventory.";e.style.color="#f87171";return;}var m=Math.floor(x/6e4),sec=Math.floor(x%6e4/1e3);e.textContent="Access token valid \u2014 expires in "+m+"m "+(sec<10?"0":"")+sec+"s (auto-renews on sync).";e.style.color="";setTimeout(f,1e3);}f();})();</script>';
+
+			return $out;
+		}
+
+		$out .= esc_html__( 'Save your start URL below, then authenticate: a browser tab opens to approve, and VulnHub stores an auto-refreshing token that reads every account your login can see.', 'vulnhub' );
+		$out .= ' <a' . $pri . ' href="' . esc_url( VulnHub_AWS_SSO_Auth::start_url() ) . '">' . esc_html__( 'Authenticate with AWS SSO', 'vulnhub' ) . '</a>';
+
+		return $out;
+	}
+
+	/** The SSO region setting, falling back to the read region. */
+	private function sso_region(): string {
+		$r = trim( (string) $this->get( 'sso_region', '' ) );
+
+		return '' !== $r ? $r : ( $this->regions()[0] ?? 'us-east-1' );
+	}
+
+	/**
+	 * The stored SSO token, refreshed when it is close to expiry.
+	 *
+	 * @return array<string,mixed> Empty when there is no usable session.
+	 */
+	private function sso_token(): array {
+		$t = json_decode( (string) $this->secret( 'sso_token' ), true );
+
+		if ( ! is_array( $t ) || empty( $t['accessToken'] ) ) {
+			return array();
+		}
+
+		if ( time() > (int) ( $t['expires'] ?? 0 ) - 300 ) {
+			if ( empty( $t['refreshToken'] ) ) {
+				return array();
+			}
+
+			$sso = new VulnHub_AWS_SSO( (string) ( $t['region'] ?? 'us-east-1' ) );
+			$r   = $sso->refresh( (string) $t['clientId'], (string) $t['clientSecret'], (string) $t['refreshToken'] );
+
+			if ( empty( $r['accessToken'] ) ) {
+				return array();
+			}
+
+			$t['accessToken'] = (string) $r['accessToken'];
+			if ( ! empty( $r['refreshToken'] ) ) {
+				$t['refreshToken'] = (string) $r['refreshToken'];
+			}
+			$t['expires'] = time() + (int) ( $r['expiresIn'] ?? 3600 );
+
+			( new \VulnHub\Core\Settings() )->set_secret( 'aws', 'sso_token', (string) wp_json_encode( $t ) );
+		}
+
+		return $t;
+	}
+
+	/**
+	 * Sync every account the SSO login can see, using read credentials the
+	 * portal issues per account. No role assumed, nothing stored long-lived.
+	 *
+	 * @return array{ok:bool,message:string}
+	 */
+	private function sync_via_sso(): array {
+		// Reading dozens of accounts runs past the default PHP time limit;
+		// the job is dispatched to cron with the connection already closed,
+		// so lifting the cap lets it finish rather than being killed midway.
+		if ( function_exists( 'set_time_limit' ) ) {
+			@set_time_limit( 0 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		}
+
+		$t = $this->sso_token();
+
+		if ( empty( $t['accessToken'] ) ) {
+			return array( 'ok' => false, 'message' => __( 'AWS SSO session expired — click Authenticate on the AWS integration.', 'vulnhub' ) );
+		}
+
+		$sso      = new VulnHub_AWS_SSO( (string) $t['region'] );
+		$accounts = $sso->list_accounts( (string) $t['accessToken'] );
+
+		if ( ! $accounts ) {
+			return array( 'ok' => false, 'message' => __( 'The SSO login returned no accounts.', 'vulnhub' ) );
+		}
+
+		$ok      = 0;
+		$failed  = 0;
+		$records = 0;
+		$regions = $this->regions();
+		$now     = gmdate( 'Y-m-d H:i:s' );
+		$total   = count( $accounts );
+		$i       = 0;
+
+		foreach ( $accounts as $a ) {
+			$acct = (string) ( $a['accountId'] ?? '' );
+
+			if ( '' === $acct ) {
+				continue;
+			}
+
+			++$i;
+			/* translators: 1: current, 2: total accounts. */
+			$this->progress( sprintf( __( 'Reading account %1$d of %2$d', 'vulnhub' ), $i, $total ), $records );
+
+			$roles = $sso->list_roles( (string) $t['accessToken'], $acct );
+			$role  = '';
+
+			foreach ( array( 'ReadOnlyAccess', 'ViewOnlyAccess', 'SecurityAudit', 'power-user' ) as $pref ) {
+				if ( in_array( $pref, $roles, true ) ) {
+					$role = $pref;
+					break;
+				}
+			}
+
+			if ( '' === $role ) {
+				$role = $roles[0] ?? '';
+			}
+
+			if ( '' === $role ) {
+				++$failed;
+				continue;
+			}
+
+			$cr = $sso->role_credentials( (string) $t['accessToken'], $acct, $role );
+
+			if ( empty( $cr['accessKeyId'] ) ) {
+				++$failed;
+				continue;
+			}
+
+			$client = new VulnHub_AWS_Client( (string) $cr['accessKeyId'], (string) $cr['secretAccessKey'], (string) $cr['sessionToken'] );
+
+			$before = $records;
+
+			foreach ( $regions as $region ) {
+				$records += VulnHub_AWS_Network::capture( $client, $acct, $region, $now );
+			}
+
+			$this->bump( 'processed', $records - $before );
+			++$ok;
+		}
+
+		$net = VulnHub_AWS_Network::summary();
+
+		return array(
+			'ok'      => $ok > 0,
+			/* translators: 1: accounts, 2: failed, 3: instances, 4: security groups, 5: rules. */
+			'message' => sprintf( __( '%1$d account(s) read via SSO, %2$d failed. Stored %3$d instance(s), %4$d security group(s), %5$d rule(s) for the network map.', 'vulnhub' ), $ok, $failed, (int) $net['instances'], (int) $net['sgs'], (int) $net['rules'] ),
+		);
+	}
+
 	private function client(): ?VulnHub_AWS_Client {
 		$key    = trim( (string) $this->get( 'access_key_id' ) );
 		$secret = trim( (string) $this->secret( 'secret_access_key' ) );
@@ -569,6 +793,12 @@ final class VulnHub_AWS_Connector extends Connector {
 	 * @return array{ok:bool,message:string}
 	 */
 	protected function do_sync( array $args = array() ): array {
+		// SSO takes precedence once the operator has signed in: it reads every
+		// account the login can see, with credentials it refreshes itself.
+		if ( '' !== (string) $this->secret( 'sso_token' ) ) {
+			return $this->sync_via_sso();
+		}
+
 		$accounts = VulnHub_AWS_Accounts::all( true );
 
 		// No accounts on the list: fall back to the single-account settings,
