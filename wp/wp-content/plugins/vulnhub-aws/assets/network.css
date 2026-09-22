@@ -157,3 +157,45 @@
 .vh-flow__pill--data rect{ stroke: rgba( 52, 211, 153, .5 ); }
 .vh-flow__pill--out rect { stroke: rgba( 251, 191, 36, .5 ); } .vh-flow__pill--out text { fill: #fcd34d; }
 .vh-flow__pill--chk rect { stroke: rgba( 52, 211, 153, .5 ); } .vh-flow__pill--chk text { fill: #34d399; }
+
+/* ---- exposure panel: the verdict, before the picture ---- */
+.vh-exp { border: 1px solid rgba( 148, 163, 184, .18 ); border-radius: 14px; padding: 14px 16px; margin: 0 0 18px;
+	background: rgba( 148, 163, 184, .05 ); font-size: 13px; line-height: 1.55; }
+.vh-exp__head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin-bottom: 9px; }
+.vh-exp__v { font-weight: 700; font-size: 14px; padding: 3px 11px; border-radius: 999px; }
+.vh-exp__v--none { background: rgba( 52, 211, 153, .15 ); color: #34d399; }
+.vh-exp__v--open { background: rgba( 248, 113, 113, .16 ); color: #fca5a5; }
+.vh-exp__why { color: var( --vh-muted, #94a3b8 ); }
+.vh-exp__path, .vh-exp__ips { margin-top: 6px; }
+.vh-exp__path code, .vh-exp__ips code { background: rgba( 148, 163, 184, .14 ); border-radius: 5px; padding: 1px 6px; font-size: 12px; }
+.vh-exp__ip { display: inline-block; margin-right: 14px; }
+.vh-exp__rules { margin-top: 13px; border-top: 1px solid rgba( 148, 163, 184, .13 ); padding-top: 11px; }
+.vh-exp__rule { margin-top: 9px; border-left: 3px solid rgba( 52, 211, 153, .5 ); padding-left: 11px; }
+.vh-exp__rule.is-open { border-left-color: rgba( 248, 113, 113, .7 ); }
+.vh-exp__rh { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.vh-exp__rh code { background: rgba( 148, 163, 184, .14 ); border-radius: 5px; padding: 1px 6px; font-size: 12px; }
+.vh-exp__t { margin: 5px 0 0; padding-left: 18px; color: var( --vh-muted, #94a3b8 ); }
+.vh-exp__t li { margin: 2px 0; }
+.vh-exp__t code { background: rgba( 148, 163, 184, .14 ); border-radius: 5px; padding: 0 5px; font-size: 12px; }
+
+/* ---- routing cards are buttons now, and explain themselves ---- */
+.vh-edge { width: 100%; text-align: left; cursor: pointer; color: inherit; font: inherit; position: relative; }
+.vh-edge:hover { border-color: rgba( 56, 189, 248, .55 ); }
+.vh-edge:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
+.vh-edge__body { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; }
+.vh-edge__q { flex: 0 0 auto; width: 17px; height: 17px; border-radius: 50%; display: grid; place-items: center;
+	font-size: 11px; font-weight: 700; color: var( --vh-muted, #94a3b8 ); background: rgba( 148, 163, 184, .16 ); }
+.vh-edge:hover .vh-edge__q { color: #38bdf8; background: rgba( 56, 189, 248, .18 ); }
+.vh-edge--quiet { opacity: .72; }
+.vh-col__pill--direct { background: rgba( 56, 189, 248, .16 ); color: #38bdf8; }
+
+/* ---- a path that does not exist is drawn as one that does not exist ---- */
+.vh-flow__l--none { stroke: rgba( 148, 163, 184, .45 ); stroke-dasharray: 3 6; animation: none; }
+.vh-flow__x path { stroke: #64748b; stroke-width: 2; stroke-linecap: round; fill: none; }
+.vh-flow__pill--none rect { stroke: rgba( 148, 163, 184, .45 ); }
+.vh-flow__pill--none text { fill: #94a3b8; }
+
+/* A lane inferred from resource tiers, not measured -- drawn fainter than an
+   evidenced path so the two are never read as the same kind of claim. */
+.vh-flow__pill--infer rect { stroke-dasharray: 3 3; }
+.vh-flow__pill--infer text { fill: #94a3b8; }

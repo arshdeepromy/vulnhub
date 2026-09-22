@@ -41,10 +41,11 @@
 	var STORE = [];
 	function card( node, tier ) {
 		var idx = STORE.push( node ) - 1;
-		var sub = tier === 'compute' && node.ip ? node.ip : ( node.kind === 'alb' && node.scheme ? node.scheme : kindLabel( node.kind ) );
+		var sub = node.unconfirmed ? 'not found in the AWS read' : ( tier === 'compute' && node.ip ? node.ip : ( node.kind === 'alb' && node.scheme ? node.scheme : kindLabel( node.kind ) ) );
 		var meta2 = ( node.ip ? kindLabel( node.kind ) + ' · ' + node.ip : sub );
 		var badges = '';
-		if ( node.exposed ) { badges += badge( 'vh-b--pub', node.pubip ? 'public' : 'exposed', node.pubip ? 'Public IP ' + node.pubip : 'Reachable from the internet' ); }
+		if ( node.unconfirmed ) { badges += badge( 'vh-b--off', 'stale?', 'The cloud-posture inventory lists this resource, but the AWS read of this account returned no load balancer with this name — it has been deleted, or the role cannot read load balancers.' ); }
+		else if ( node.exposed ) { badges += badge( 'vh-b--pub', node.pubip ? 'public' : 'exposed', node.pubip ? 'Public IP ' + node.pubip : 'Reachable from the internet' ); }
 		var t = node.ten || {};
 		if ( t.c ) { badges += badge( 'vh-b--crit', t.c, t.c + ' critical (Tenable)' ); }
 		if ( t.h ) { badges += badge( 'vh-b--high', t.h, t.h + ' high (Tenable)' ); }
@@ -58,10 +59,92 @@
 			+ '<span class="vh-card__badges">' + badges + '</span></button>';
 	}
 
-	function edgeCard( kind, title, sub, cls ) {
-		return '<div class="vh-edge ' + ( cls || '' ) + '"><span class="vh-edge__ico">' + icon( kind ) + '</span>'
+	/*
+	 * What each routing element actually is. These are the pieces people are
+	 * least likely to know cold, and the screen used to name them and stop --
+	 * "Internet gateway / 1 public route(s)" told you nothing about what an
+	 * internet gateway is or whether it mattered.
+	 */
+	var EXPLAIN = {
+		internet: 'Any address on the public internet — the 0.0.0.0/0 that security-group rules refer to. Traffic only arrives from here if something in the account both listens and has a route back out.',
+		igw: 'An internet gateway is the VPC component that carries traffic between the VPC and the public internet. It is not a filter and has no rules of its own: a subnet is public only because its route table sends 0.0.0.0/0 to the gateway, and a resource is reachable only if it also holds a public address.',
+		nat: 'A NAT gateway lets resources in a private subnet open connections outwards — package updates, API calls — while keeping them unreachable from outside. It holds a public Elastic IP, but that address only ever appears as the source of traffic the account started. Nothing on the internet can open a connection through it.',
+		checkpoint: 'Check Point CloudGuard inspects north-south traffic in a shared inspection VPC. It only sits in the path when a default route leaves through the Transit Gateway that fronts it.',
+		tgw: 'A Transit Gateway is the hub that connects VPCs and accounts to each other. A default route pointing at it means traffic leaves through the shared inspection path rather than straight out of an internet gateway.',
+		vpce: 'A VPC endpoint is a private entrance to an AWS service, reached over private addresses inside the VPC. It has no public address, so a security group opened to the world on an endpoint is not an internet exposure.'
+	};
+
+	/*
+	 * A routing card. `anchor` ties it to a flow line so a line can visibly
+	 * start at this box rather than at the column edge, and `note` is the
+	 * plain-language explanation shown on click.
+	 */
+	function edgeCard( kind, title, sub, cls, anchor, note, rows ) {
+		var idx = STORE.push( { edge: true, kind: kind, name: title, sub: sub, note: note || EXPLAIN[ kind ] || '', rows: rows || [] } ) - 1;
+		return '<button type="button" class="vh-edge ' + ( cls || '' ) + '" data-vh-node="' + idx + '"'
+			+ ( anchor ? ' data-anchor="' + esc( anchor ) + '"' : '' ) + '>'
+			+ '<span class="vh-edge__ico">' + icon( kind ) + '</span>'
 			+ '<span class="vh-edge__body"><span class="vh-edge__t">' + esc( title ) + '</span>'
-			+ ( sub ? '<span class="vh-edge__s">' + esc( sub ) + '</span>' : '' ) + '</span></div>';
+			+ ( sub ? '<span class="vh-edge__s">' + esc( sub ) + '</span>' : '' ) + '</span>'
+			+ '<span class="vh-edge__q" aria-hidden="true">?</span></button>';
+	}
+
+	/*
+	 * The exposure panel: every rule open to the world, resolved to the thing
+	 * that actually carries it.
+	 *
+	 * A group open to 0.0.0.0/0 is not an exposure until something is behind it
+	 * with a way in. The old screen showed the account's open ports as one
+	 * aggregate pill on an arrow from the internet, which read as "the internet
+	 * reaches this on tcp/443" even when every interface holding that group was
+	 * a private VPC endpoint.
+	 */
+	function exposureHtml( g ) {
+		var e = g.exposure || {};
+		var inb = e.inbound || [], ips = e.public_ips || [];
+
+		var verdict = e.inbound_path
+			? '<span class="vh-exp__v vh-exp__v--open">Reachable from the internet</span>'
+			: '<span class="vh-exp__v vh-exp__v--none">No inbound path from the internet</span>';
+
+		var why = e.inbound_path
+			? 'At least one resource both listens and holds a public address.'
+			: 'Nothing that listens holds a public address, and no internet-facing load balancer was found. Traffic can still leave, and replies to it return.';
+
+		var path = '<div class="vh-exp__path"><b>Egress path</b> '
+			+ ( e.nat_default ? 'private subnets → NAT gateway <code>' + esc( e.nat_default ) + '</code> → ' : '' )
+			+ ( e.igw_default ? 'internet gateway <code>' + esc( e.igw_default ) + '</code> → internet' : 'no default route out' )
+			+ ( g.inspected ? ' · inspected via Transit Gateway' : ' · <b>direct</b>, not inspected' ) + '</div>';
+
+		var ipHtml = ips.length
+			? '<div class="vh-exp__ips"><b>Public addresses</b> ' + ips.map( function ( p ) {
+				return '<span class="vh-exp__ip"><code>' + esc( p.ip ) + '</code> on ' + esc( p.on ) + '</span>';
+			} ).join( '' ) + '</div>'
+			: '<div class="vh-exp__ips"><b>Public addresses</b> <span class="vh-muted">none in this account</span></div>';
+
+		var rules = inb.length
+			? inb.map( function ( r ) {
+				var tgt = r.targets.length
+					? r.targets.map( function ( t ) {
+						return '<li>' + esc( t.label )
+							+ ( t.ip ? ' <code>' + esc( t.ip ) + '</code>' : '' )
+							+ ( t.pubip ? ' <span class="vh-b vh-b--pub">public ' + esc( t.pubip ) + '</span>' : ' <span class="vh-b vh-b--off">private</span>' )
+							+ '</li>';
+					} ).join( '' )
+					: '<li class="vh-muted">attached to nothing the capture holds — the group exists but nothing carries it</li>';
+				return '<div class="vh-exp__rule' + ( r.reachable ? ' is-open' : '' ) + '">'
+					+ '<div class="vh-exp__rh"><code>' + esc( r.port ) + '</code> from <code>' + esc( r.source ) + '</code>'
+					+ ' <span class="vh-muted">' + esc( r.sg ) + ( r.sg_name ? ' · ' + esc( r.sg_name ) : '' ) + '</span>'
+					+ ( r.reachable ? '<span class="vh-b vh-b--pub">reachable</span>' : '<span class="vh-b vh-b--off">not reachable</span>' )
+					+ '</div><ul class="vh-exp__t">' + tgt + '</ul></div>';
+			} ).join( '' )
+			: '<p class="vh-muted">No security-group rule in this account is open to 0.0.0.0/0.</p>';
+
+		return '<div class="vh-exp">'
+			+ '<div class="vh-exp__head">' + verdict + '<span class="vh-exp__why">' + esc( why ) + '</span></div>'
+			+ path + ipHtml
+			+ '<div class="vh-exp__rules"><b>Open to the world, and what holds it</b>' + rules + '</div>'
+			+ '</div>';
 	}
 
 	var CAP = 40;
@@ -136,16 +219,51 @@
 		var fnn  = compute.length - ec2n;
 
 		// ---- routing / exposure column ----
-		var edge = edgeCard( 'internet', 'Internet', g.open_ports && g.open_ports.length ? 'inbound ' + g.open_ports.join( ', ' ) : 'no open ports', 'vh-edge--net' );
-		if ( routing.igw ) { edge += edgeCard( 'igw', 'Internet gateway', routing.igw + ' public route(s) · direct', 'vh-edge--igw' ); }
-		if ( g.inspected ) { edge += edgeCard( 'checkpoint', 'Check Point CloudGuard', 'inspects north-south traffic', 'vh-edge--chk' ); }
-		if ( routing.tgw ) { edge += edgeCard( 'tgw', 'Transit Gateway', routing.tgw + ' route(s)' + ( g.tgws && g.tgws.length ? ' · ' + g.tgws.length + ' hub' : '' ), 'vh-edge--tgw' ); }
-		if ( routing.nat ) { edge += edgeCard( 'nat', 'NAT gateway', routing.nat + ' outbound', 'vh-edge--nat' ); }
+		//
+		// Every card names the resource it stands for and says what it means
+		// for reachability. "1 public route(s)" was a count of routes worn as
+		// if it were a count of gateways, on a card that never said whether
+		// anything could actually get in.
+		var ex = g.exposure || {};
+		var natIp = ( ex.public_ips || [] ).filter( function ( p ) { return p.kind === 'eip' || p.kind === 'nat'; } )[ 0 ];
+
+		var edge = edgeCard( 'internet', 'Internet',
+			ex.inbound_path ? 'a path in exists' : 'no path in',
+			'vh-edge--net' + ( ex.inbound_path ? '' : ' vh-edge--quiet' ), 'internet', null,
+			[ [ 'Open to 0.0.0.0/0', ( ex.inbound || [] ).map( function ( r ) { return r.port; } ).join( ', ' ) || 'nothing' ],
+			  [ 'Reachable', ex.inbound_path ? 'yes' : 'no' ] ] );
+
+		if ( routing.igw ) {
+			edge += edgeCard( 'igw', 'Internet gateway', ( ex.igw_default || 'default route' ) + ' · direct, no inspection',
+				'vh-edge--igw', 'igw', null,
+				[ [ 'Carries default', ex.igw_default || '—' ],
+				  [ 'In this account', ( ex.igw_total || 0 ) + ' gateway(s), ' + routing.igw + ' carrying 0.0.0.0/0' ] ] );
+		}
+		if ( g.inspected ) {
+			edge += edgeCard( 'checkpoint', 'Check Point CloudGuard', 'default route leaves via the Transit Gateway', 'vh-edge--chk', 'chk' );
+		}
+		if ( routing.tgw ) {
+			edge += edgeCard( 'tgw', 'Transit Gateway', routing.tgw + ' default route(s)' + ( g.tgws && g.tgws.length ? ' · ' + g.tgws.length + ' hub' : '' ), 'vh-edge--tgw', 'tgw' );
+		}
+		if ( routing.nat ) {
+			edge += edgeCard( 'nat', 'NAT gateway', 'outbound only' + ( natIp ? ' · ' + natIp.ip : '' ), 'vh-edge--nat', 'nat', null,
+				[ [ 'Carries default', ex.nat_default || '—' ],
+				  [ 'Public address', natIp ? natIp.ip + ' (source of outbound traffic only)' : 'none captured' ] ] );
+		}
+
+		// CloudGuard named in a finding is not the same claim as an inspected
+		// route, and must never be dressed up as one.
+		if ( ! g.inspected && ex.cloudguard ) {
+			edge += edgeCard( 'checkpoint', 'CloudGuard seen in this account', 'named in a Plerion finding — not in the routing path', 'vh-edge--chk vh-edge--quiet', '',
+				'A Plerion finding in this account names CloudGuard, but no default route leaves through a Transit Gateway. Being present in an account is not the same as sitting in the traffic path, so this screen does not count it as inspection.' );
+		}
 
 		var entryHtml = entry.map( function ( n ) { return card( n, 'entry' ); } ).join( '' ) || '<p class="vh-empty">Nothing internet-facing.</p>';
 
-		var grid = '<div class="vh-net-grid">'
-			+ column( 'edge', 'Internet & routing', g.inspected ? '<span class="vh-col__pill vh-col__pill--chk">inspected</span>' : '', edge )
+		var grid = exposureHtml( g ) + '<div class="vh-net-grid">'
+			+ column( 'edge', 'Internet & routing', g.inspected
+				? '<span class="vh-col__pill vh-col__pill--chk">inspected</span>'
+				: '<span class="vh-col__pill vh-col__pill--direct">direct</span>', edge )
 			+ column( 'entry', 'Entry', entry.length + '', entryHtml )
 			+ column( 'compute', 'Compute', ec2n + ' EC2' + ( fnn ? ' · ' + fnn + ' fn' : '' ), kindGroups( compute, 'compute' ) )
 			+ column( 'data', 'Data', data.length + '', kindGroups( data, 'data' ) )
@@ -154,7 +272,8 @@
 		map.innerHTML = grid;
 		if ( meta ) {
 			meta.textContent = ec2n + ' EC2 · ' + fnn + ' fn · ' + entry.length + ' entry · ' + data.length + ' data — '
-				+ ( g.inspected ? 'inspected via Check Point/TGW' : ( routing.igw ? 'direct via IGW' : 'private' ) );
+				+ ( g.inspected ? 'inspected via Check Point/TGW' : ( routing.igw ? 'direct via IGW, not inspected' : 'no default route out' ) )
+				+ ( ( g.exposure && g.exposure.inbound_path ) ? '' : ' \u00b7 no inbound path' );
 		}
 		requestAnimationFrame( drawFlows );
 	}
@@ -177,10 +296,24 @@
 		var tops = [ pos.edge.top, pos.compute.top ];
 		if ( pos.entry ) { tops.push( pos.entry.top ); }
 		if ( pos.data ) { tops.push( pos.data.top ); }
-		// Sit the inbound band level with the first card in each column rather
-		// than level with the column header, so a line reads as card-to-card.
-		var yIn = Math.max.apply( null, tops ) + 74;
-		var yOut = yIn + 54;
+		var base = Math.max.apply( null, tops );
+
+		/*
+		 * Anchor each band to the card it is actually about. "which box does
+		 * this line come out of" was unanswerable while both bands were pinned
+		 * to a fixed offset from the column top: the inbound line now leaves
+		 * level with the internet gateway, and the egress line level with the
+		 * NAT gateway, because those are the boxes carrying those routes.
+		 */
+		function anchorY( sel, fallback ) {
+			var el = map.querySelector( '[data-anchor="' + sel + '"]' );
+			if ( ! el ) { return fallback; }
+			var r = el.getBoundingClientRect();
+			return r.top - box.top + r.height / 2;
+		}
+		var yIn  = anchorY( 'igw', base + 74 );
+		var yOut = anchorY( 'nat', yIn + 54 );
+		if ( Math.abs( yOut - yIn ) < 34 ) { yOut = yIn + 54; }
 
 		function seg( x1, x2, y, cls, mk ) {
 			var tip = x2 - ( x2 > x1 ? 9 : -9 );
@@ -213,8 +346,11 @@
 			}
 
 			var w = Math.max( 30, wide( text ) );
+			var tip = ( cls.indexOf( 'infer' ) > -1 )
+				? full + ' — a lane between tiers, inferred from what each resource is. Not measured traffic: per-flow data needs VPC Flow Logs, which the capture does not read.'
+				: full;
 			return '<g class="vh-flow__pill ' + cls + '">'
-				+ ( text === full ? '' : '<title>' + esc( full ) + '</title>' )
+				+ ( ( text === full && tip === full ) ? '' : '<title>' + esc( tip ) + '</title>' )
 				+ '<rect x="' + ( x - w / 2 ) + '" y="' + ( y - 10 ) + '" rx="9" width="' + w + '" height="20"/>'
 				+ '<text x="' + x + '" y="' + ( y + 4 ) + '" text-anchor="middle">' + esc( text ) + '</text></g>';
 		}
@@ -227,18 +363,34 @@
 			+ '<marker id="mkData" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 8,4.5 0,9z" fill="#34d399"/></marker>'
 			+ '<marker id="mkOut" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 8,4.5 0,9z" fill="#fbbf24"/></marker>'
 			+ '</defs>';
-		var ports = ( GRAPH.open_ports && GRAPH.open_ports.length ) ? GRAPH.open_ports.join( ', ' ) : 'no open ports';
+		var exg    = GRAPH.exposure || {};
+		var openIn = ( exg.inbound || [] ).filter( function ( r ) { return r.reachable; } );
+		var ports  = openIn.map( function ( r ) { return r.port; } ).join( ', ' );
 		var target = pos.entry || pos.compute;
+		var gEdge  = gapOf( pos.edge.r, target.l );
 
-		// inbound: Internet/routing -> Entry
-		s += seg( pos.edge.r, target.l, yIn, 'vh-flow__l--in', 'mkIn' );
-		var gEdge = gapOf( pos.edge.r, target.l );
-		s += pill( mid( pos.edge.r, target.l ), yIn - 15, 'inbound ' + ports, 'vh-flow__pill--in', gEdge, ports );
-		if ( GRAPH.inspected ) { s += pill( mid( pos.edge.r, target.l ), yOut + 19, 'via Check Point', 'vh-flow__pill--chk', gEdge, 'Check Point' ); }
+		/*
+		 * Only draw an inbound arrow when something can actually be reached.
+		 * A red arrow from the internet carrying the account's open ports read
+		 * as a live path even when every interface behind those ports was a
+		 * private VPC endpoint -- the boldest statement on the screen was the
+		 * one with the least behind it.
+		 */
+		if ( exg.inbound_path ) {
+			s += seg( pos.edge.r, target.l, yIn, 'vh-flow__l--in', 'mkIn' );
+			s += pill( mid( pos.edge.r, target.l ), yIn - 15, 'inbound ' + ports, 'vh-flow__pill--in', gEdge, ports );
+			if ( GRAPH.inspected ) { s += pill( mid( pos.edge.r, target.l ), yOut + 19, 'via Check Point', 'vh-flow__pill--chk', gEdge, 'Check Point' ); }
+		} else {
+			var bx = mid( pos.edge.r, target.l );
+			s += '<path class="vh-flow__l vh-flow__l--none" d="M' + pos.edge.r + ',' + yIn + ' L' + target.l + ',' + yIn + '"/>';
+			s += '<g class="vh-flow__x"><path d="M' + ( bx - 6 ) + ',' + ( yIn - 6 ) + ' L' + ( bx + 6 ) + ',' + ( yIn + 6 )
+				+ ' M' + ( bx + 6 ) + ',' + ( yIn - 6 ) + ' L' + ( bx - 6 ) + ',' + ( yIn + 6 ) + '"/></g>';
+			s += pill( bx, yIn - 20, 'no inbound path', 'vh-flow__pill--none', gEdge, 'no way in' );
+		}
 		// app: Entry -> Compute
-		if ( pos.entry ) { s += seg( pos.entry.r, pos.compute.l, yIn, 'vh-flow__l--app', 'mkApp' ); s += pill( mid( pos.entry.r, pos.compute.l ), yIn - 15, 'app traffic', 'vh-flow__pill--app', gapOf( pos.entry.r, pos.compute.l ), 'app' ); }
+		if ( pos.entry ) { s += seg( pos.entry.r, pos.compute.l, yIn, 'vh-flow__l--app', 'mkApp' ); s += pill( mid( pos.entry.r, pos.compute.l ), yIn - 15, 'app traffic', 'vh-flow__pill--app vh-flow__pill--infer', gapOf( pos.entry.r, pos.compute.l ), 'app' ); }
 		// data: Compute -> Data
-		if ( pos.data ) { s += seg( pos.compute.r, pos.data.l, yIn, 'vh-flow__l--data', 'mkData' ); s += pill( mid( pos.compute.r, pos.data.l ), yIn - 15, 'reads · writes', 'vh-flow__pill--data', gapOf( pos.compute.r, pos.data.l ), 'r/w' ); }
+		if ( pos.data ) { s += seg( pos.compute.r, pos.data.l, yIn, 'vh-flow__l--data', 'mkData' ); s += pill( mid( pos.compute.r, pos.data.l ), yIn - 15, 'reads · writes', 'vh-flow__pill--data vh-flow__pill--infer', gapOf( pos.compute.r, pos.data.l ), 'r/w' ); }
 
 		// outbound: Compute -> (Entry gap) -> Internet, arrows pointing back left
 		var natlbl = ( GRAPH.routing && GRAPH.routing.nat ) ? 'egress \u2192 NAT' : ( GRAPH.routing && GRAPH.routing.tgw ? 'egress \u2192 TGW' : 'egress' );
@@ -299,6 +451,19 @@
 			document.body.appendChild( pop );
 			pop.addEventListener( 'click', function ( e ) { if ( e.target.hasAttribute( 'data-vh-pop-close' ) ) { closePopup(); } } );
 		}
+		// A routing element explains itself: what it is, and the ids and
+		// addresses that decide whether it matters.
+		if ( n.edge ) {
+			var erows = ( n.rows || [] ).map( function ( r ) { return row( r[0], esc( r[1] ) ); } ).join( '' );
+			pop.querySelector( '.vh-pop__in' ).innerHTML =
+				'<div class="vh-pop__head"><span class="vh-pop__ico">' + icon( n.kind ) + '</span>'
+				+ '<div><h3>' + esc( n.name ) + '</h3><div class="vh-pop__k">' + esc( n.sub || '' ) + '</div></div></div>'
+				+ ( n.note ? '<p class="vh-pop__expl">' + esc( n.note ) + '</p>' : '' )
+				+ ( erows ? '<h4>Detail</h4><dl class="vh-pop__dl">' + erows + '</dl>' : '' );
+			pop.classList.add( 'is-open' );
+			return;
+		}
+
 		var t = n.ten || {}, p = n.ple || {};
 		var cfg = '';
 		if ( n.kind === 'ec2' ) {

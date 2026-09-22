@@ -62,6 +62,7 @@ final class VulnHub_AWS_Network {
 				public_ip varchar(64) NOT NULL DEFAULT '',
 				state varchar(24) NOT NULL DEFAULT '',
 				sg_ids varchar(512) NOT NULL DEFAULT '',
+				detail text NOT NULL,
 				last_seen datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
 				PRIMARY KEY  (id),
 				UNIQUE KEY res (account_id, resource_id),
@@ -145,6 +146,9 @@ final class VulnHub_AWS_Network {
 		$written += self::capture_security_groups( $client, $account, $region, $now );
 		$written += self::capture_infra( $client, $account, $region, $now );
 		$written += self::capture_routes( $client, $account, $region, $now );
+		$written += self::capture_enis( $client, $account, $region, $now );
+		$written += self::capture_addresses( $client, $account, $region, $now );
+		$written += self::capture_load_balancers( $client, $account, $region, $now );
 
 		return $written;
 	}
@@ -362,6 +366,202 @@ final class VulnHub_AWS_Network {
 		return $n;
 	}
 
+	/**
+	 * Network interfaces -- the missing link between a security group and a thing.
+	 *
+	 * A security group means nothing on its own: `sg-x opens tcp/443 to the
+	 * world` is only alarming if something is behind it. The binding is the ENI,
+	 * and it is the *only* binding for everything that is not an EC2 instance --
+	 * load balancers, VPC endpoints, RDS, NAT gateways, Lambda in a VPC. Without
+	 * this table the map could show a port but never say whose it was, and an
+	 * open group attached to nothing looked identical to one attached to a
+	 * public server.
+	 *
+	 * The `description` is how AWS says what an ENI belongs to ("Interface for
+	 * NAT Gateway nat-...", "VPC Endpoint Interface vpce-...", "ELB net/...").
+	 */
+	private static function capture_enis( VulnHub_AWS_Client $client, string $account, string $region, string $now ): int {
+		global $wpdb;
+		$t = self::nodes_table();
+		$n = 0;
+
+		$res = $client->query( 'ec2', $region, array( 'Action' => 'DescribeNetworkInterfaces', 'Version' => '2016-11-15' ) );
+		if ( empty( $res['ok'] ) ) { return $n; }
+
+		foreach ( $res['xml']->networkInterfaceSet->item ?? array() as $e ) { // phpcs:ignore
+			$id = (string) ( $e->networkInterfaceId ?? '' );
+			if ( '' === $id ) { continue; }
+
+			$sgs = array();
+			foreach ( $e->groupSet->item ?? array() as $g ) { // phpcs:ignore
+				$sgs[] = (string) ( $g->groupId ?? '' );
+			}
+
+			$detail = array(
+				'desc'     => (string) ( $e->description ?? '' ),
+				'type'     => (string) ( $e->interfaceType ?? '' ),
+				'instance' => (string) ( $e->attachment->instanceId ?? '' ),
+				'managed'  => 'true' === (string) ( $e->requesterManaged ?? '' ),
+			);
+
+			$wpdb->query( $wpdb->prepare( "INSERT INTO {$t} (account_id, region, node_type, resource_id, name, vpc_id, subnet_id, private_ip, public_ip, state, sg_ids, detail, last_seen) VALUES (%s,%s,'eni',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE region=VALUES(region), node_type='eni', name=VALUES(name), vpc_id=VALUES(vpc_id), subnet_id=VALUES(subnet_id), private_ip=VALUES(private_ip), public_ip=VALUES(public_ip), state=VALUES(state), sg_ids=VALUES(sg_ids), detail=VALUES(detail), last_seen=VALUES(last_seen)", // phpcs:ignore
+				$account, $region, $id,
+				(string) ( $e->description ?? '' ),
+				(string) ( $e->vpcId ?? '' ),
+				(string) ( $e->subnetId ?? '' ),
+				(string) ( $e->privateIpAddress ?? '' ),
+				(string) ( $e->association->publicIp ?? '' ),
+				(string) ( $e->status ?? '' ),
+				implode( ',', array_filter( $sgs ) ),
+				(string) wp_json_encode( $detail ),
+				$now
+			) );
+			++$n;
+		}
+
+		return $n;
+	}
+
+	/**
+	 * Elastic IPs -- an account's public addresses.
+	 *
+	 * `public_ip` on an instance row only ever covers EC2, so an account whose
+	 * only public address sits on a NAT gateway or a load balancer read as
+	 * having none at all. An EIP is attached to an ENI, which is how it reaches
+	 * whatever actually holds it.
+	 */
+	private static function capture_addresses( VulnHub_AWS_Client $client, string $account, string $region, string $now ): int {
+		global $wpdb;
+		$t = self::nodes_table();
+		$n = 0;
+
+		$res = $client->query( 'ec2', $region, array( 'Action' => 'DescribeAddresses', 'Version' => '2016-11-15' ) );
+		if ( empty( $res['ok'] ) ) { return $n; }
+
+		foreach ( $res['xml']->addressesSet->item ?? array() as $a ) { // phpcs:ignore
+			$ip = (string) ( $a->publicIp ?? '' );
+			if ( '' === $ip ) { continue; }
+
+			$id     = (string) ( $a->allocationId ?? '' );
+			$id     = '' !== $id ? $id : 'eip-' . $ip;
+			$detail = array(
+				'eni'      => (string) ( $a->networkInterfaceId ?? '' ),
+				'instance' => (string) ( $a->instanceId ?? '' ),
+				'domain'   => (string) ( $a->domain ?? '' ),
+			);
+
+			$wpdb->query( $wpdb->prepare( "INSERT INTO {$t} (account_id, region, node_type, resource_id, name, private_ip, public_ip, detail, last_seen) VALUES (%s,%s,'eip',%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE region=VALUES(region), node_type='eip', name=VALUES(name), private_ip=VALUES(private_ip), public_ip=VALUES(public_ip), detail=VALUES(detail), last_seen=VALUES(last_seen)", // phpcs:ignore
+				$account, $region, $id, self::tag_name( $a ),
+				(string) ( $a->privateIpAddress ?? '' ), $ip,
+				(string) wp_json_encode( $detail ), $now
+			) );
+			++$n;
+		}
+
+		return $n;
+	}
+
+	/**
+	 * Load balancers, and the ports they actually listen on.
+	 *
+	 * A listener is a better answer than a security-group rule: it is what the
+	 * balancer accepts, stated by the service that owns it, and a network load
+	 * balancer may carry no security group at all. `scheme` is the one fact
+	 * that separates an internet-facing balancer from an internal one.
+	 *
+	 * Both API generations are read. A tenant running classic balancers would
+	 * otherwise show an empty Entry column while Plerion listed them.
+	 */
+	private static function capture_load_balancers( VulnHub_AWS_Client $client, string $account, string $region, string $now ): int {
+		global $wpdb;
+		$t = self::nodes_table();
+		$n = 0;
+
+		$v2 = $client->query( 'elasticloadbalancing', $region, array( 'Action' => 'DescribeLoadBalancers', 'Version' => '2015-12-01' ) );
+		if ( ! empty( $v2['ok'] ) ) {
+			foreach ( $v2['xml']->DescribeLoadBalancersResult->LoadBalancers->member ?? array() as $lb ) { // phpcs:ignore
+				$arn = (string) ( $lb->LoadBalancerArn ?? '' );
+				if ( '' === $arn ) { continue; }
+
+				// The ARN tail (net/name/hash) is unique per account+region and
+				// fits the column; the full ARN would not.
+				$rid = ( false !== strpos( $arn, ':loadbalancer/' ) )
+					? substr( $arn, strpos( $arn, ':loadbalancer/' ) + 14 )
+					: substr( $arn, -120 );
+
+				$sgs = array();
+				foreach ( $lb->SecurityGroups->member ?? array() as $g ) { $sgs[] = (string) $g; } // phpcs:ignore
+				$subnets = array();
+				foreach ( $lb->AvailabilityZones->member ?? array() as $z ) { $subnets[] = (string) ( $z->SubnetId ?? '' ); } // phpcs:ignore
+
+				$detail = array(
+					'arn'       => $arn,
+					'dns'       => (string) ( $lb->DNSName ?? '' ),
+					'scheme'    => (string) ( $lb->Scheme ?? '' ),
+					'lbtype'    => (string) ( $lb->Type ?? '' ),
+					'subnets'   => array_values( array_filter( $subnets ) ),
+					'listeners' => self::listeners_for( $client, $region, $arn ),
+				);
+
+				$wpdb->query( $wpdb->prepare( "INSERT INTO {$t} (account_id, region, node_type, resource_id, name, vpc_id, subnet_id, state, sg_ids, detail, last_seen) VALUES (%s,%s,'elb',%s,%s,%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE region=VALUES(region), node_type='elb', name=VALUES(name), vpc_id=VALUES(vpc_id), subnet_id=VALUES(subnet_id), state=VALUES(state), sg_ids=VALUES(sg_ids), detail=VALUES(detail), last_seen=VALUES(last_seen)", // phpcs:ignore
+					$account, $region, $rid,
+					(string) ( $lb->LoadBalancerName ?? '' ),
+					(string) ( $lb->VpcId ?? '' ),
+					(string) ( $subnets[0] ?? '' ),
+					(string) ( $lb->State->Code ?? '' ),
+					implode( ',', array_filter( $sgs ) ),
+					(string) wp_json_encode( $detail ), $now
+				) );
+				++$n;
+			}
+		}
+
+		$v1 = $client->query( 'elasticloadbalancing', $region, array( 'Action' => 'DescribeLoadBalancers', 'Version' => '2012-06-01' ) );
+		if ( ! empty( $v1['ok'] ) ) {
+			foreach ( $v1['xml']->DescribeLoadBalancersResult->LoadBalancerDescriptions->member ?? array() as $lb ) { // phpcs:ignore
+				$nm = (string) ( $lb->LoadBalancerName ?? '' );
+				if ( '' === $nm ) { continue; }
+
+				$ports = array();
+				foreach ( $lb->ListenerDescriptions->member ?? array() as $l ) { // phpcs:ignore
+					$ports[] = strtolower( (string) ( $l->Listener->Protocol ?? '' ) ) . '/' . (string) ( $l->Listener->LoadBalancerPort ?? '' );
+				}
+				$sgs = array();
+				foreach ( $lb->SecurityGroups->member ?? array() as $g ) { $sgs[] = (string) $g; } // phpcs:ignore
+
+				$detail = array(
+					'dns'       => (string) ( $lb->DNSName ?? '' ),
+					'scheme'    => (string) ( $lb->Scheme ?? '' ),
+					'lbtype'    => 'classic',
+					'listeners' => array_values( array_unique( array_filter( $ports ) ) ),
+				);
+
+				$wpdb->query( $wpdb->prepare( "INSERT INTO {$t} (account_id, region, node_type, resource_id, name, vpc_id, state, sg_ids, detail, last_seen) VALUES (%s,%s,'elb',%s,%s,%s,'',%s,%s,%s) ON DUPLICATE KEY UPDATE region=VALUES(region), node_type='elb', name=VALUES(name), vpc_id=VALUES(vpc_id), sg_ids=VALUES(sg_ids), detail=VALUES(detail), last_seen=VALUES(last_seen)", // phpcs:ignore
+					$account, $region, 'classic/' . $nm, $nm,
+					(string) ( $lb->VPCId ?? '' ),
+					implode( ',', array_filter( $sgs ) ),
+					(string) wp_json_encode( $detail ), $now
+				) );
+				++$n;
+			}
+		}
+
+		return $n;
+	}
+
+	/** Listener ports for one v2 balancer. @return string[] */
+	private static function listeners_for( VulnHub_AWS_Client $client, string $region, string $arn ): array {
+		$out = array();
+		$res = $client->query( 'elasticloadbalancing', $region, array( 'Action' => 'DescribeListeners', 'Version' => '2015-12-01', 'LoadBalancerArn' => $arn ) );
+		if ( empty( $res['ok'] ) ) { return $out; }
+
+		foreach ( $res['xml']->DescribeListenersResult->Listeners->member ?? array() as $l ) { // phpcs:ignore
+			$out[] = strtolower( (string) ( $l->Protocol ?? '' ) ) . '/' . (string) ( $l->Port ?? '' );
+		}
+
+		return array_values( array_unique( array_filter( $out, static fn( $x ) => '/' !== $x ) ) );
+	}
+
 	/** Route tables: where each 0.0.0.0/0 (and other) route points -- IGW, NAT, TGW, peering. */
 	private static function capture_routes( VulnHub_AWS_Client $client, string $account, string $region, string $now ): int {
 		global $wpdb;
@@ -485,6 +685,47 @@ final class VulnHub_AWS_Network {
 	 *
 	 * @return array<string,mixed>
 	 */
+	/**
+	 * What an ENI belongs to, in words.
+	 *
+	 * AWS states this only in the interface description, in a different shape
+	 * per service ("Interface for NAT Gateway nat-...", "VPC Endpoint Interface
+	 * vpce-...", "ELB net/name/hash"). Reading it is how an open port gets an
+	 * owner; without it the map can say a port is open but not on what.
+	 *
+	 * @param array<string,mixed> $eni ENI node row, `detail` already decoded.
+	 * @return array{kind:string,label:string}
+	 */
+	private static function eni_owner( array $eni ): array {
+		$d    = (array) ( $eni['detail'] ?? array() );
+		$desc = (string) ( $d['desc'] ?? '' );
+		$inst = (string) ( $d['instance'] ?? '' );
+
+		if ( '' !== $inst ) {
+			return array( 'kind' => 'instance', 'label' => sprintf( 'EC2 %s', $inst ) );
+		}
+		if ( preg_match( '/vpce-[0-9a-f]+/i', $desc, $m ) ) {
+			return array( 'kind' => 'vpce', 'label' => sprintf( 'VPC endpoint %s', $m[0] ) );
+		}
+		if ( preg_match( '/nat-[0-9a-f]+/i', $desc, $m ) ) {
+			return array( 'kind' => 'nat', 'label' => sprintf( 'NAT gateway %s', $m[0] ) );
+		}
+		if ( preg_match( '#ELB\s+(?:app|net)/([^/]+)#i', $desc, $m ) ) {
+			return array( 'kind' => 'elb', 'label' => sprintf( 'Load balancer %s', $m[1] ) );
+		}
+		if ( preg_match( '#ELB\s+(.+)#i', $desc, $m ) ) {
+			return array( 'kind' => 'elb', 'label' => sprintf( 'Load balancer %s', trim( $m[1] ) ) );
+		}
+		if ( 'lambda' === strtolower( (string) ( $d['type'] ?? '' ) ) ) {
+			return array( 'kind' => 'lambda', 'label' => 'Lambda (VPC-attached)' );
+		}
+		if ( '' !== $desc ) {
+			return array( 'kind' => 'other', 'label' => $desc );
+		}
+
+		return array( 'kind' => 'other', 'label' => (string) $eni['resource_id'] );
+	}
+
 	public static function arch_graph( string $account, string $vpc = '' ): array {
 		global $wpdb;
 		$cr     = $wpdb->prefix . 'vulnhub_cloud_resources';
@@ -527,6 +768,15 @@ final class VulnHub_AWS_Network {
 			}
 			return $out;
 		};
+
+		// Load balancers the AWS read actually found, by name. A balancer the
+		// cloud-posture inventory still lists but AWS no longer returns is
+		// either deleted or unreadable -- either way the screen must not call
+		// it internet-facing on the strength of a stale record.
+		$seen_lbs = array();
+		foreach ( (array) $wpdb->get_col( $wpdb->prepare( "SELECT name FROM {$nt} WHERE account_id = %s AND node_type = 'elb'", $account ) ) as $nm ) { // phpcs:ignore
+			$seen_lbs[ strtolower( (string) $nm ) ] = true;
+		}
 
 		$entry = array(); $compute = array(); $data = array();
 		foreach ( (array) $wpdb->get_results( $wpdb->prepare( "SELECT kind, resource_id, name, exposed FROM {$cr} WHERE account_id = %s ORDER BY exposed DESC, kind, name LIMIT 800", $account ), ARRAY_A ) as $r ) { // phpcs:ignore
@@ -592,6 +842,12 @@ final class VulnHub_AWS_Network {
 
 			if ( $node['exposed'] || in_array( $k, array( 'alb', 'apigw' ), true ) ) {
 				$node['scheme'] = ( false !== stripos( $name, 'internal' ) ) ? 'internal' : 'internet-facing';
+
+				if ( 'alb' === $k && ! isset( $seen_lbs[ strtolower( $name ) ] ) ) {
+					$node['unconfirmed'] = true;
+					$node['scheme']      = '';
+				}
+
 				$entry[] = $node;
 			} elseif ( in_array( $k, array( 'rds', 's3', 'dynamodb' ), true ) ) {
 				$data[] = $node;
@@ -661,9 +917,143 @@ final class VulnHub_AWS_Network {
 			);
 		}
 
-		// The inspected path exists when a default route leaves via the Transit
-		// Gateway hub (which fronts the shared Check Point CloudGuard VPC).
-		$inspected = $routing['tgw'] > 0 || $cloudguard;
+		// ---- who actually holds an open port, and is it reachable ----
+		//
+		// An open security group is not an exposure until something is behind
+		// it, and the ENI is the only thing that says what. Resolving it is the
+		// difference between "tcp/443 open to the world" and "tcp/443 on three
+		// private VPC endpoints with no route in".
+		$enis = array();
+		foreach ( (array) $wpdb->get_results( $wpdb->prepare( "SELECT resource_id, name, vpc_id, subnet_id, private_ip, public_ip, state, sg_ids, detail FROM {$nt} WHERE account_id = %s AND node_type = 'eni'", $account ), ARRAY_A ) as $e ) { // phpcs:ignore
+			$e['detail'] = (array) json_decode( (string) $e['detail'], true );
+			$enis[]      = $e;
+		}
+
+		$sg_names = array();
+		foreach ( (array) $wpdb->get_results( $wpdb->prepare( "SELECT group_id, name FROM " . self::sgs_table() . " WHERE account_id = %s", $account ), ARRAY_A ) as $g ) { // phpcs:ignore
+			$sg_names[ (string) $g['group_id'] ] = (string) $g['name'];
+		}
+
+		// Every public address in the account, whatever holds it.
+		$public_ips = array();
+		foreach ( $enis as $e ) {
+			if ( '' !== (string) $e['public_ip'] ) {
+				$own            = self::eni_owner( $e );
+				$public_ips[ (string) $e['public_ip'] ] = array( 'ip' => (string) $e['public_ip'], 'on' => $own['label'], 'kind' => $own['kind'], 'eni' => (string) $e['resource_id'] );
+			}
+		}
+		foreach ( (array) $wpdb->get_results( $wpdb->prepare( "SELECT resource_id, name, public_ip, detail FROM {$nt} WHERE account_id = %s AND node_type = 'eip'", $account ), ARRAY_A ) as $a ) { // phpcs:ignore
+			$ip = (string) $a['public_ip'];
+			if ( '' === $ip ) { continue; }
+			$d   = (array) json_decode( (string) $a['detail'], true );
+			$on  = '';
+			foreach ( $enis as $e ) {
+				if ( (string) $e['resource_id'] === (string) ( $d['eni'] ?? '' ) ) { $o = self::eni_owner( $e ); $on = $o['label']; break; }
+			}
+			$public_ips[ $ip ] = array(
+				'ip'   => $ip,
+				'on'   => $on ?: ( (string) $a['name'] ?: 'unattached Elastic IP' ),
+				'kind' => '' !== $on ? 'eip' : 'unattached',
+				'name' => (string) $a['name'],
+			);
+		}
+		$public_ips = array_values( $public_ips );
+
+		// Each world-open rule, resolved to the interfaces that carry its group.
+		$inbound = array();
+		foreach ( (array) $wpdb->get_results( $wpdb->prepare( "SELECT group_id, protocol, from_port, to_port, source FROM {$rl} WHERE account_id = %s AND direction = 'in' AND source IN ('0.0.0.0/0','::/0') ORDER BY from_port LIMIT 40", $account ), ARRAY_A ) as $r ) { // phpcs:ignore
+			$gid     = (string) $r['group_id'];
+			$targets = array();
+			$reach   = false;
+
+			foreach ( $enis as $e ) {
+				$on_eni = in_array( $gid, array_filter( array_map( 'trim', explode( ',', (string) $e['sg_ids'] ) ) ), true );
+				if ( ! $on_eni ) { continue; }
+				$own       = self::eni_owner( $e );
+				$has_pub   = '' !== (string) $e['public_ip'];
+				$reach     = $reach || $has_pub;
+				$targets[] = array(
+					'label'  => $own['label'],
+					'kind'   => $own['kind'],
+					'ip'     => (string) $e['private_ip'],
+					'pubip'  => (string) $e['public_ip'],
+					'subnet' => (string) $e['subnet_id'],
+					'eni'    => (string) $e['resource_id'],
+				);
+			}
+
+			foreach ( $inst as $iid => $row ) {
+				if ( in_array( $gid, array_filter( array_map( 'trim', explode( ',', (string) $row['sg_ids'] ) ) ), true ) ) {
+					$has_pub   = '' !== (string) $row['public_ip'];
+					$reach     = $reach || $has_pub;
+					$targets[] = array(
+						'label'  => sprintf( 'EC2 %s', (string) ( $row['name'] ?: $iid ) ),
+						'kind'   => 'instance',
+						'ip'     => (string) $row['private_ip'],
+						'pubip'  => (string) $row['public_ip'],
+						'subnet' => (string) $row['subnet_id'],
+						'eni'    => '',
+					);
+				}
+			}
+
+			$inbound[] = array(
+				'port'      => self::port_label( array( 'protocol' => (string) $r['protocol'], 'from_port' => (int) $r['from_port'], 'to_port' => (int) $r['to_port'] ) ),
+				'source'    => (string) $r['source'],
+				'sg'        => $gid,
+				'sg_name'   => (string) ( $sg_names[ $gid ] ?? '' ),
+				'targets'   => $targets,
+				'reachable' => $reach,
+			);
+		}
+
+		// A balancer with an internet-facing scheme is a real front door even
+		// when it carries no security group of its own (network balancers often
+		// do not), so its listeners count as an inbound path.
+		$lbs = array();
+		foreach ( (array) $wpdb->get_results( $wpdb->prepare( "SELECT resource_id, name, vpc_id, state, sg_ids, detail FROM {$nt} WHERE account_id = %s AND node_type = 'elb'", $account ), ARRAY_A ) as $l ) { // phpcs:ignore
+			$d     = (array) json_decode( (string) $l['detail'], true );
+			$lbs[] = array(
+				'id'        => (string) $l['resource_id'],
+				'name'      => (string) $l['name'],
+				'dns'       => (string) ( $d['dns'] ?? '' ),
+				'scheme'    => (string) ( $d['scheme'] ?? '' ),
+				'lbtype'    => (string) ( $d['lbtype'] ?? '' ),
+				'listeners' => array_values( (array) ( $d['listeners'] ?? array() ) ),
+				'vpc'       => (string) $l['vpc_id'],
+			);
+		}
+		$lb_facing = array_values( array_filter( $lbs, static fn( $l ) => 'internet-facing' === $l['scheme'] ) );
+
+		// ---- direct vs inspected, from the route table and nothing else ----
+		//
+		// This used to flip to "inspected" on a Plerion finding whose resource
+		// name merely contained "CloudGuard" -- so an account whose default
+		// route went straight out of the internet gateway was labelled as
+		// inspected by Check Point because it happened to hold an IAM role of
+		// that name. A role name is not a data path. The routing table is.
+		$inspected = $routing['tgw'] > 0;
+		$direct    = $routing['igw'] > 0;
+
+		$igw_default = (string) $wpdb->get_var( $wpdb->prepare( "SELECT target_id FROM {$rt} WHERE account_id = %s AND dest_cidr = '0.0.0.0/0' AND target_type = 'igw' LIMIT 1", $account ) ); // phpcs:ignore
+		$nat_default = (string) $wpdb->get_var( $wpdb->prepare( "SELECT target_id FROM {$rt} WHERE account_id = %s AND dest_cidr = '0.0.0.0/0' AND target_type = 'nat' LIMIT 1", $account ) ); // phpcs:ignore
+		$igw_total   = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$nt} WHERE account_id = %s AND node_type = 'igw'", $account ) ); // phpcs:ignore
+
+		// Is there any way in at all? Only if something open is reachable, or an
+		// internet-facing balancer is listening.
+		$reachable_in = ! empty( $lb_facing );
+		foreach ( $inbound as $i ) { $reachable_in = $reachable_in || $i['reachable']; }
+
+		$exposure = array(
+			'inbound'      => $inbound,
+			'public_ips'   => $public_ips,
+			'lbs'          => $lbs,
+			'inbound_path' => $reachable_in,
+			'igw_default'  => $igw_default,
+			'nat_default'  => $nat_default,
+			'igw_total'    => $igw_total,
+			'cloudguard'   => $cloudguard,
+		);
 
 		return array(
 			'account'    => $account,
@@ -675,6 +1065,8 @@ final class VulnHub_AWS_Network {
 			'vpcs'       => $vpcs,
 			'open_ports' => $open,
 			'inspected'  => $inspected,
+			'direct'     => $direct,
+			'exposure'   => $exposure,
 			'cloudguard' => $cloudguard,
 			'peers'      => $peers,
 		);

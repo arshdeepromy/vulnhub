@@ -36,7 +36,7 @@ it, into four tables:
 
 | Table | Holds |
 |---|---|
-| `..._aws_net_nodes` | instances (with name tag, private/public IP, subnet, VPC, state, SG ids), plus vpc / igw / nat / tgw / tgw-attach / pcx nodes |
+| `..._aws_net_nodes` | instances (with name tag, private/public IP, subnet, VPC, state, SG ids), plus vpc / igw / nat / tgw / tgw-attach / pcx / **eni / eip / elb** nodes |
 | `..._aws_net_sgs` | security groups |
 | `..._aws_net_rules` | SG rules (direction, protocol, port range, source) |
 | `..._aws_net_routes` | route-table entries (dest CIDR → target type/id) |
@@ -45,6 +45,41 @@ Two capture quirks worth knowing: a `tgw-attach` row keeps the **TGW id in its
 `name` column** (the VPC is in `vpc_id`); a `pcx` (peering) row is written on
 **both** ends, so the same `pcx-…` id appearing under two accounts is the
 cross-account link.
+
+### ENI, EIP and ELB: why a port had no owner
+
+The first capture read instances, gateways and rules, and that is not enough to
+say anything true about exposure.
+
+A security group is not an exposure. `sg-x opens tcp/443 to 0.0.0.0/0` is only
+alarming if something is behind it *and* that something has a way in. The
+binding between a group and a resource is the **network interface**, and for
+everything that is not an EC2 instance — load balancers, VPC endpoints, RDS,
+NAT gateways, Lambda in a VPC — the ENI is the *only* binding. Without it the
+screen could show an open port but never say whose it was, so a group attached
+to three private VPC endpoints looked exactly like one attached to a public
+server.
+
+`public_ip` had the same gap: it is only populated on instance rows, so an
+account whose only public address sits on a NAT gateway or a balancer read as
+having no public address at all.
+
+So the capture now also reads:
+
+| Reader | API | Gives |
+|---|---|---|
+| `capture_enis()` | `DescribeNetworkInterfaces` | the group-to-resource binding, private/public IP per interface, and the `description` AWS uses to say what an interface belongs to |
+| `capture_addresses()` | `DescribeAddresses` | every Elastic IP, and the interface it is attached to |
+| `capture_load_balancers()` | `DescribeLoadBalancers` + `DescribeListeners`, both API generations | scheme (internet-facing vs internal), DNS name, type, and the ports actually listened on |
+
+A listener is a better answer than a security-group rule: it is what the
+balancer accepts, stated by the service that owns it, and a network balancer
+may carry no security group at all. Node types that need more than the fixed
+columns carry a small JSON `detail` blob.
+
+`eni_owner()` reads the interface description — AWS phrases it differently per
+service (`Interface for NAT Gateway nat-…`, `VPC Endpoint Interface vpce-…`,
+`ELB net/name/hash`) — and that is how an open port finally gets an owner.
 
 ## `arch_graph( $account, $vpc )`
 
@@ -63,8 +98,14 @@ the AWS capture and the asset store:
   internet-open SG without a public IP is treated as fronted (LB / Check Point).
   `open_ports` is the real set of ports any SG opens to `0.0.0.0/0`.
 - **Routing / inspection**: default routes to `igw` = direct, to `tgw` =
-  inspected via the shared Check Point CloudGuard VPC. `inspected` is true when
-  a `0.0.0.0/0 → tgw` route exists or a CloudGuard role is seen in Plerion.
+  inspected via the shared Check Point CloudGuard VPC. **`inspected` is true
+  only when a `0.0.0.0/0 → tgw` route exists.** It used to also flip on a
+  Plerion finding whose resource name merely contained "CloudGuard", so an
+  account whose default route went straight out of its internet gateway was
+  labelled *inspected by Check Point* because it happened to hold an IAM role
+  of that name — the screen asserting the opposite of its own routing table. A
+  role name is not a data path. CloudGuard named in a finding is still shown,
+  as its own quieter card that says it is not in the routing path.
 - **`peers`** (cross-account): the TGW hub (accounts sharing this account's TGW
   id) and the named VPC peerings (`pcx` rows matched on both ends), which reveal
   the workload dependencies wired across account lines.
@@ -117,6 +158,36 @@ Two rules keep it honest:
 Columns stay `align-items: start`. Stretching them to a common height was tried
 and reverted: the routing column carries twice the cards of any other, so equal
 heights bought three columns of void in exchange for a tidy bottom edge.
+
+### Exposure: a verdict before a picture
+
+`exposure` answers the question the arrows could not, and the screen leads with
+it rather than with the diagram:
+
+- **`inbound`** — every rule open to `0.0.0.0/0` or `::/0`, each resolved
+  through the ENIs that carry its group to the things that actually hold it,
+  with `reachable` true only when one of those holds a public address.
+- **`public_ips`** — every public address in the account and what holds it,
+  from ENI associations and Elastic IPs.
+- **`inbound_path`** — whether there is any way in at all: something open and
+  reachable, or an internet-facing balancer listening.
+- **`igw_default` / `nat_default` / `igw_total`** — the gateway actually
+  carrying the default route, and how many exist. The old card said
+  "1 public route(s)", a count of routes worn as though it were a count of
+  gateways.
+
+**An arrow is only drawn for a path that exists.** With no inbound path the
+screen draws a crossed, muted line and says *no inbound path*, because a red
+arrow from the internet carrying the account's open ports read as a live path
+even when every interface behind those ports was a private VPC endpoint — the
+boldest statement on the screen was the one with the least behind it. The two
+interior lanes (`app traffic`, `reads · writes`) are tiers inferred from what
+each resource is, not measured traffic, and are drawn fainter and say so on
+hover.
+
+A resource the cloud-posture inventory lists but the AWS read did not return is
+badged `stale?` and loses its `internet-facing` label, rather than being
+described as a front door on the strength of a stale record.
 
 ### The direct-vs-inspected story
 
