@@ -150,7 +150,8 @@
 	var CAP = 40;
 	function column( id, title, sub, html ) {
 		return '<div class="vh-col" id="vh-col-' + id + '"><div class="vh-col__h"><span class="vh-col__t">' + esc( title ) + '</span>'
-			+ ( sub ? '<span class="vh-col__s">' + sub + '</span>' : '' ) + '</div>' + html + '</div>';
+			+ ( sub ? '<span class="vh-col__s">' + sub + '</span>' : '' ) + '</div>'
+			+ '<div class="vh-col__cards">' + html + '</div></div>';
 	}
 
 	function kindGroups( items, tier ) {
@@ -285,76 +286,47 @@
 		var box = map.getBoundingClientRect();
 		var ids = { edge: 'vh-col-edge', entry: 'vh-col-entry', compute: 'vh-col-compute', data: 'vh-col-data' };
 		var pos = {};
-		Object.keys( ids ).forEach( function ( k ) { var el = document.getElementById( ids[ k ] ); if ( el ) { pos[ k ] = centerOf( el, box ); } } );
+		Object.keys( ids ).forEach( function ( k ) {
+			var el = document.getElementById( ids[ k ] );
+			if ( ! el ) { return; }
+			var r = el.getBoundingClientRect();
+			pos[ k ] = { top: r.top - box.top, bottom: r.bottom - box.top, l: r.left - box.left, r: r.right - box.left, cx: r.left - box.left + r.width / 2 };
+		} );
 		if ( ! pos.edge || ! pos.compute ) { flow.innerHTML = ''; return; }
-		flow.setAttribute( 'width', box.width ); flow.setAttribute( 'height', map.scrollHeight );
-		flow.setAttribute( 'viewBox', '0 0 ' + box.width + ' ' + map.scrollHeight );
 
-		// Two bands in the gaps between columns: inbound (top, arrows right) and
-		// outbound (below, arrows back left). The gaps carry no cards, so the lines
-		// and their pill labels stay legible.
-		var tops = [ pos.edge.top, pos.compute.top ];
-		if ( pos.entry ) { tops.push( pos.entry.top ); }
-		if ( pos.data ) { tops.push( pos.data.top ); }
-		var base = Math.max.apply( null, tops );
+		var W = box.width, H = map.scrollHeight;
+		flow.setAttribute( 'width', W ); flow.setAttribute( 'height', H );
+		flow.setAttribute( 'viewBox', '0 0 ' + W + ' ' + H );
 
 		/*
-		 * Anchor each band to the card it is actually about. "which box does
-		 * this line come out of" was unanswerable while both bands were pinned
-		 * to a fixed offset from the column top: the inbound line now leaves
-		 * level with the internet gateway, and the egress line level with the
-		 * NAT gateway, because those are the boxes carrying those routes.
+		 * A connector leaves the card it is actually about. The x of a line is
+		 * the centre of the box that carries that route -- the internet gateway
+		 * for what comes in, the NAT gateway for what goes out -- so "which box
+		 * does this come from" is answered by where the line starts.
 		 */
-		function anchorY( sel, fallback ) {
+		function anchorX( sel, fallback ) {
 			var el = map.querySelector( '[data-anchor="' + sel + '"]' );
 			if ( ! el ) { return fallback; }
 			var r = el.getBoundingClientRect();
-			return r.top - box.top + r.height / 2;
+			return r.left - box.left + r.width / 2;
 		}
-		var yIn  = anchorY( 'igw', base + 74 );
-		var yOut = anchorY( 'nat', yIn + 54 );
-		if ( Math.abs( yOut - yIn ) < 34 ) { yOut = yIn + 54; }
 
-		function seg( x1, x2, y, cls, mk ) {
-			var tip = x2 - ( x2 > x1 ? 9 : -9 );
-			return '<path class="vh-flow__l ' + cls + '" d="M' + x1 + ',' + y + ' L' + tip + ',' + y + '" marker-end="url(#' + mk + ')"/>';
+		function vseg( x, y1, y2, cls, mk ) {
+			var tip = y2 - ( y2 > y1 ? 9 : -9 );
+			return '<path class="vh-flow__l ' + cls + '" d="M' + x + ',' + y1 + ' L' + x + ',' + tip + '" marker-end="url(#' + mk + ')"/>';
 		}
 		function wide( t ) { return t.length * 6.3 + 16; }
 
-		/*
-		 * A pill is centred in the gap between two columns, so the gap is its
-		 * whole budget. Given more label than fits we step down to a shorter
-		 * wording rather than letting it overhang -- an overhanging pill used to
-		 * be painted over by the next column, which is how "egress -> NAT" came
-		 * out as "egress -> NA". `avail` is the measured gap; `short` is the
-		 * fallback wording, and the full text stays in a <title>.
-		 */
-		function pill( x, y, text, cls, avail, short ) {
-			var full = text;
-			// A few px either side may sit over the next column's padding -- the
-			// flow layer paints above the grid now, so that reads as a label on
-			// top of the diagram rather than a clipped one. Never more than the
-			// padding, so it cannot reach a card's contents.
-			var budget = Math.max( 44, ( avail || 1e4 ) + 16 );
-
-			if ( wide( text ) > budget && short && wide( short ) <= budget ) {
-				text = short;
-			}
-			if ( wide( text ) > budget ) {
-				var max = Math.max( 3, Math.floor( ( budget - 16 ) / 6.3 ) );
-				if ( text.length > max ) { text = text.slice( 0, max - 1 ).replace( /[\s\u00b7\u2192]+$/, '' ) + '\u2026'; }
-			}
-
+		// Between two stacked tiers a label has the whole page width, so it is
+		// placed beside its line and never has to be shortened.
+		function pill( x, y, text, cls, tipExtra ) {
 			var w = Math.max( 30, wide( text ) );
-			var tip = ( cls.indexOf( 'infer' ) > -1 )
-				? full + ' — a lane between tiers, inferred from what each resource is. Not measured traffic: per-flow data needs VPC Flow Logs, which the capture does not read.'
-				: full;
+			var tip = tipExtra ? text + ' \u2014 ' + tipExtra : '';
 			return '<g class="vh-flow__pill ' + cls + '">'
-				+ ( ( text === full && tip === full ) ? '' : '<title>' + esc( tip ) + '</title>' )
+				+ ( tip ? '<title>' + esc( tip ) + '</title>' : '' )
 				+ '<rect x="' + ( x - w / 2 ) + '" y="' + ( y - 10 ) + '" rx="9" width="' + w + '" height="20"/>'
 				+ '<text x="' + x + '" y="' + ( y + 4 ) + '" text-anchor="middle">' + esc( text ) + '</text></g>';
 		}
-		function gapOf( a, b ) { return Math.abs( b - a ); }
 		function mid( a, b ) { return ( a + b ) / 2; }
 
 		var s = '<defs>'
@@ -363,46 +335,43 @@
 			+ '<marker id="mkData" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 8,4.5 0,9z" fill="#34d399"/></marker>'
 			+ '<marker id="mkOut" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 8,4.5 0,9z" fill="#fbbf24"/></marker>'
 			+ '</defs>';
+
 		var exg    = GRAPH.exposure || {};
 		var openIn = ( exg.inbound || [] ).filter( function ( r ) { return r.reachable; } );
 		var ports  = openIn.map( function ( r ) { return r.port; } ).join( ', ' );
-		var target = pos.entry || pos.compute;
-		var gEdge  = gapOf( pos.edge.r, target.l );
+		var below  = pos.entry || pos.compute;
+		var INFER  = 'a lane between tiers, inferred from what each resource is. Not measured traffic: per-flow data needs VPC Flow Logs, which the capture does not read.';
 
-		/*
-		 * Only draw an inbound arrow when something can actually be reached.
-		 * A red arrow from the internet carrying the account's open ports read
-		 * as a live path even when every interface behind those ports was a
-		 * private VPC endpoint -- the boldest statement on the screen was the
-		 * one with the least behind it.
-		 */
+		// --- in: routing tier -> the tier under it, from the gateway itself ---
+		var xIn = anchorX( 'igw', pos.edge.cx - 90 );
 		if ( exg.inbound_path ) {
-			s += seg( pos.edge.r, target.l, yIn, 'vh-flow__l--in', 'mkIn' );
-			s += pill( mid( pos.edge.r, target.l ), yIn - 15, 'inbound ' + ports, 'vh-flow__pill--in', gEdge, ports );
-			if ( GRAPH.inspected ) { s += pill( mid( pos.edge.r, target.l ), yOut + 19, 'via Check Point', 'vh-flow__pill--chk', gEdge, 'Check Point' ); }
+			s += vseg( xIn, pos.edge.bottom, below.top, 'vh-flow__l--in', 'mkIn' );
+			s += pill( xIn, mid( pos.edge.bottom, below.top ), 'inbound ' + ports, 'vh-flow__pill--in' );
 		} else {
-			var bx = mid( pos.edge.r, target.l );
-			s += '<path class="vh-flow__l vh-flow__l--none" d="M' + pos.edge.r + ',' + yIn + ' L' + target.l + ',' + yIn + '"/>';
-			s += '<g class="vh-flow__x"><path d="M' + ( bx - 6 ) + ',' + ( yIn - 6 ) + ' L' + ( bx + 6 ) + ',' + ( yIn + 6 )
-				+ ' M' + ( bx + 6 ) + ',' + ( yIn - 6 ) + ' L' + ( bx - 6 ) + ',' + ( yIn + 6 ) + '"/></g>';
-			s += pill( bx, yIn - 20, 'no inbound path', 'vh-flow__pill--none', gEdge, 'no way in' );
+			var my = mid( pos.edge.bottom, below.top );
+			s += '<path class="vh-flow__l vh-flow__l--none" d="M' + xIn + ',' + pos.edge.bottom + ' L' + xIn + ',' + below.top + '"/>';
+			s += '<g class="vh-flow__x"><path d="M' + ( xIn - 6 ) + ',' + ( my - 16 ) + ' L' + ( xIn + 6 ) + ',' + ( my - 4 )
+				+ ' M' + ( xIn + 6 ) + ',' + ( my - 16 ) + ' L' + ( xIn - 6 ) + ',' + ( my - 4 ) + '"/></g>';
+			s += pill( xIn, my + 12, 'no inbound path', 'vh-flow__pill--none' );
 		}
-		// app: Entry -> Compute
-		if ( pos.entry ) { s += seg( pos.entry.r, pos.compute.l, yIn, 'vh-flow__l--app', 'mkApp' ); s += pill( mid( pos.entry.r, pos.compute.l ), yIn - 15, 'app traffic', 'vh-flow__pill--app vh-flow__pill--infer', gapOf( pos.entry.r, pos.compute.l ), 'app' ); }
-		// data: Compute -> Data
-		if ( pos.data ) { s += seg( pos.compute.r, pos.data.l, yIn, 'vh-flow__l--data', 'mkData' ); s += pill( mid( pos.compute.r, pos.data.l ), yIn - 15, 'reads · writes', 'vh-flow__pill--data vh-flow__pill--infer', gapOf( pos.compute.r, pos.data.l ), 'r/w' ); }
 
-		// outbound: Compute -> (Entry gap) -> Internet, arrows pointing back left
+		// --- out: back up through the NAT gateway, in the same gap ---
 		var natlbl = ( GRAPH.routing && GRAPH.routing.nat ) ? 'egress \u2192 NAT' : ( GRAPH.routing && GRAPH.routing.tgw ? 'egress \u2192 TGW' : 'egress' );
-		var natshort = ( GRAPH.routing && GRAPH.routing.nat ) ? 'NAT' : ( GRAPH.routing && GRAPH.routing.tgw ? 'TGW' : 'egress' );
+		var xOut = anchorX( 'nat', pos.edge.cx + 90 );
+		if ( Math.abs( xOut - xIn ) < 120 ) { xOut = xIn + 150; }
+		s += vseg( xOut, below.top, pos.edge.bottom, 'vh-flow__l--out', 'mkOut' );
+		s += pill( xOut, mid( pos.edge.bottom, below.top ), natlbl, 'vh-flow__pill--out' );
+
+		// --- the interior lanes ---
 		if ( pos.entry ) {
-			s += seg( pos.compute.l, pos.entry.r, yOut, 'vh-flow__l--out', 'mkOut' );
-			s += seg( pos.entry.l, pos.edge.r, yOut, 'vh-flow__l--out', 'mkOut' );
-			s += pill( mid( pos.entry.l, pos.edge.r ), yOut - 15, natlbl, 'vh-flow__pill--out', gapOf( pos.entry.l, pos.edge.r ), natshort );
-		} else {
-			s += seg( pos.compute.l, pos.edge.r, yOut, 'vh-flow__l--out', 'mkOut' );
-			s += pill( mid( pos.compute.l, pos.edge.r ), yOut - 15, natlbl, 'vh-flow__pill--out', gapOf( pos.compute.l, pos.edge.r ), natshort );
+			s += vseg( pos.compute.cx, pos.entry.bottom, pos.compute.top, 'vh-flow__l--app', 'mkApp' );
+			s += pill( pos.compute.cx, mid( pos.entry.bottom, pos.compute.top ), 'app traffic', 'vh-flow__pill--app vh-flow__pill--infer', INFER );
 		}
+		if ( pos.data ) {
+			s += vseg( pos.data.cx, pos.compute.bottom, pos.data.top, 'vh-flow__l--data', 'mkData' );
+			s += pill( pos.data.cx, mid( pos.compute.bottom, pos.data.top ), 'reads \u00b7 writes', 'vh-flow__pill--data vh-flow__pill--infer', INFER );
+		}
+
 		flow.innerHTML = s;
 	}
 	var rz; window.addEventListener( 'resize', function () { clearTimeout( rz ); rz = setTimeout( drawFlows, 150 ); } );

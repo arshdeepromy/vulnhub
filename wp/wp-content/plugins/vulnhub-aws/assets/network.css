@@ -3,12 +3,22 @@
 .vh-net-map { position: relative; overflow-x: auto; padding-bottom: 8px; }
 
 /* ---- columns / grid ---- */
-/* The gap is not decoration: the flow lines and their pill labels live in it,
-   and a pill is ~110px wide. At the old 40px every label overhung its gap and
-   was painted over by the next column, so "egress -> NAT" read as "egress -> NA".
-   The gap now scales with the viewport and the pills are fitted to it in JS. */
-.vh-net-grid { display: grid; grid-template-columns: repeat( 4, minmax( 220px, 1fr ) ); gap: clamp( 72px, 6.2vw, 124px ); align-items: start; position: relative; z-index: 1; }
-.vh-col { background: rgba( 148, 163, 184, .05 ); border: 1px solid rgba( 148, 163, 184, .16 ); border-radius: 14px; padding: 12px; min-height: 120px; display: flex; flex-direction: column; }
+/*
+ * Tiers stack top to bottom, like a flowchart.
+ *
+ * They ran left to right and kept running out of room: four columns plus the
+ * three gaps that carry the flow labels had to share one page width, so
+ * columns narrowed, card names ellipsised and every label fought for a gap
+ * barely wider than itself. Vertical space is the one axis a page has spare.
+ * Now each tier is a full-width band, its cards flow across the width instead
+ * of down a 260px column, and the connectors between tiers get the whole page
+ * width to place a label in.
+ */
+.vh-net-grid { display: flex; flex-direction: column; gap: 62px; position: relative; z-index: 1; }
+.vh-col { background: rgba( 148, 163, 184, .05 ); border: 1px solid rgba( 148, 163, 184, .16 ); border-radius: 14px; padding: 12px 14px 14px; }
+.vh-col__cards { display: grid; grid-template-columns: repeat( auto-fit, minmax( 240px, 312px ) ); gap: 10px 14px; align-items: start; justify-content: center; }
+.vh-col__cards > .vh-empty { grid-column: 1 / -1; }
+.vh-col__cards .vh-card, .vh-col__cards .vh-edge, .vh-col__cards .vh-kg { margin-bottom: 0; }
 .vh-col__h { display: flex; align-items: baseline; gap: 8px; padding: 4px 4px 11px; border-bottom: 1px solid rgba( 148, 163, 184, .14 ); margin-bottom: 14px; }
 .vh-col__t { font-weight: 700; letter-spacing: .01em; }
 .vh-col__s { font-size: 12px; color: var( --vh-muted, #94a3b8 ); }
@@ -35,7 +45,7 @@
 /* ---- resource cards ---- */
 .vh-card { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; cursor: pointer;
 	background: var( --vh-panel, #0f172a ); border: 1px solid rgba( 148, 163, 184, .2 ); border-radius: 11px;
-	padding: 9px 10px; margin-bottom: 8px; color: inherit; transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease; }
+	padding: 9px 10px; color: inherit; transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease; }
 .vh-card:hover { transform: translateY( -2px ); border-color: rgba( 56, 189, 248, .55 ); box-shadow: 0 8px 22px -12px rgba( 56, 189, 248, .5 ); }
 .vh-card:focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
 .vh-card--exposed { border-color: rgba( 248, 113, 113, .5 ); }
@@ -57,7 +67,7 @@
 .vh-b--off  { background: rgba( 148, 163, 184, .16 ); color: #94a3b8; }
 
 /* ---- routing edge cards ---- */
-.vh-edge { display: flex; align-items: center; gap: 10px; padding: 9px 10px; margin-bottom: 8px; border-radius: 11px; border: 1px solid rgba( 148, 163, 184, .22 ); background: rgba( 148, 163, 184, .06 ); }
+.vh-edge { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 11px; border: 1px solid rgba( 148, 163, 184, .22 ); background: rgba( 148, 163, 184, .06 ); }
 .vh-edge__ico { flex: 0 0 auto; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: rgba( 148, 163, 184, .12 ); }
 .vh-edge__t { font-weight: 600; font-size: 13px; }
 .vh-edge__s { display: block; font-size: 11.5px; color: var( --vh-muted, #94a3b8 ); }
@@ -109,7 +119,7 @@
 .vh-pill--warn { background: rgba( 234, 179, 8, .16 ); color: #eab308; }
 .vh-pill--off { background: rgba( 148, 163, 184, .16 ); color: #94a3b8; }
 
-@media ( max-width: 900px ) { .vh-net-grid { grid-template-columns: 1fr; gap: 14px; align-items: start; } .vh-flow { display: none; } }
+@media ( max-width: 900px ) { .vh-net-grid { gap: 40px; } .vh-col__cards { grid-template-columns: 1fr; } }
 
 /* ---- cross-account connectivity ---- */
 .vh-xacct { margin-top: 22px; border-top: 1px solid rgba( 148, 163, 184, .16 ); padding-top: 16px; }
@@ -199,3 +209,8 @@
    evidenced path so the two are never read as the same kind of claim. */
 .vh-flow__pill--infer rect { stroke-dasharray: 3 3; }
 .vh-flow__pill--infer text { fill: #94a3b8; }
+
+/* ---- flowchart connectors between tiers ---- */
+.vh-col__h { margin-bottom: 12px; }
+.vh-flow__l--in, .vh-flow__l--app, .vh-flow__l--data, .vh-flow__l--out { stroke-dasharray: 6 6; }
+.vh-flow__cap { fill: none; stroke: rgba( 148, 163, 184, .35 ); stroke-width: 1.5; }

@@ -133,61 +133,41 @@ Compute → Data** — from the REST route `GET vulnhub-aws/v1/network`
 - **Cross-account connectivity** sits below the grid: the TGW hub (with the
   count and ids of the other accounts on it) and the named VPC peerings.
 
-### The gap is a layout constraint, not spacing
+### Top to bottom, not left to right
 
-A pill label is ~110px wide and is centred in the gap between two columns, so
-**the gap is the label's entire budget**. The first version set `gap: 40px` and
-drew the flow layer *under* the grid (`z-index: 0` against the grid's `1`), so
-every label overhung its gap and the next column painted over the overhang:
-`egress → NAT` rendered as `egress → NA`, `via Check Point` lost its last
-letter, and the first gap carried three of them stacked.
+The four tiers used to be four columns side by side, and it kept running out of
+room. One page width had to carry four columns *plus* the three gaps that hold
+the flow labels, so columns narrowed to about 260px, card names ellipsised, and
+every label fought for a gap barely wider than itself — at one point the gap was
+40px for a ~110px label, and the next column painted over the overhang, so
+`egress → NAT` rendered as `egress → NA`.
 
-Two rules keep it honest:
+Widening the gaps only moved the problem: every pixel a label gained came off a
+card. The axis was wrong. A page scrolls vertically and does not scroll
+horizontally, so vertical space is the one axis there is spare of.
 
-- The grid gap scales with the viewport — `clamp( 72px, 6.2vw, 124px )` — so a
-  desktop gap holds a full label, and `.vh-flow` sits **above** the grid
-  (`z-index: 2`, `pointer-events: none`), so a few px of overhang lands on the
-  next column's 12px padding and stays readable instead of being clipped.
-- `pill()` is given the measured gap and steps the wording down rather than
-  overflowing it: full text, then a short form (`inbound tcp/443` → `tcp/443`,
-  `via Check Point` → `Check Point`, `egress → NAT` → `NAT`,
-  `reads · writes` → `r/w`), then an ellipsis, with the full text kept in a
-  `<title>`. At 1440px the first two already fall back; below 900px the columns
-  stack and the flow layer is hidden entirely.
+Each tier is now a full-width band stacked top to bottom, like a flowchart:
 
-Columns stay `align-items: start`. Stretching them to a common height was tried
-and reverted: the routing column carries twice the cards of any other, so equal
-heights bought three columns of void in exchange for a tidy bottom edge.
+- A tier's cards flow **across** the band (`repeat( auto-fit, minmax( 240px,
+  312px ) )`, `justify-content: center`) instead of down a narrow column, so
+  they are wide enough for a real resource name and the tier reflows to fewer
+  per row as the window narrows.
+- Cards are centred, which gives the diagram a **spine**: a connector between
+  two tiers runs down the middle and lands on a card rather than through the
+  empty side of a left-packed row.
+- A connector between two stacked tiers has the whole page width to place its
+  label in, so labels are never shortened and the fit-to-gap logic the columns
+  needed is gone.
 
-### Exposure: a verdict before a picture
+`anchorX()` keeps the connector tied to the box it is about: the inbound line
+leaves at the **centre of the internet gateway card** and the egress line at the
+centre of the **NAT gateway card**, so "which box does this come out of" is
+answered by where the line starts. Both share the gap between the routing tier
+and the one below it, one pointing down and one up.
 
-`exposure` answers the question the arrows could not, and the screen leads with
-it rather than with the diagram:
-
-- **`inbound`** — every rule open to `0.0.0.0/0` or `::/0`, each resolved
-  through the ENIs that carry its group to the things that actually hold it,
-  with `reachable` true only when one of those holds a public address.
-- **`public_ips`** — every public address in the account and what holds it,
-  from ENI associations and Elastic IPs.
-- **`inbound_path`** — whether there is any way in at all: something open and
-  reachable, or an internet-facing balancer listening.
-- **`igw_default` / `nat_default` / `igw_total`** — the gateway actually
-  carrying the default route, and how many exist. The old card said
-  "1 public route(s)", a count of routes worn as though it were a count of
-  gateways.
-
-**An arrow is only drawn for a path that exists.** With no inbound path the
-screen draws a crossed, muted line and says *no inbound path*, because a red
-arrow from the internet carrying the account's open ports read as a live path
-even when every interface behind those ports was a private VPC endpoint — the
-boldest statement on the screen was the one with the least behind it. The two
-interior lanes (`app traffic`, `reads · writes`) are tiers inferred from what
-each resource is, not measured traffic, and are drawn fainter and say so on
-hover.
-
-A resource the cloud-posture inventory lists but the AWS read did not return is
-badged `stale?` and loses its `internet-facing` label, rather than being
-described as a front door on the strength of a stale record.
+Below 900px the tiers stay stacked and each holds a single column of cards; the
+connectors keep working, because nothing about them depends on the columns that
+used to be there.
 
 ### The direct-vs-inspected story
 
