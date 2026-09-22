@@ -178,6 +178,40 @@ shared Check Point CloudGuard VPC before it reaches the workload. True per-ENI
 port-to-port flow needs VPC Flow Logs / X-Ray, which the capture does not read —
 the account-level lanes plus per-host SG ports are what the data supports.
 
+## What the capture calls, and what a denied call looks like
+
+Every reader is one signed Query-API call through `VulnHub_AWS_Client::query()`:
+
+| Reader | Service | Action |
+|---|---|---|
+| `capture_instances()` | ec2 | `DescribeInstances` |
+| `capture_security_groups()` | ec2 | `DescribeSecurityGroups` |
+| `capture_infra()` | ec2 | `DescribeInternetGateways`, `DescribeNatGateways`, `DescribeTransitGateways`, `DescribeVpcPeeringConnections`, `DescribeTransitGatewayVpcAttachments` |
+| `capture_routes()` | ec2 | `DescribeRouteTables` |
+| `capture_enis()` | ec2 | `DescribeNetworkInterfaces` |
+| `capture_addresses()` | ec2 | `DescribeAddresses` |
+| `capture_load_balancers()` | elasticloadbalancing | `DescribeLoadBalancers` (2015-12-01 and 2012-06-01), `DescribeListeners` |
+
+`ReadOnlyAccess` covers all of them, and the SSO sync prefers that role
+(`ReadOnlyAccess`, then `ViewOnlyAccess`, `SecurityAudit`, `power-user`, then
+whatever the login offers).
+
+**A denied call is silent, and silence reads as "clean".** Every reader bails
+on a non-OK response — `if ( empty( $res['ok'] ) ) { return $n; }` — and writes
+no rows. Nothing distinguishes that from an account which genuinely holds none
+of those objects, and the difference matters in the worst direction: without
+`DescribeNetworkInterfaces` no open port can be attributed to anything, so a
+real exposure reports *"attached to nothing the capture holds"*; without
+`DescribeAddresses` an account's public IPs vanish and the screen says there
+are none; without `DescribeLoadBalancers` every balancer the posture inventory
+lists is badged `stale?`.
+
+So when a tier looks suspiciously empty, confirm the call itself succeeded
+before believing the screen — run the action through `query()` with
+`wp eval-file` and check `ok` and `status`, rather than reading zero rows as
+zero objects. A reader that records why it read nothing is the obvious
+improvement here and is not built yet.
+
 ## Verifying
 
 `./lint.sh`; drive it per `docs/BROWSER-PASS.md` (mint a cookie, load

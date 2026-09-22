@@ -36,6 +36,25 @@ Config lives in the connector settings (`Settings::set`/`set_secret('plerion', �
 the key is encrypted at rest. Enable + interval on the Integrations screen. The
 hourly sync refreshes assets, CSPM findings and the exposure snapshot together.
 
+## The Cloud Network map reads this inventory, and checks it
+
+`vulnhub-aws`'s **Cloud Network** screen (`docs/AWS-NETWORK.md`) builds its
+tiers from `..._cloud_resources` — this connector's inventory — and enriches
+each row from the AWS capture and the asset store.
+
+That makes it a cross-check on what is stored here. A resource this inventory
+lists as an internet-facing load balancer, which a direct AWS read of the same
+account and region does not return, is badged **`stale?`** on that screen and
+loses its `internet-facing` label rather than being drawn as a front door. It
+has been deleted since the last Plerion sync, or the AWS role cannot read load
+balancers — the badge does not claim which, only that the two sources disagree.
+
+Worth knowing when reading either screen: a CSPM finding whose resource name
+merely contains *CloudGuard* is **not** evidence that traffic is inspected.
+Cloud Network used to treat it as such and label accounts as Check Point
+inspected whose default route went straight out of an internet gateway; it now
+decides that from the route table alone.
+
 ---
 _Related:_ `vulnhub-aws` also has a **Resource Explorer** org-inventory option
 (`VulnHub_AWS_Explorer`) that lists assets and security groups across the org from
