@@ -85,12 +85,38 @@ Compute → Data** — from the REST route `GET vulnhub-aws/v1/network`
   state, open ports), health (Defender health, lifecycle, last seen), and
   findings (Tenable crit/high/med/low + Plerion CSPM). The popup mounts on
   `document.body` so `position: fixed` centres it against the viewport.
-- **Animated flow lines** connect the columns in the gaps (so they stay legible
-  behind the cards): a top inbound band (`inbound <ports>`, `app traffic`,
-  `reads · writes`, plus `via Check Point` when inspected) and a lower outbound
-  band (`egress → NAT` / `egress → TGW`), each a coloured marching-ants arrow.
+- **Animated flow lines** connect the columns in the gaps: a top inbound band
+  (`inbound <ports>`, `app traffic`, `reads · writes`, plus `via Check Point`
+  when inspected) and a lower outbound band (`egress → NAT` / `egress → TGW`),
+  each a coloured marching-ants arrow.
 - **Cross-account connectivity** sits below the grid: the TGW hub (with the
   count and ids of the other accounts on it) and the named VPC peerings.
+
+### The gap is a layout constraint, not spacing
+
+A pill label is ~110px wide and is centred in the gap between two columns, so
+**the gap is the label's entire budget**. The first version set `gap: 40px` and
+drew the flow layer *under* the grid (`z-index: 0` against the grid's `1`), so
+every label overhung its gap and the next column painted over the overhang:
+`egress → NAT` rendered as `egress → NA`, `via Check Point` lost its last
+letter, and the first gap carried three of them stacked.
+
+Two rules keep it honest:
+
+- The grid gap scales with the viewport — `clamp( 72px, 6.2vw, 124px )` — so a
+  desktop gap holds a full label, and `.vh-flow` sits **above** the grid
+  (`z-index: 2`, `pointer-events: none`), so a few px of overhang lands on the
+  next column's 12px padding and stays readable instead of being clipped.
+- `pill()` is given the measured gap and steps the wording down rather than
+  overflowing it: full text, then a short form (`inbound tcp/443` → `tcp/443`,
+  `via Check Point` → `Check Point`, `egress → NAT` → `NAT`,
+  `reads · writes` → `r/w`), then an ellipsis, with the full text kept in a
+  `<title>`. At 1440px the first two already fall back; below 900px the columns
+  stack and the flow layer is hidden entirely.
+
+Columns stay `align-items: start`. Stretching them to a common height was tried
+and reverted: the routing column carries twice the cards of any other, so equal
+heights bought three columns of void in exchange for a tidy bottom edge.
 
 ### The direct-vs-inspected story
 

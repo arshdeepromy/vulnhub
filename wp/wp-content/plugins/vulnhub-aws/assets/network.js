@@ -177,18 +177,48 @@
 		var tops = [ pos.edge.top, pos.compute.top ];
 		if ( pos.entry ) { tops.push( pos.entry.top ); }
 		if ( pos.data ) { tops.push( pos.data.top ); }
-		var yIn = Math.max.apply( null, tops ) + 52;
-		var yOut = yIn + 40;
+		// Sit the inbound band level with the first card in each column rather
+		// than level with the column header, so a line reads as card-to-card.
+		var yIn = Math.max.apply( null, tops ) + 74;
+		var yOut = yIn + 54;
 
 		function seg( x1, x2, y, cls, mk ) {
 			var tip = x2 - ( x2 > x1 ? 9 : -9 );
 			return '<path class="vh-flow__l ' + cls + '" d="M' + x1 + ',' + y + ' L' + tip + ',' + y + '" marker-end="url(#' + mk + ')"/>';
 		}
-		function pill( x, y, text, cls ) {
-			var w = Math.max( 30, text.length * 6.3 + 16 );
-			return '<g class="vh-flow__pill ' + cls + '"><rect x="' + ( x - w / 2 ) + '" y="' + ( y - 10 ) + '" rx="9" width="' + w + '" height="20"/>'
+		function wide( t ) { return t.length * 6.3 + 16; }
+
+		/*
+		 * A pill is centred in the gap between two columns, so the gap is its
+		 * whole budget. Given more label than fits we step down to a shorter
+		 * wording rather than letting it overhang -- an overhanging pill used to
+		 * be painted over by the next column, which is how "egress -> NAT" came
+		 * out as "egress -> NA". `avail` is the measured gap; `short` is the
+		 * fallback wording, and the full text stays in a <title>.
+		 */
+		function pill( x, y, text, cls, avail, short ) {
+			var full = text;
+			// A few px either side may sit over the next column's padding -- the
+			// flow layer paints above the grid now, so that reads as a label on
+			// top of the diagram rather than a clipped one. Never more than the
+			// padding, so it cannot reach a card's contents.
+			var budget = Math.max( 44, ( avail || 1e4 ) + 16 );
+
+			if ( wide( text ) > budget && short && wide( short ) <= budget ) {
+				text = short;
+			}
+			if ( wide( text ) > budget ) {
+				var max = Math.max( 3, Math.floor( ( budget - 16 ) / 6.3 ) );
+				if ( text.length > max ) { text = text.slice( 0, max - 1 ).replace( /[\s\u00b7\u2192]+$/, '' ) + '\u2026'; }
+			}
+
+			var w = Math.max( 30, wide( text ) );
+			return '<g class="vh-flow__pill ' + cls + '">'
+				+ ( text === full ? '' : '<title>' + esc( full ) + '</title>' )
+				+ '<rect x="' + ( x - w / 2 ) + '" y="' + ( y - 10 ) + '" rx="9" width="' + w + '" height="20"/>'
 				+ '<text x="' + x + '" y="' + ( y + 4 ) + '" text-anchor="middle">' + esc( text ) + '</text></g>';
 		}
+		function gapOf( a, b ) { return Math.abs( b - a ); }
 		function mid( a, b ) { return ( a + b ) / 2; }
 
 		var s = '<defs>'
@@ -202,22 +232,24 @@
 
 		// inbound: Internet/routing -> Entry
 		s += seg( pos.edge.r, target.l, yIn, 'vh-flow__l--in', 'mkIn' );
-		s += pill( mid( pos.edge.r, target.l ), yIn - 15, 'inbound ' + ports, 'vh-flow__pill--in' );
-		if ( GRAPH.inspected ) { s += pill( mid( pos.edge.r, target.l ), yOut + 15, 'via Check Point', 'vh-flow__pill--chk' ); }
+		var gEdge = gapOf( pos.edge.r, target.l );
+		s += pill( mid( pos.edge.r, target.l ), yIn - 15, 'inbound ' + ports, 'vh-flow__pill--in', gEdge, ports );
+		if ( GRAPH.inspected ) { s += pill( mid( pos.edge.r, target.l ), yOut + 19, 'via Check Point', 'vh-flow__pill--chk', gEdge, 'Check Point' ); }
 		// app: Entry -> Compute
-		if ( pos.entry ) { s += seg( pos.entry.r, pos.compute.l, yIn, 'vh-flow__l--app', 'mkApp' ); s += pill( mid( pos.entry.r, pos.compute.l ), yIn - 15, 'app traffic', 'vh-flow__pill--app' ); }
+		if ( pos.entry ) { s += seg( pos.entry.r, pos.compute.l, yIn, 'vh-flow__l--app', 'mkApp' ); s += pill( mid( pos.entry.r, pos.compute.l ), yIn - 15, 'app traffic', 'vh-flow__pill--app', gapOf( pos.entry.r, pos.compute.l ), 'app' ); }
 		// data: Compute -> Data
-		if ( pos.data ) { s += seg( pos.compute.r, pos.data.l, yIn, 'vh-flow__l--data', 'mkData' ); s += pill( mid( pos.compute.r, pos.data.l ), yIn - 15, 'reads · writes', 'vh-flow__pill--data' ); }
+		if ( pos.data ) { s += seg( pos.compute.r, pos.data.l, yIn, 'vh-flow__l--data', 'mkData' ); s += pill( mid( pos.compute.r, pos.data.l ), yIn - 15, 'reads · writes', 'vh-flow__pill--data', gapOf( pos.compute.r, pos.data.l ), 'r/w' ); }
 
 		// outbound: Compute -> (Entry gap) -> Internet, arrows pointing back left
 		var natlbl = ( GRAPH.routing && GRAPH.routing.nat ) ? 'egress \u2192 NAT' : ( GRAPH.routing && GRAPH.routing.tgw ? 'egress \u2192 TGW' : 'egress' );
+		var natshort = ( GRAPH.routing && GRAPH.routing.nat ) ? 'NAT' : ( GRAPH.routing && GRAPH.routing.tgw ? 'TGW' : 'egress' );
 		if ( pos.entry ) {
 			s += seg( pos.compute.l, pos.entry.r, yOut, 'vh-flow__l--out', 'mkOut' );
 			s += seg( pos.entry.l, pos.edge.r, yOut, 'vh-flow__l--out', 'mkOut' );
-			s += pill( mid( pos.entry.l, pos.edge.r ), yOut - 15, natlbl, 'vh-flow__pill--out' );
+			s += pill( mid( pos.entry.l, pos.edge.r ), yOut - 15, natlbl, 'vh-flow__pill--out', gapOf( pos.entry.l, pos.edge.r ), natshort );
 		} else {
 			s += seg( pos.compute.l, pos.edge.r, yOut, 'vh-flow__l--out', 'mkOut' );
-			s += pill( mid( pos.compute.l, pos.edge.r ), yOut - 15, natlbl, 'vh-flow__pill--out' );
+			s += pill( mid( pos.compute.l, pos.edge.r ), yOut - 15, natlbl, 'vh-flow__pill--out', gapOf( pos.compute.l, pos.edge.r ), natshort );
 		}
 		flow.innerHTML = s;
 	}
