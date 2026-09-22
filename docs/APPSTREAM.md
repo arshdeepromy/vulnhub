@@ -33,12 +33,51 @@ marked "no Tenable UUID".
 ## Deleting
 
 `delete_one( $asset_id )` guards hard: it refuses the most-recent instance and
-any row without a UUID, then calls `client()->delete_asset( $uuid )`. That hits
-`DELETE /assets/{uuid}` and falls back to a one-asset bulk-delete job if the
-tenant has retired the single-asset route; a `404` counts as "already gone". On
-success the local row is marked `tenable_dropped_at` + `lifecycle_status =
-retired`, so it leaves the candidate list, and `vulnhub_tenable_appstream_deleted`
-fires.
+any row without a UUID, then calls `client()->delete_asset( $uuid )`. On success
+the local row is marked `tenable_dropped_at` + `lifecycle_status = retired`, so
+it leaves the candidate list, and `vulnhub_tenable_appstream_deleted` fires.
+
+### Which delete route, and the field name that broke it
+
+Tenable has two delete routes and only one of them is usable here.
+
+`DELETE /assets/{uuid}` is scope-gated. On a key without the Administrator role
+it answers `403 {"error":"Forbidden","message":"Insufficient scope"}` — which is
+what this tenant does, on every asset. The supported route is the asynchronous
+**bulk-delete job**, `POST /api/v2/assets/bulk-jobs/delete`, which the Scan
+Operator role (or the `VM.VM_EXPLORE.VM_EXPLORE.DELETE` privilege) can run. That
+is now the only call made; trying the single-asset route first bought nothing
+but a guaranteed 403 per asset.
+
+The job's filter field is **`host.id`**, not `id`:
+
+```json
+{ "query": { "or": [ { "field": "host.id", "operator": "eq", "value": "<uuid>" } ] } }
+```
+
+`id` is not in the asset filter vocabulary — `GET /filters/workbenches/assets`
+lists `host.id` and no bare `id` — and Tenable rejects it with
+
+```json
+{"response":{"data":{},"error":{"title":"BAD_REQUEST","detail":"Bad Request"}}}
+```
+
+which names no field, says nothing about the filter, and is the whole reason
+the first version of this tool looked like it worked and deleted nothing. Every
+click returned HTTP 200 from our own REST route carrying a `failed` list nobody
+had a reason to read closely.
+
+### A 202 is not proof of a delete
+
+The job is asynchronous: it answers `202` with the number of assets the filter
+matched, and **a filter that matches nothing is still accepted**, with
+`asset_count: 0`. So `delete_asset()` returns
+`{ ok, deleted, status, count, message }` rather than a bare response, and
+`deleted` is `count > 0`. A 2xx with `asset_count: 0` is reported honestly —
+"Tenable holds no asset with that id" — and counted separately from a real
+delete in the REST reply (`deleted` vs `gone`). Without that, the exact shape of
+the `id`/`host.id` bug — accepted, zero matched, row quietly marked dropped —
+reads as success.
 
 Nothing deletes on its own. The panel's per-row **Delete** and **Delete all N
 redundant** buttons each confirm first and call
@@ -58,7 +97,9 @@ X; M stale duplicates can be deleted."* — with `count = deletable_count` and a
 `assets/appstream.{js,css}` fetch the summary and render: the stat row (total /
 deletable / stale + the signature regex), the green **KEEP** card (most recent,
 and whether it maps to Tenable), and the redundant table with per-row and bulk
-delete. `manage`-less viewers see the list read-only.
+delete. The status line after a run reads `N deleted`, plus
+`M already gone from Tenable` and `K failed — <message from Tenable>` when
+either applies. `manage`-less viewers see the list read-only.
 
 ## Verifying
 

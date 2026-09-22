@@ -419,36 +419,38 @@ final class VulnHub_Tenable_Client {
 	/**
 	 * Delete one asset from Tenable.
 	 *
-	 * Tenable exposes single-asset delete at `DELETE /assets/{uuid}` (the mirror
-	 * of the info read above). Some tenants have retired it in favour of the
-	 * bulk job, so a non-2xx that is not a 404 falls back to a one-asset bulk
-	 * delete. A 404 means it is already gone, which we treat as done.
+	 * Two routes exist and only one of them is usable here. The single-asset
+	 * `DELETE /assets/{uuid}` is scope-gated: on a key without the Administrator
+	 * role Tenable answers `403 Insufficient scope`. The supported route is the
+	 * asynchronous bulk-delete job, which the Scan Operator role (or the
+	 * `VM.VM_EXPLORE.VM_EXPLORE.DELETE` privilege) can run, so that is the only
+	 * call made -- trying the single-asset route first bought nothing but a
+	 * guaranteed 403 per asset.
+	 *
+	 * The filter field is **`host.id`**, not `id`. `id` is not in the asset
+	 * filter vocabulary (`GET /filters/workbenches/assets`) and Tenable rejects
+	 * it with a bare `{"error":{"title":"BAD_REQUEST"}}` naming no field --
+	 * which is exactly how this went unnoticed.
+	 *
+	 * The job is asynchronous and answers `202` with the number of assets it
+	 * matched. **A 202 is not proof anything was deleted**: a filter matching
+	 * nothing is still accepted, with `asset_count: 0`. The caller is given the
+	 * count so it can tell a real delete from a no-op, because a silent
+	 * `asset_count: 0` is precisely the shape the `id`/`host.id` bug had.
+	 *
+	 * @return array{ok:bool,deleted:bool,status:int,count:int,message:string}
 	 */
-	public function delete_asset( string $uuid ): \VulnHub\Core\Http_Response {
+	public function delete_asset( string $uuid ): array {
 		$response = $this->http->request(
-			'DELETE',
-			$this->url( '/assets/' . rawurlencode( $uuid ) ),
-			array(
-				'headers' => $this->headers(),
-				'retries' => 1,
-			)
-		);
-
-		if ( $response->ok() || 404 === (int) $response->status ) {
-			return $response;
-		}
-
-		// Fallback: a bulk-delete job scoped to just this asset id.
-		return $this->http->request(
 			'POST',
 			$this->url( '/api/v2/assets/bulk-jobs/delete' ),
 			array(
 				'headers' => $this->headers(),
 				'body'    => array(
 					'query' => array(
-						'and' => array(
+						'or' => array(
 							array(
-								'field'    => 'id',
+								'field'    => 'host.id',
 								'operator' => 'eq',
 								'value'    => $uuid,
 							),
@@ -457,6 +459,26 @@ final class VulnHub_Tenable_Client {
 				),
 				'retries' => 1,
 			)
+		);
+
+		if ( ! $response->ok() ) {
+			return array(
+				'ok'      => false,
+				'deleted' => false,
+				'status'  => (int) $response->status,
+				'count'   => 0,
+				'message' => $response->error_message(),
+			);
+		}
+
+		$count = (int) ( $response->data()['response']['data']['asset_count'] ?? 0 );
+
+		return array(
+			'ok'      => true,
+			'deleted' => $count > 0,
+			'status'  => (int) $response->status,
+			'count'   => $count,
+			'message' => '',
 		);
 	}
 

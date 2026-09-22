@@ -140,7 +140,7 @@ final class VulnHub_Tenable_AppStream {
 	 * Delete one redundant AppStream asset from Tenable, then mark our copy as
 	 * dropped so it leaves the list. The most-recent instance is never eligible.
 	 *
-	 * @return array{ok:bool,message:string,status?:int}
+	 * @return array{ok:bool,message:string,deleted?:bool,status?:int}
 	 */
 	public static function delete_one( int $asset_id ): array {
 		global $wpdb;
@@ -171,14 +171,19 @@ final class VulnHub_Tenable_AppStream {
 			return array( 'ok' => false, 'message' => __( 'Tenable API credentials are not configured.', 'vulnhub' ) );
 		}
 
-		$response = $client->delete_asset( $uuid );
+		$result = $client->delete_asset( $uuid );
 
-		if ( ! $response->ok() && 404 !== (int) $response->status ) {
+		if ( empty( $result['ok'] ) ) {
+			$detail = trim( (string) $result['message'] );
 			return array(
 				'ok'      => false,
-				'status'  => (int) $response->status,
-				/* translators: %d: HTTP status. */
-				'message' => sprintf( __( 'Tenable refused the delete (HTTP %d).', 'vulnhub' ), (int) $response->status ),
+				'status'  => (int) $result['status'],
+				'message' => sprintf(
+					/* translators: 1: HTTP status, 2: message from Tenable. */
+					__( 'Tenable refused the delete (HTTP %1$d)%2$s', 'vulnhub' ),
+					(int) $result['status'],
+					'' !== $detail ? ': ' . $detail : '.'
+				),
 			);
 		}
 
@@ -197,7 +202,13 @@ final class VulnHub_Tenable_AppStream {
 			do_action( 'vulnhub_tenable_appstream_deleted', $asset_id, $uuid );
 		}
 
-		return array( 'ok' => true, 'message' => __( 'Deleted from Tenable.', 'vulnhub' ) );
+		return array(
+			'ok'      => true,
+			'deleted' => ! empty( $result['deleted'] ),
+			'message' => ! empty( $result['deleted'] )
+				? __( 'Deleted from Tenable.', 'vulnhub' )
+				: __( 'Tenable holds no asset with that id, so there was nothing to delete; cleared from the list here.', 'vulnhub' ),
+		);
 	}
 
 	/* ============================ REST ============================ */
@@ -235,11 +246,16 @@ final class VulnHub_Tenable_AppStream {
 		$ids = array_values( array_unique( array_filter( array_map( 'intval', (array) $ids ) ) ) );
 
 		$done    = 0;
+		$gone    = 0;
 		$failed  = array();
 		foreach ( $ids as $id ) {
 			$r = self::delete_one( $id );
 			if ( ! empty( $r['ok'] ) ) {
-				++$done;
+				if ( ! empty( $r['deleted'] ) ) {
+					++$done;
+				} else {
+					++$gone;
+				}
 			} else {
 				$failed[] = array( 'id' => $id, 'message' => (string) ( $r['message'] ?? 'Failed.' ) );
 			}
@@ -248,6 +264,7 @@ final class VulnHub_Tenable_AppStream {
 		return rest_ensure_response(
 			array(
 				'deleted' => $done,
+				'gone'    => $gone,
 				'failed'  => $failed,
 				'summary' => self::summary(),
 			)

@@ -70,7 +70,8 @@
 		wp.apiFetch( { url: CFG.del, method: 'POST', headers: { 'X-WP-Nonce': CFG.nonce }, data: { ids: ids } } )
 			.then( function ( r ) {
 				var msg = r.deleted + ' deleted';
-				if ( r.failed && r.failed.length ) { msg += ', ' + r.failed.length + ' failed (' + esc( r.failed[0].message ) + ')'; }
+				if ( r.gone ) { msg += ', ' + r.gone + ' already gone from Tenable'; }
+				if ( r.failed && r.failed.length ) { msg += ', ' + r.failed.length + ' failed — ' + r.failed[0].message; }
 				render( r.summary || {} );
 				setStatus( msg );
 			} )
