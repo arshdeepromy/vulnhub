@@ -43,12 +43,15 @@ add_action(
 	static function ( $connectors ): void {
 		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-setup.php';
 		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-accounts.php';
+		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-inventory.php';
+		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-explorer.php';
 		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-reachability.php';
 		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-connector.php';
 		require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-admin.php';
 
 		VulnHub_AWS_Reachability::install();
 		VulnHub_AWS_Accounts::install();
+		VulnHub_AWS_Inventory::install();
 		VulnHub_AWS_Admin::init();
 
 		// Registering here is what puts it on the Integrations screen beside

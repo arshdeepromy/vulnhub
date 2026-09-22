@@ -21,3 +21,6 @@ wp/wp-content/plugins/vulnhub-eos/data/
 # Browser-pass screenshots show whatever the stack holds -- on a real install,
 # real hostnames, addresses and owners. Never commit them.
 dev/shots/
+
+# Local AWS access working notes — real account IDs, never commit.
+docs/AWS-EXPOSURE-WIP.md

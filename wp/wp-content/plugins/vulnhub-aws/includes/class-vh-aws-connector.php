@@ -128,6 +128,35 @@ final class VulnHub_AWS_Connector extends Connector {
 				'checkbox_label' => __( 'Use Inspector’s reachability findings when it is switched on', 'vulnhub' ),
 				'help'           => __( 'Inspector computes the same answer AWS-side and evaluates paths this connector does not, such as traffic arriving through a peered VPC. When it is off, exposure is derived from security groups, route tables and load balancers instead. Either way nothing is written to your account.', 'vulnhub' ),
 			),
+			array(
+				'key'  => 'explorer_note',
+				'type' => 'note',
+				'help' => __( '<strong>Organisation-wide inventory (optional).</strong> Reads Resource Explorer from this central account to list every asset and security group across all member accounts, with no role to assume in each one. This is an <em>inventory</em>: it records that a resource exists, its account, region and tags. It does not read security-group rules or instance reachability, which still come from the per-account role path above.', 'vulnhub' ),
+			),
+			array(
+				'key'            => 'use_explorer',
+				'label'          => __( 'Resource Explorer', 'vulnhub' ),
+				'type'           => 'checkbox',
+				'default'        => false,
+				'checkbox_label' => __( 'Inventory the whole organisation through Resource Explorer', 'vulnhub' ),
+				'help'           => __( 'Requires an aggregator index and an organisation view in the region below, and resource-explorer-2:Search on this identity. Nothing is written to any account.', 'vulnhub' ),
+			),
+			array(
+				'key'         => 'explorer_region',
+				'label'       => __( 'Resource Explorer region', 'vulnhub' ),
+				'type'        => 'text',
+				'default'     => $first,
+				'placeholder' => 'ap-southeast-2',
+				'help'        => __( 'The region that holds the aggregator index and organisation view. Usually where most of the estate runs.', 'vulnhub' ),
+			),
+			array(
+				'key'         => 'explorer_view_arn',
+				'label'       => __( 'Organisation view ARN', 'vulnhub' ),
+				'type'        => 'text',
+				'required'    => false,
+				'placeholder' => 'arn:aws:resource-explorer-2:REGION:ACCOUNT:view/OrgView/…',
+				'help'        => __( 'Recommended. The organisation view to search, copied from the Resource Explorer console. Left blank, Search uses the default view for this account, which may only cover this one account.', 'vulnhub' ),
+			),
 		);
 	}
 
@@ -163,6 +192,23 @@ final class VulnHub_AWS_Connector extends Connector {
 		$out = array_values( array_filter( array_map( 'trim', explode( ',', $raw ) ) ) );
 
 		return $out ?: VulnHub_AWS_Setup::suggested_regions();
+	}
+
+	/** A Resource Explorer reader built from the stored settings, or null. */
+	private function explorer(): ?VulnHub_AWS_Explorer {
+		$client = $this->client();
+
+		if ( ! $client ) {
+			return null;
+		}
+
+		$region = trim( (string) $this->get( 'explorer_region' ) );
+
+		if ( '' === $region ) {
+			$region = $this->regions()[0] ?? 'us-east-1';
+		}
+
+		return new VulnHub_AWS_Explorer( $client, $region, trim( (string) $this->get( 'explorer_view_arn' ) ) );
 	}
 
 	/**
@@ -323,6 +369,25 @@ final class VulnHub_AWS_Connector extends Connector {
 
 		if ( $this->is_temporary() || str_contains( $who['arn'], ':assumed-role/' ) ) {
 			$notes[] = __( 'these are SHORT-TERM credentials — good for a sync you press, but they will expire and a scheduled sync will start failing', 'vulnhub' );
+		}
+
+		if ( $this->get_bool_setting( 'use_explorer', false ) ) {
+			$probe = $this->explorer()?->probe();
+
+			if ( null === $probe || empty( $probe['ok'] ) ) {
+				$notes[] = sprintf(
+					/* translators: %s: AWS error. */
+					__( 'Resource Explorer NOT readable — %s', 'vulnhub' ),
+					null === $probe ? __( 'no base credentials', 'vulnhub' ) : (string) $probe['error']
+				);
+			} else {
+				$notes[] = sprintf(
+					/* translators: 1: sample size, 2: distinct accounts in the sample. */
+					__( 'Resource Explorer readable — %1$d resource(s) on the first page across %2$d account(s)', 'vulnhub' ),
+					(int) $probe['sample'],
+					(int) $probe['accounts']
+				);
+			}
 		}
 
 		return array(
@@ -523,10 +588,12 @@ final class VulnHub_AWS_Connector extends Connector {
 			);
 		}
 
-		if ( ! $accounts ) {
+		$use_explorer = $this->get_bool_setting( 'use_explorer', false );
+
+		if ( ! $accounts && ! $use_explorer ) {
 			return array(
 				'ok'      => false,
-				'message' => __( 'No AWS accounts configured. Add one on the AWS accounts screen.', 'vulnhub' ),
+				'message' => __( 'No AWS accounts configured. Add one on the AWS accounts screen, or switch on Resource Explorer inventory.', 'vulnhub' ),
 			);
 		}
 
@@ -562,15 +629,46 @@ final class VulnHub_AWS_Connector extends Connector {
 
 		$this->bump( 'updated', $linked );
 
+		$explorer_line = '';
+		$explorer_ok   = false;
+
+		if ( $use_explorer ) {
+			$exp = $this->explorer();
+
+			if ( $exp ) {
+				$inv   = $exp->sync();
+				$total = array_sum( $inv['per_type'] );
+
+				$this->log(
+					sprintf(
+						'Resource Explorer: %d resource(s) across %d account(s)%s.',
+						$total,
+						(int) $inv['accounts'],
+						$inv['errors'] ? sprintf( ' — %d type(s) denied', count( $inv['errors'] ) ) : ''
+					)
+				);
+
+				$this->bump( 'seen', $total );
+
+				$explorer_ok   = $inv['ok'] && $total > 0;
+				$explorer_line = sprintf(
+					/* translators: 1: resource count, 2: account count. */
+					__( ' Inventory: %1$d resource(s) across %2$d account(s).', 'vulnhub' ),
+					$total,
+					(int) $inv['accounts']
+				);
+			}
+		}
+
 		return array(
-			'ok'      => $ok > 0,
+			'ok'      => $ok > 0 || $explorer_ok,
 			'message' => sprintf(
 				/* translators: 1: accounts read, 2: accounts failed, 3: assets matched. */
 				__( '%1$d account(s) read, %2$d failed, %3$d asset(s) matched.', 'vulnhub' ),
 				$ok,
 				$failed,
 				$linked
-			),
+			) . $explorer_line,
 		);
 	}
 
