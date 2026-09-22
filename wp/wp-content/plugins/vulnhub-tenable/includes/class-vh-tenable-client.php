@@ -417,6 +417,50 @@ final class VulnHub_Tenable_Client {
 	}
 
 	/**
+	 * Delete one asset from Tenable.
+	 *
+	 * Tenable exposes single-asset delete at `DELETE /assets/{uuid}` (the mirror
+	 * of the info read above). Some tenants have retired it in favour of the
+	 * bulk job, so a non-2xx that is not a 404 falls back to a one-asset bulk
+	 * delete. A 404 means it is already gone, which we treat as done.
+	 */
+	public function delete_asset( string $uuid ): \VulnHub\Core\Http_Response {
+		$response = $this->http->request(
+			'DELETE',
+			$this->url( '/assets/' . rawurlencode( $uuid ) ),
+			array(
+				'headers' => $this->headers(),
+				'retries' => 1,
+			)
+		);
+
+		if ( $response->ok() || 404 === (int) $response->status ) {
+			return $response;
+		}
+
+		// Fallback: a bulk-delete job scoped to just this asset id.
+		return $this->http->request(
+			'POST',
+			$this->url( '/api/v2/assets/bulk-jobs/delete' ),
+			array(
+				'headers' => $this->headers(),
+				'body'    => array(
+					'query' => array(
+						'and' => array(
+							array(
+								'field'    => 'id',
+								'operator' => 'eq',
+								'value'    => $uuid,
+							),
+						),
+					),
+				),
+				'retries' => 1,
+			)
+		);
+	}
+
+	/**
 	 * One page of linked agents.
 	 *
 	 * `GET /scanners/{id}/agents`. This is the only place Tenable says whether

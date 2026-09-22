@@ -181,3 +181,11 @@ add_action(
 	}
 );
 
+
+/*
+ * AppStream cleanup is a front-end tool, not a connector, so it boots at file
+ * load like the other page modules and registers its own REST, view and the
+ * topbar-bell notice.
+ */
+require_once VULNHUB_TENABLE_DIR . 'includes/class-vh-tenable-appstream.php';
+VulnHub_Tenable_AppStream::init();

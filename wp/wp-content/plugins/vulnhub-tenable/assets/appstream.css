@@ -1,0 +1,31 @@
+/* AppStream cleanup panel */
+.vh-appstream { margin-top: 6px; }
+.vh-as-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+.vh-as-stat { background: rgba( 148, 163, 184, .07 ); border: 1px solid rgba( 148, 163, 184, .16 ); border-radius: 12px; padding: 10px 16px; min-width: 120px; }
+.vh-as-stat--warn { border-color: rgba( 251, 191, 36, .4 ); background: rgba( 251, 191, 36, .08 ); }
+.vh-as-stat__n { display: block; font-size: 24px; font-weight: 700; line-height: 1.1; }
+.vh-as-stat__l { font-size: 12px; color: var( --vh-muted, #94a3b8 ); }
+.vh-as-re { margin-left: auto; font-size: 12px; background: rgba( 148, 163, 184, .12 ); padding: 4px 9px; border-radius: 6px; color: var( --vh-muted, #94a3b8 ); }
+
+.vh-as-keep { border: 1px solid rgba( 52, 211, 153, .45 ); background: rgba( 52, 211, 153, .07 ); border-radius: 13px; padding: 14px 16px; margin-bottom: 16px; }
+.vh-as-keep__tag { font-size: 11px; font-weight: 700; letter-spacing: .06em; color: #34d399; }
+.vh-as-keep__row { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 16px; }
+.vh-as-keep__meta { font-size: 12.5px; color: var( --vh-muted, #94a3b8 ); margin-top: 3px; }
+
+.vh-as-barrow { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+.vh-as-status { font-size: 13px; color: var( --vh-muted, #94a3b8 ); }
+
+.vh-btn--danger { background: #dc2626; border-color: #dc2626; color: #fff; }
+.vh-btn--danger:hover { background: #b91c1c; }
+.vh-btn--sm { padding: 4px 12px; font-size: 12.5px; }
+
+.vh-as-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.vh-as-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var( --vh-muted, #94a3b8 ); padding: 8px 10px; border-bottom: 1px solid rgba( 148, 163, 184, .18 ); }
+.vh-as-table td { padding: 9px 10px; border-bottom: 1px solid rgba( 148, 163, 184, .1 ); }
+.vh-as-table tr.is-stale td { opacity: .72; }
+.vh-as-table code { background: rgba( 148, 163, 184, .12 ); border-radius: 5px; padding: 1px 6px; font-size: 12.5px; }
+.vh-as-act { text-align: right; }
+
+.vh-b--ok { background: rgba( 52, 211, 153, .16 ); color: #34d399; }
+.vh-b--live { background: rgba( 56, 189, 248, .16 ); color: #38bdf8; }
+.vh-muted { color: var( --vh-muted, #94a3b8 ); font-size: 12.5px; }
