@@ -115,7 +115,7 @@ without touching the rest. They all build against the contract in
 | Plugin | Does |
 |---|---|
 | **vulnhub-core** | Data model (14 tables), connector framework, encrypted credential vault, ownership mapping engine, RBAC, REST API, the wp-admin screens |
-| **vulnhub-tenable** | Tenable VM export API → assets, vulnerabilities, tags. Owns closure verification |
+| **vulnhub-tenable** | Tenable VM export API → assets, vulnerabilities, tags. Owns closure verification, and the **AppStream cleanup** tool that deletes the one-shot streaming duplicates a fleet leaves behind (`docs/APPSTREAM.md`) |
 | **vulnhub-intune** | Microsoft Graph → managed devices, users, departments, offices, groups |
 | **vulnhub-cmdb** | ServiceNow / Jira Assets / Confluence / CSV → business service, team and site for non-user assets |
 | **vulnhub-jira** | Ticket creation with real ADF, status sync, the automation engine, reopen-on-failed-verification |
@@ -128,7 +128,7 @@ The rest extend the platform the same way:
 | Plugin | Does |
 |---|---|
 | **vulnhub-alerts** | Watches advisory and zero-day feeds (EUVD, MSRC, CISA, GitHub, Red Hat, Ubuntu, any RSS/JSON source) and matches them to software and OS actually in the estate. Adds the **Alerts** view |
-| **vulnhub-aws** | Reads network exposure straight from AWS accounts — which instances the internet can reach, and on which ports |
+| **vulnhub-aws** | Reads network exposure straight from AWS accounts — which instances the internet can reach, and on which ports. Signs in with the operator's own IAM Identity Center session (no stored long-lived key) and draws one account's topology on the **Cloud Network** view (`docs/AWS-NETWORK.md`) |
 | **vulnhub-backup** | Batched, resumable backup and restore as **one `.tar.gz`** (manifest, database, `wp-content`), with optional S3 push and retention (`docs/BACKUP.md`) |
 | **vulnhub-departments** | Enriches existing people with their Entra department; adds a department filter, widget, page and export. Never creates people |
 | **vulnhub-docs** | The built-in handbook and developer wiki, as the portal's **Docs** view |
@@ -137,6 +137,7 @@ The rest extend the platform the same way:
 | **vulnhub-hosting** | Classifies servers as cloud (AWS / Azure / GCP) or on-prem. One classification, three places: the *Servers by hosting environment* widget, the `hosting` filter on the assets and findings lists, and the environment icon beside every hostname |
 | **vulnhub-import** | Streaming, resumable, de-duplicating CSV import (chunked browser upload, byte-offset checkpoints). Powers **Administration → Imports** |
 | **vulnhub-mcp** | A machine-facing surface so an agent can read the estate, correct the CMDB and work the coverage-gap list. Adds **Administration → AI access** |
+| **vulnhub-plerion** | Plerion → cloud resources and CSPM findings. Cloud posture is kept out of the vulnerability model on purpose; adds the **Cloud posture** and **Cloud exposure** views (`docs/PLERION.md`) |
 | **vulnhub-rules** | Ordered, testable rules that classify assets (environment, criticality, type, service, priority weight) before ownership mapping. Adds **Administration → Rules** |
 
 ---
@@ -447,6 +448,18 @@ stylesheet in the browser's network tab before re-reading the CSS.
   centres in the space right of the rail, so a wide or zoomed-out window grows
   equal gutters on both sides; below 768px the rail becomes a top bar and the
   column goes full width.
+- **Cloud posture and the AWS map** — `docs/PLERION.md` covers why CSPM
+  findings are stored beside the vulnerability model rather than inside it, and
+  `docs/AWS-NETWORK.md` covers reading AWS with the operator's own SSO session
+  instead of a stored key, what the capture keeps (nodes, security groups,
+  rules, routes), and how the Cloud Network screen turns that into four columns
+  and an honest direct-vs-inspected story — the per-ENI flow it does *not* draw
+  would need VPC Flow Logs the capture never reads.
+- **AppStream duplicates** — `docs/APPSTREAM.md` covers why a streaming fleet
+  registers a brand-new Tenable asset on every launch, how the one-shot records
+  are recognised (a 15-hex computer name with no NetBIOS name), why the
+  most-recent instance is never deletable, and why nothing is ever deleted
+  without an operator's click — a delete here removes the asset in Tenable too.
 - **Chart palette** — `docs/PALETTE.md` records every colour token in the dark
   (default) and light themes, where charts take their colours from, measured
   contrast ratios, and why severity is treated as a *semantic heat* scale that

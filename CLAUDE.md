@@ -15,7 +15,7 @@ obvious version was tried first and broke something.
 |---|---|
 | `vulnhub-core` | Data model, `Repo`, connector base class, settings + encrypted secrets, scheduler, EOL/OS/vendor/product vocabularies, `VH_Action` |
 | `vulnhub-dashboard` | The whole front end: portal shell, views, widgets, filters, CSV export |
-| `vulnhub-tenable`, `-intune`, `-cmdb`, `-jira`, `-aws`, `-departments` | Connectors to outside systems |
+| `vulnhub-tenable`, `-intune`, `-cmdb`, `-jira`, `-aws`, `-plerion`, `-departments` | Connectors to outside systems |
 | `vulnhub-import` | Streaming, resumable, de-duplicating CSV import |
 | `vulnhub-eos`, `-hosting`, `-rules`, `-threat`, `-alerts` | Analysis layered on the model |
 | `vulnhub-auth`, `-backup`, `-docs`, `-elementor`, `-mcp` | Platform services |
@@ -30,6 +30,9 @@ obvious version was tried first and broke something.
 | `docs/SYNC.md` | Staged sync: download → process → finalize, watermarks, resumability |
 | `docs/CMDB-ASSETS.md` | Jira Assets/AQL back end, attribute mapping, per-object-type mapping |
 | `docs/COVERAGE.md`, `docs/LIFECYCLE.md` | What "not scanned" and "in service" mean, and to which assets |
+| `docs/PLERION.md` | Cloud posture: cloud assets, CSPM findings kept out of the vulnerability model, the exposure map |
+| `docs/AWS-NETWORK.md` | AWS SSO device login, what the network capture stores, and how the Cloud Network map is built |
+| `docs/APPSTREAM.md` | AppStream duplicate cleanup: detecting one-shot streaming assets and deleting them through Tenable |
 | `docs/EOS.md`, `docs/ATTACK-PATHS.md` | Retirement programme; reachability |
 | `docs/BROWSER-PASS.md` | How to actually drive the product in a browser |
 | `docs/PALETTE.md`, `docs/PERFORMANCE.md`, `docs/BACKUP.md` | Colour record, measured timings, backup/restore |

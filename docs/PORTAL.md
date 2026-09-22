@@ -76,6 +76,10 @@ viewBox) and optionally `hidden`.
 | vendors | `/vendors/` | yes |
 | eol_plan | `/eol-plan/` | yes; contributed by vulnhub-eos |
 | sources | `/inventory-sources/` | yes; which register knows what, and what each is missing |
+| network | `/cloud-network/` | yes; contributed by vulnhub-aws — the live AWS topology |
+| cspm | `/cloud-posture/` | yes; contributed by vulnhub-plerion |
+| exposure | `/cloud-exposure/` | yes; contributed by vulnhub-plerion |
+| appstream | `/appstream-cleanup/` | hidden; reached from the notifications bell |
 | admin | `/portal-admin/` | hidden; reached from the gear at the foot of the rail |
 | login | `/sign-in/` | hidden |
 
@@ -89,6 +93,9 @@ nav. Current users:
 - vulnhub-docs (`docs`)
 - vulnhub-departments (`departments`, hidden)
 - vulnhub-eos (`eol_plan`) — the EOL remediation plan; see `docs/EOS.md`
+- vulnhub-aws (`network`) — the live AWS network topology; see `docs/AWS-NETWORK.md`
+- vulnhub-plerion (`cspm` Cloud Posture, `exposure` Cloud Exposure); see `docs/PLERION.md`
+- vulnhub-tenable (`appstream`, hidden) — AppStream duplicate cleanup; see `docs/APPSTREAM.md`
 
 **Navigation-only links.** `vulnhub_portal_nav_extra` only adds a link, not a
 view. Each entry takes `label`, `url`, an `icon` SVG path and `active`. Nothing
@@ -221,6 +228,21 @@ it into a vertical rail in CSS (`app-redesign.css`):
 - **Below 768px** the rail becomes a sticky full-width top bar with a
   horizontally scrolling row of 40px icons. The account menu drops down
   instead of opening to the side.
+
+### Notifications bell
+
+A single bell floats at the **top-right of the viewport** (not in the rail).
+`notify.js` lifts `[data-vh-bell]` out of the sticky `.vh-topbar` and pins it
+to `document.body`, so no transformed ancestor can clip it; the dropdown is
+`position: fixed` and JS places it toward whichever screen edge has room.
+
+The feed is generic: any module adds an entry through the
+`vulnhub_notifications` filter — `{ id, severity, count, title, body, url }` —
+and the bell polls `GET vulnhub-dashboard/v1/notifications` every two minutes,
+summing `count` into the red badge. The first (and today only) contributor is
+the Tenable AppStream tool (`docs/APPSTREAM.md`). A notice with a `url` links
+to the screen that resolves it; the bell itself carries no capability, so each
+linked action re-checks its own.
 
 ### Body classes
 
@@ -473,6 +495,9 @@ actionable segment renders as a sliver against them.
 ## Endpoints
 
 ### REST: `vulnhub-dashboard/v1`
+
+- `GET /notifications` — the topbar-bell feed: `apply_filters( 'vulnhub_notifications', [] )`
+  flattened to `{ items, count }`. Read-only, `Caps::VIEW`.
 
 Every route requires a logged-in user with `vulnhub_view`.
 
