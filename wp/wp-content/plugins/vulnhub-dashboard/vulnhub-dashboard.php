@@ -697,3 +697,36 @@ register_activation_hook(
 	}
 );
 
+
+/*
+ * Topbar-bell notifications. A generic feed any module can add to via the
+ * `vulnhub_notifications` filter — each entry is
+ * { id, severity, count, title, body, url }. The AppStream cleanup tool is the
+ * first contributor. Read-only; every action a notice links to has its own cap.
+ */
+add_action(
+	'rest_api_init',
+	static function (): void {
+		register_rest_route(
+			'vulnhub-dashboard/v1',
+			'/notifications',
+			array(
+				'methods'             => 'GET',
+				'callback'            => static function () {
+					$items = (array) apply_filters( 'vulnhub_notifications', array() );
+					$count = 0;
+					foreach ( $items as $it ) {
+						$count += (int) ( $it['count'] ?? 0 );
+					}
+					return rest_ensure_response(
+						array(
+							'items' => array_values( $items ),
+							'count' => $count,
+						)
+					);
+				},
+				'permission_callback' => static fn (): bool => is_user_logged_in() && current_user_can( \VulnHub\Core\Caps::VIEW ),
+			)
+		);
+	}
+);

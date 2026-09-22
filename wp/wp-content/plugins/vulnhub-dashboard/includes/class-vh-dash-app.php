@@ -205,6 +205,8 @@ final class VulnHub_Dash_App {
 		// enqueued after app.css, in the footer; removing it leaves the portal
 		// fully usable but static.
 		wp_register_script( 'vulnhub-motion', VULNHUB_DASH_URL . 'assets/vh-motion.js', array(), self::asset_ver( 'assets/vh-motion.js' ), true );
+		wp_register_style( 'vulnhub-notify', VULNHUB_DASH_URL . 'assets/notify.css', array( 'vulnhub-app' ), self::asset_ver( 'assets/notify.css' ) );
+		wp_register_script( 'vulnhub-notify', VULNHUB_DASH_URL . 'assets/notify.js', array( 'wp-api-fetch' ), self::asset_ver( 'assets/notify.js' ), true );
 		wp_localize_script(
 			'vulnhub-app',
 			'VulnHubApp',
@@ -244,6 +246,16 @@ final class VulnHub_Dash_App {
 		wp_enqueue_script( 'vulnhub-motion' );
 
 		if ( VulnHub_Dash_Portal::LOGIN_VIEW !== $view ) {
+			wp_enqueue_style( 'vulnhub-notify' );
+			wp_enqueue_script( 'vulnhub-notify' );
+			wp_localize_script(
+				'vulnhub-notify',
+				'VulnHubNotify',
+				array(
+					'rest'  => esc_url_raw( rest_url( 'vulnhub-dashboard/v1/notifications' ) ),
+					'nonce' => wp_create_nonce( 'wp_rest' ),
+				)
+			);
 			return;
 		}
 
@@ -418,6 +430,13 @@ final class VulnHub_Dash_App {
 						<?php esc_html_e( 'Sample data', 'vulnhub' ); ?>
 					</span>
 				<?php endif; ?>
+				<div class="vh-bell" data-vh-bell>
+					<button type="button" class="vh-iconbtn vh-bell__btn" data-vh-bell-toggle aria-expanded="false" aria-label="<?php esc_attr_e( 'Notifications', 'vulnhub' ); ?>">
+						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+						<span class="vh-bell__dot" data-vh-bell-count hidden></span>
+					</button>
+					<div class="vh-bell__menu" data-vh-bell-menu hidden></div>
+				</div>
 				<button type="button" class="vh-iconbtn" data-vh-theme aria-label="<?php esc_attr_e( 'Switch between light and dark', 'vulnhub' ); ?>">
 					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 13a9 9 0 11-10-10 7 7 0 0010 10z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
 				</button>

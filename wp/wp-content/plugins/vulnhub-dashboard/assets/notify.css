@@ -1,0 +1,23 @@
+/* Topbar notification bell */
+.vh-bell { position: fixed; top: 14px; right: 18px; z-index: 300; }
+.vh-bell__btn { position: relative; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 11px;
+	background: var( --vh-panel, #0f172a ); border: 1px solid rgba( 148, 163, 184, .28 ); color: inherit; cursor: pointer;
+	box-shadow: 0 10px 30px -14px rgba( 0, 0, 0, .7 ); transition: border-color .16s ease, transform .16s ease; }
+.vh-bell__btn:hover { border-color: rgba( 56, 189, 248, .55 ); transform: translateY( -1px ); }
+.vh-bell__btn svg { width: 20px; height: 20px; }
+.vh-bell__dot { position: absolute; top: -3px; right: -3px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px;
+	background: #ef4444; color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
+.vh-bell.has-unread .vh-bell__btn svg { color: #fbbf24; }
+.vh-bell__menu { position: fixed; width: min( 360px, 88vw ); z-index: 200; max-height: 70vh; overflow-y: auto;
+	background: var( --vh-panel, #0f172a ); border: 1px solid rgba( 148, 163, 184, .28 ); border-radius: 13px;
+	box-shadow: 0 24px 60px -24px rgba( 0, 0, 0, .8 ); overflow: hidden; }
+.vh-bell__h { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var( --vh-muted, #94a3b8 ); padding: 11px 14px 6px; }
+.vh-bell__empty { padding: 20px 14px; text-align: center; color: var( --vh-muted, #94a3b8 ); font-size: 13px; }
+.vh-bell__link { display: block; text-decoration: none; color: inherit; }
+.vh-bell__link:hover { background: rgba( 148, 163, 184, .08 ); }
+.vh-bell__item { padding: 10px 14px; border-top: 1px solid rgba( 148, 163, 184, .1 ); border-left: 3px solid transparent; }
+.vh-bell__item--warn { border-left-color: #fbbf24; }
+.vh-bell__item--crit { border-left-color: #ef4444; }
+.vh-bell__t { font-weight: 600; font-size: 13.5px; display: flex; align-items: center; gap: 7px; }
+.vh-bell__n { background: rgba( 251, 191, 36, .2 ); color: #fbbf24; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; }
+.vh-bell__b { font-size: 12.5px; color: var( --vh-muted, #94a3b8 ); margin-top: 3px; line-height: 1.45; }
