@@ -1632,13 +1632,25 @@ final class VulnHub_Dash_Tickets {
 					<?php endif; ?>
 				</section>
 			<?php endif; ?>
+			<?php if ( ! $is_scope && self::can_transition() && 'jira' === (string) $t['provider'] ) : ?>
+				<section class="vh-panel">
+					<header class="vh-panel__head"><h2><?php esc_html_e( 'Progress update', 'vulnhub' ); ?></h2></header>
+					<p class="vh-raise__links">
+						<button type="button" class="vh-btn vh-btn--sm" data-vh-reattach="<?php echo (int) $t['id']; ?>">
+							<?php esc_html_e( 'Send an updated list to Jira', 'vulnhub' ); ?>
+						</button>
+						<span class="vh-meta" data-vh-reattach-status role="status"></span>
+					</p>
+					<p class="vh-sub vh-muted"><?php esc_html_e( 'Attaches today’s list of the vulnerabilities still open (open or reopened) on this ticket, with where each one stands, and leaves an internal note saying so. Fixed findings are left off, so the list shrinks as work lands. Jira keeps earlier attachments, so the file is dated.', 'vulnhub' ); ?></p>
+				</section>
+			<?php endif; ?>
 		</div>
 
 		<?php
 		if ( $is_scope ) {
 			self::render_assets( $t );
 		} else {
-			self::render_findings( $t );
+			self::render_finding_tabs( $t );
 		}
 
 		echo self::transition_dialog(); // phpcs:ignore WordPress.Security.EscapeOutput
@@ -1796,6 +1808,98 @@ final class VulnHub_Dash_Tickets {
 	 *
 	 * @param array<string,mixed> $t Ticket row.
 	 */
+	/**
+	 * Findings, either as the flat list or grouped by owning department.
+	 */
+	private static function render_finding_tabs( array $t ): void {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$tab  = isset( $_GET['ftab'] ) && 'departments' === sanitize_key( wp_unslash( $_GET['ftab'] ) ) ? 'departments' : 'findings';
+		$base = self::page_url( 'tickets', array( 'ticket' => (int) $t['id'] ) );
+
+		echo '<nav class="vh-subtabs">';
+		printf( '<a class="vh-subtab%s" href="%s">%s</a>', 'findings' === $tab ? ' is-active' : '', esc_url( $base ), esc_html__( 'Findings', 'vulnhub' ) );
+		printf( '<a class="vh-subtab%s" href="%s">%s</a>', 'departments' === $tab ? ' is-active' : '', esc_url( add_query_arg( 'ftab', 'departments', $base ) ), esc_html__( 'By department', 'vulnhub' ) );
+		echo '</nav>';
+
+		if ( 'departments' === $tab ) {
+			self::render_finding_departments( $t );
+		} else {
+			self::render_findings( $t );
+		}
+	}
+
+	/**
+	 * Per-department resolved/outstanding counts for a vulnerability ticket.
+	 *
+	 * Department is the department of the person who owns the asset a finding
+	 * sits on. A finding counts as resolved when the scanner reports it fixed
+	 * OR the CMDB no longer has its asset in service -- the same rule the
+	 * findings list uses.
+	 */
+	private static function render_finding_departments( array $t ): void {
+		global $wpdb;
+
+		$rows = (array) $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			$wpdb->prepare(
+				'SELECT COALESCE( NULLIF( p.department, %s ), %s ) AS dept,
+					COUNT(DISTINCT a.id) AS assets,
+					COUNT(*) AS total,
+					SUM( CASE WHEN f.state = %s OR a.lifecycle_status <> %s THEN 1 ELSE 0 END ) AS resolved,
+					SUM( CASE WHEN f.state <> %s AND a.lifecycle_status = %s THEN 1 ELSE 0 END ) AS outstanding
+				 FROM ' . vh_table( 'ticket_findings' ) . ' tf
+				 JOIN ' . vh_table( 'findings' ) . ' f ON f.id = tf.finding_id
+				 JOIN ' . vh_table( 'assets' ) . ' a ON a.id = f.asset_id
+				 LEFT JOIN ' . vh_table( 'people' ) . ' p ON p.id = a.owner_person_id
+				 WHERE tf.ticket_id = %d
+				 GROUP BY dept
+				 ORDER BY outstanding DESC, total DESC',
+				'',
+				__( 'Unassigned', 'vulnhub' ),
+				'fixed',
+				'in_service',
+				'fixed',
+				'in_service',
+				(int) $t['id']
+			),
+			ARRAY_A
+		);
+
+		if ( ! $rows ) {
+			echo '<p class="vh-chart-empty">' . esc_html__( 'No findings to group by department.', 'vulnhub' ) . '</p>';
+			return;
+		}
+
+		echo '<div class="vh-tablewrap"><table class="vh-table"><thead><tr>';
+		printf( '<th>%s</th>', esc_html__( 'Department', 'vulnhub' ) );
+		printf( '<th class="vh-num">%s</th>', esc_html__( 'Assets', 'vulnhub' ) );
+		printf( '<th class="vh-num">%s</th>', esc_html__( 'Resolved', 'vulnhub' ) );
+		printf( '<th class="vh-num">%s</th>', esc_html__( 'Outstanding', 'vulnhub' ) );
+		printf( '<th>%s</th>', esc_html__( 'Progress', 'vulnhub' ) );
+		echo '</tr></thead><tbody>';
+
+		foreach ( $rows as $r ) {
+			$total = (int) $r['total'];
+			$done  = (int) $r['resolved'];
+			$pct   = $total > 0 ? (int) round( 100 * $done / $total ) : 0;
+			$out   = (int) $r['outstanding'];
+
+			echo '<tr>';
+			printf( '<td>%s</td>', esc_html( (string) $r['dept'] ) );
+			printf( '<td class="vh-num">%d</td>', (int) $r['assets'] );
+			printf( '<td class="vh-num">%d</td>', $done );
+			printf( '<td class="vh-num">%s</td>', $out > 0 ? '<strong>' . $out . '</strong>' : '0' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			printf(
+				'<td><div class="vh-deptbar%s"><span style="width:%d%%"></span></div><span class="vh-meta">%d%%</span></td>',
+				0 === $out ? ' is-clear' : '',
+				$pct,
+				$pct
+			);
+			echo '</tr>';
+		}
+
+		echo '</tbody></table></div>';
+	}
+
 	private static function render_findings( array $t ): void {
 		$rows = array_slice( Tickets::findings_for( (int) $t['id'] ), 0, 200 );
 
@@ -1809,15 +1913,33 @@ final class VulnHub_Dash_Tickets {
 				<thead><tr>
 					<th><?php esc_html_e( 'Host', 'vulnhub' ); ?></th>
 					<th><?php esc_html_e( 'Vulnerability', 'vulnhub' ); ?></th>
+					<th><?php esc_html_e( 'Last seen', 'vulnhub' ); ?></th>
 					<th><?php esc_html_e( 'State', 'vulnhub' ); ?></th>
 					<th><?php esc_html_e( 'Verification', 'vulnhub' ); ?></th>
 				</tr></thead>
 				<tbody>
 				<?php foreach ( $rows as $f ) : ?>
+					<?php
+					// An asset the CMDB no longer has in service cannot carry a live
+					// finding -- the machine is gone -- so it reads as resolved here
+					// whatever the scanner last said.
+					$vh_oos   = 'in_service' !== (string) ( $f['lifecycle_status'] ?? '' ) && '' !== (string) ( $f['lifecycle_status'] ?? '' );
+					$vh_seen  = array();
+					if ( ! empty( $f['tenable_last_scan'] ) )  { $vh_seen[] = 'Tenable ' . vh_ago( (string) $f['tenable_last_scan'] ); }
+					if ( ! empty( $f['defender_last_seen'] ) ) { $vh_seen[] = 'Defender ' . vh_ago( (string) $f['defender_last_seen'] ); }
+					?>
 					<tr>
 						<td><a class="vh-mono" href="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $f['asset_id'] ) ) ); ?>"><?php echo esc_html( (string) $f['hostname'] ); ?></a></td>
 						<td><?php echo esc_html( vh_trim( (string) $f['vuln_title'], 90 ) ); ?></td>
-						<td><?php echo esc_html( (string) $f['state'] ); ?></td>
+						<td class="vh-meta vh-nowrap"><?php echo $vh_seen ? esc_html( implode( ' · ', $vh_seen ) ) : '<span class="vh-muted">—</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+						<td>
+							<?php if ( $vh_oos ) : ?>
+								<span class="vh-state vh-state--good"><?php esc_html_e( 'resolved', 'vulnhub' ); ?></span>
+								<span class="vh-meta"><?php esc_html_e( 'out of service', 'vulnhub' ); ?></span>
+							<?php else : ?>
+								<?php echo esc_html( (string) $f['state'] ); ?>
+							<?php endif; ?>
+						</td>
 						<td><?php echo esc_html( Tickets::verification_labels()[ (string) ( $f['verification_state'] ?? '' ) ] ?? '—' ); ?></td>
 					</tr>
 				<?php endforeach; ?>

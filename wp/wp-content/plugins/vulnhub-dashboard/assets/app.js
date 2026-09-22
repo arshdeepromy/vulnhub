@@ -3529,32 +3529,115 @@ document.addEventListener( 'click', function ( e ) {
 		}
 	} );
 
-	/* ---- "Send an updated list to Jira" on a scope ticket ---- */
-	document.addEventListener( 'click', function ( event ) {
-		var button = event.target.closest ? event.target.closest( '[data-vh-reattach]' ) : null;
-		if ( ! button ) { return; }
-		event.preventDefault();
+	/* ---- "Send an updated list to Jira": review, edit the note, then send ---- */
+	( function () {
+		function mkEl( tag, cls, text ) {
+			var n = document.createElement( tag );
+			if ( cls ) { n.className = cls; }
+			if ( null != text ) { n.textContent = String( text ); }
+			return n;
+		}
 
-		var id     = parseInt( button.dataset.vhReattach, 10 );
-		var status = button.parentNode.querySelector( '[data-vh-reattach-status]' );
-		var label  = button.textContent;
+		var dlg = null;
+		var current = { id: 0, status: null };
 
-		button.disabled = true;
-		button.textContent = 'Rebuilding and attaching…';
-		if ( status ) { status.textContent = ''; }
+		function dialog() {
+			if ( dlg ) { return dlg; }
+			var d = mkEl( 'dialog', 'vh-review' );
+			d.setAttribute( 'aria-labelledby', 'vh-reattach-title' );
+			d.innerHTML =
+				'<form method="dialog" class="vh-modal__x"><button aria-label="Close">&times;</button></form>' +
+				'<h2 id="vh-reattach-title">Send an updated list to Jira</h2>' +
+				'<p class="vh-review__lede">Nothing has been sent yet. This is exactly what will go to Jira when you press Send.</p>' +
+				'<div class="vh-review__body" data-vh-ra-body></div>' +
+				'<label class="vh-ra-note-label" for="vh-ra-note">Comment posted on the ticket (edit or add your own)</label>' +
+				'<textarea id="vh-ra-note" class="vh-ra-note" rows="4" data-vh-ra-note></textarea>' +
+				'<div class="vh-review__foot">' +
+					'<span class="vh-review__status" data-vh-ra-status role="status"></span>' +
+					'<button type="button" class="vh-btn vh-btn--ghost" data-vh-ra-cancel>Cancel</button>' +
+					'<button type="button" class="vh-btn vh-btn--primary" data-vh-ra-send disabled>Send to Jira</button>' +
+				'</div>';
+			document.body.appendChild( d );
+			d.querySelector( '[data-vh-ra-cancel]' ).addEventListener( 'click', function () { d.close(); } );
+			d.querySelector( '[data-vh-ra-send]' ).addEventListener( 'click', send );
+			dlg = d;
+			return d;
+		}
 
-		wp.apiFetch( { path: '/vulnhub/v1/tickets/' + id + '/attachment', method: 'POST' } )
-			.then( function ( result ) {
-				/* Stays on screen: the file name is the thing somebody needs
-				   to quote, and a toast that vanishes takes it with it. */
-				if ( status ) { status.textContent = ( result && result.message ) || 'Attached.'; }
-				button.textContent = label;
-				button.disabled = false;
-			} )
-			.catch( function ( error ) {
-				if ( status ) { status.textContent = ( error && error.message ) || cfg.i18n.error || 'The list was not attached.'; }
-				button.textContent = label;
-				button.disabled = false;
-			} );
-	} );
+		function renderPreview( p ) {
+			var d = dialog();
+			var body = d.querySelector( '[data-vh-ra-body]' );
+			body.innerHTML = '';
+
+			var meta = mkEl( 'p', 'vh-ra-meta' );
+			meta.appendChild( mkEl( 'strong', null, p.scope || '' ) );
+			meta.appendChild( document.createTextNode( ' · ' + ( p.filename || '' ) + ' · ' + ( p.rows || 0 ) + ' rows' ) );
+			body.appendChild( meta );
+
+			if ( p.sample && p.sample.length ) {
+				var table = mkEl( 'table', 'vh-ra-table' );
+				var thead = mkEl( 'thead' ), htr = mkEl( 'tr' );
+				( p.columns || [] ).forEach( function ( c ) { htr.appendChild( mkEl( 'th', null, c ) ); } );
+				thead.appendChild( htr ); table.appendChild( thead );
+				var tbody = mkEl( 'tbody' );
+				p.sample.forEach( function ( row ) {
+					var tr = mkEl( 'tr' );
+					( p.columns || [] ).forEach( function ( c ) { tr.appendChild( mkEl( 'td', null, row[ c ] != null ? row[ c ] : '' ) ); } );
+					tbody.appendChild( tr );
+				} );
+				table.appendChild( tbody );
+				body.appendChild( table );
+				if ( p.more > 0 ) { body.appendChild( mkEl( 'p', 'vh-sub vh-muted', '…and ' + p.more + ' more in the attached file.' ) ); }
+			}
+
+			d.querySelector( '[data-vh-ra-note]' ).value = p.default_note || '';
+			d.querySelector( '[data-vh-ra-send]' ).disabled = false;
+			d.querySelector( '[data-vh-ra-status]' ).textContent = '';
+			if ( ! d.open ) { d.showModal(); }
+		}
+
+		function send() {
+			var d = dialog();
+			var note = d.querySelector( '[data-vh-ra-note]' ).value;
+			var sendBtn = d.querySelector( '[data-vh-ra-send]' );
+			var statusEl = d.querySelector( '[data-vh-ra-status]' );
+			sendBtn.disabled = true;
+			statusEl.textContent = 'Attaching and posting…';
+			wp.apiFetch( { path: '/vulnhub/v1/tickets/' + current.id + '/attachment', method: 'POST', data: { note: note } } )
+				.then( function ( result ) {
+					d.close();
+					if ( current.status ) { current.status.textContent = ( result && result.message ) || 'Attached.'; }
+				} )
+				.catch( function ( error ) {
+					sendBtn.disabled = false;
+					statusEl.textContent = ( error && error.message ) || 'The list was not attached.';
+				} );
+		}
+
+		document.addEventListener( 'click', function ( event ) {
+			var button = event.target.closest ? event.target.closest( '[data-vh-reattach]' ) : null;
+			if ( ! button ) { return; }
+			event.preventDefault();
+
+			current.id     = parseInt( button.dataset.vhReattach, 10 );
+			current.status = button.parentNode.querySelector( '[data-vh-reattach-status]' );
+
+			var d = dialog();
+			var body = d.querySelector( '[data-vh-ra-body]' );
+			body.innerHTML = '';
+			body.appendChild( mkEl( 'p', 'vh-sub vh-muted', 'Building the current list…' ) );
+			d.querySelector( '[data-vh-ra-note]' ).value = '';
+			d.querySelector( '[data-vh-ra-send]' ).disabled = true;
+			d.querySelector( '[data-vh-ra-status]' ).textContent = '';
+			if ( ! d.open ) { d.showModal(); }
+
+			wp.apiFetch( { path: '/vulnhub/v1/tickets/' + current.id + '/attachment', method: 'POST', data: { preview: true } } )
+				.then( function ( result ) { renderPreview( result || {} ); } )
+				.catch( function ( error ) {
+					var b = d.querySelector( '[data-vh-ra-body]' );
+					b.innerHTML = '';
+					b.appendChild( mkEl( 'p', 'vh-ra-err', ( error && error.message ) || 'The list could not be built.' ) );
+				} );
+		} );
+	}() );
 }() );

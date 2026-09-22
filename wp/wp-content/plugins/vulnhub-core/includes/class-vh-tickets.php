@@ -334,7 +334,7 @@ final class Tickets {
 
 		return (array) $wpdb->get_results(
 			$wpdb->prepare(
-				'SELECT f.*, a.hostname, a.asset_type, a.operating_system, v.title AS vuln_title, v.plugin_id,
+				'SELECT f.*, a.hostname, a.asset_type, a.operating_system, a.tenable_last_scan, a.defender_last_seen, a.lifecycle_status, v.title AS vuln_title, v.plugin_id,
 					v.product, v.product_slug, v.product_kind, v.component_class, v.solution, v.patch_publication_date
 				 FROM ' . vh_table( 'ticket_findings' ) . ' tf
 				 INNER JOIN ' . vh_table( 'findings' ) . ' f ON f.id = tf.finding_id

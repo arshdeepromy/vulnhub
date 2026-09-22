@@ -143,7 +143,7 @@ final class VulnHub_Jira_Ticketer {
 		add_filter( 'vulnhub_post_ticket_comment', array( $this, 'post_ticket_comment' ), 10, 4 );
 		add_filter( 'vulnhub_ticket_transitions', array( $this, 'ticket_transitions' ), 10, 2 );
 		add_filter( 'vulnhub_apply_ticket_transition', array( $this, 'apply_ticket_transition' ), 10, 5 );
-		add_filter( 'vulnhub_refresh_ticket_attachment', array( $this, 'refresh_attachment' ), 10, 2 );
+		add_filter( 'vulnhub_refresh_ticket_attachment', array( $this, 'refresh_attachment' ), 10, 3 );
 	}
 
 	/**
@@ -241,6 +241,167 @@ final class VulnHub_Jira_Ticketer {
 	}
 
 	/**
+	 * Re-attach a vulnerability ticket's still-open findings, current.
+	 *
+	 * The analogue of the asset path for findings tickets. The findings the
+	 * ticket was raised about are rebuilt from `ticket_findings`, and only
+	 * the ones still open -- open or reopened, risk-accepted excluded -- go
+	 * in the file. Fixed findings drop off, so the list shrinks as work
+	 * lands and the comment says how many are done, which is the progress
+	 * report a scope ticket gets from its outcomes.
+	 *
+	 * @param object              $connector Jira connector.
+	 * @param array<string,mixed> $ticket    Ticket row.
+	 * @param string              $key       Jira issue key.
+	 * @return array<string,mixed>
+	 */
+	private function refresh_findings_attachment( $connector, array $ticket, string $key, bool $preview = false, string $note_override = '' ): array {
+		if ( ! class_exists( 'VulnHub_Dash_Export' ) ) {
+			return array( 'ok' => false, 'message' => __( 'The export component is not available.', 'vulnhub' ) );
+		}
+
+		$ticket_id = (int) $ticket['id'];
+		$findings  = \VulnHub\Core\Tickets::findings_for( $ticket_id );
+		$total     = count( $findings );
+
+		if ( $total < 1 ) {
+			return array( 'ok' => false, 'message' => __( 'This ticket covers no findings, so there is no list to send.', 'vulnhub' ) );
+		}
+
+		// Still open is open or reopened, and never a finding whose risk has
+		// been accepted -- that is not outstanding remediation work.
+		$open_ids = array();
+		$fixed    = 0;
+
+		foreach ( $findings as $f ) {
+			$state = (string) ( $f['state'] ?? '' );
+
+			if ( in_array( $state, array( 'open', 'reopened' ), true ) && 0 === (int) ( $f['exception_id'] ?? 0 ) ) {
+				$open_ids[] = (int) $f['id'];
+			} elseif ( 'fixed' === $state ) {
+				++$fixed;
+			}
+		}
+
+		if ( ! $open_ids ) {
+			return array( 'ok' => false, 'message' => __( 'Every finding on this ticket is fixed or risk-accepted, so there is nothing still open to send.', 'vulnhub' ) );
+		}
+
+		// The columns it was raised with, so the file matches the first one.
+		$scope = json_decode( (string) ( $ticket['scope_json'] ?? '' ), true );
+		$cols  = is_array( $scope ) ? array_map( 'strval', (array) ( $scope['cols'] ?? array() ) ) : array();
+
+		$csv = \VulnHub_Dash_Export::findings_csv( $open_ids, $cols );
+
+		if ( empty( $csv['bytes'] ) ) {
+			return array( 'ok' => false, 'message' => __( 'The list could not be rebuilt.', 'vulnhub' ) );
+		}
+
+		$limit = self::attachment_limit();
+
+		if ( strlen( (string) $csv['bytes'] ) > $limit ) {
+			return array(
+				'ok'      => false,
+				/* translators: %s: size limit. */
+				'message' => sprintf( __( 'The rebuilt list is larger than the %s Jira accepts as an attachment.', 'vulnhub' ), size_format( $limit ) ),
+			);
+		}
+
+		$name  = sprintf( 'open-findings-%s-%s.csv', strtolower( $key ), gmdate( 'Y-m-d' ) );
+		$still = count( $open_ids );
+
+		$default_note = sprintf(
+			/* translators: 1: file name, 2: fixed, 3: total, 4: still open. */
+			__( 'Refreshed list attached: %1$s. %2$d of %3$d now fixed; the file lists the %4$d vulnerabilities still open (open or reopened) on this ticket, with where each one stands today. Earlier attachments are out of date.', 'vulnhub' ),
+			$name,
+			$fixed,
+			$total,
+			$still
+		);
+
+		// Preview: everything above is in memory only. Return what will be sent
+		// -- counts, file, a sample and the default note -- and attach nothing.
+		if ( $preview ) {
+			$sample = array();
+
+			foreach ( $findings as $f ) {
+				if ( ! in_array( (string) ( $f['state'] ?? '' ), array( 'open', 'reopened' ), true ) || 0 !== (int) ( $f['exception_id'] ?? 0 ) ) {
+					continue;
+				}
+
+				$sample[] = array(
+					'Asset'         => (string) ( $f['hostname'] ?? '' ),
+					'Vulnerability' => vh_trim( (string) ( $f['vuln_title'] ?? '' ), 70 ),
+					'Severity'      => ucfirst( (string) ( $f['severity'] ?? '' ) ),
+					'State'         => ucfirst( (string) ( $f['state'] ?? '' ) ),
+				);
+
+				if ( count( $sample ) >= 15 ) {
+					break;
+				}
+			}
+
+			return array(
+				'ok'           => true,
+				'preview'      => true,
+				'kind'         => 'vulnerability',
+				'filename'     => $name,
+				/* translators: 1: still open, 2: total, 3: fixed. */
+				'scope'        => sprintf( __( '%1$d still open of %2$d — %3$d fixed', 'vulnhub' ), $still, $total, $fixed ),
+				'rows'         => (int) $csv['rows'],
+				'columns'      => array( 'Asset', 'Vulnerability', 'Severity', 'State' ),
+				'sample'       => $sample,
+				'more'         => max( 0, $still - count( $sample ) ),
+				'default_note' => $default_note,
+			);
+		}
+
+		$note   = '' !== $note_override ? $note_override : $default_note;
+		$upload = $connector->client()->attach( $key, $name, (string) $csv['bytes'], 'text/csv' );
+
+		if ( ! $upload->ok() ) {
+			return array(
+				'ok'      => false,
+				/* translators: 1: file name, 2: HTTP status, 3: error. */
+				'message' => sprintf( __( 'Attaching %1$s failed (HTTP %2$d): %3$s', 'vulnhub' ), $name, $upload->status, vh_trim( $upload->error_message(), 160 ) ),
+			);
+		}
+
+		// Internal first, like every comment this product posts; an ordinary
+		// comment is the fallback for an issue with no service-desk request.
+		$said = $connector->post_comment( $key, $note, false );
+
+		if ( empty( $said['ok'] ) ) {
+			$said = $connector->post_comment( $key, $note, true );
+		}
+
+		$connector->forget_comments( $key );
+
+		vulnhub()->logger->audit(
+			'ticket.attachment_refreshed',
+			sprintf( '%s: %s (%d rows, %d still open, %d of %d fixed)', $key, $name, (int) $csv['rows'], $still, $fixed, $total ),
+			'ticket',
+			$ticket_id,
+			array( 'file' => $name, 'rows' => (int) $csv['rows'], 'still_open' => $still, 'fixed' => $fixed, 'total' => $total )
+		);
+
+		return array(
+			'ok'      => true,
+			/* translators: 1: file name, 2: still open, 3: fixed, 4: total, 5: what happened to the note. */
+			'message' => sprintf(
+				__( 'Attached %1$s (%2$d still-open finding(s)). %3$d of %4$d now fixed. %5$s', 'vulnhub' ),
+				$name,
+				$still,
+				$fixed,
+				$total,
+				! empty( $said['ok'] )
+					? __( 'A comment on the ticket says so.', 'vulnhub' )
+					: __( 'The explanatory comment could not be posted, so say which file is current yourself.', 'vulnhub' )
+			),
+		);
+	}
+
+	/**
 	 * Answer `vulnhub_refresh_ticket_attachment`: send the list again, current.
 	 *
 	 * A scope ticket travels as a CSV, and that CSV is a photograph of the day
@@ -264,7 +425,7 @@ final class VulnHub_Jira_Ticketer {
 	 * @param array<string,mixed>      $ticket Ticket row.
 	 * @return array<string,mixed>|null
 	 */
-	public function refresh_attachment( ?array $result, array $ticket ): ?array {
+	public function refresh_attachment( ?array $result, array $ticket, array $options = array() ): ?array {
 		if ( null !== $result ) {
 			return $result;
 		}
@@ -282,6 +443,16 @@ final class VulnHub_Jira_Ticketer {
 				'ok'      => false,
 				'message' => __( 'This ticket was recorded by hand, so there is no Jira issue to attach a file to.', 'vulnhub' ),
 			);
+		}
+
+		$preview       = ! empty( $options['preview'] );
+		$note_override = trim( (string) ( $options['note'] ?? '' ) );
+
+		// A vulnerability ticket travels as a findings list, not an asset
+		// list. Its progress report is the findings still open, so it takes a
+		// different path; scope tickets fall through to the asset path below.
+		if ( \VulnHub\Core\Tickets::KIND_VULNERABILITY === (string) ( $ticket['kind'] ?? '' ) ) {
+			return $this->refresh_findings_attachment( $connector, $ticket, $key, $preview, $note_override );
 		}
 
 		if ( ! class_exists( 'VulnHub_Dash_Export' ) ) {
@@ -323,7 +494,49 @@ final class VulnHub_Jira_Ticketer {
 			);
 		}
 
-		$name   = sprintf( 'assets-%s-%s.csv', strtolower( $key ), gmdate( 'Y-m-d' ) );
+		$name = sprintf( 'assets-%s-%s.csv', strtolower( $key ), gmdate( 'Y-m-d' ) );
+		$done = (int) ( $counts['resolved'] ?? 0 );
+
+		$default_note = sprintf(
+			/* translators: 1: file name, 2: done, 3: total. */
+			__( 'Refreshed list attached: %1$s. %2$d of %3$d now done; the file lists every asset this ticket was raised about, with where each one stands today. Earlier attachments are out of date.', 'vulnhub' ),
+			$name,
+			$done,
+			$total
+		);
+
+		// Preview: return what will be sent and attach nothing.
+		if ( $preview ) {
+			$sample = array();
+
+			foreach ( (array) $list['rows'] as $row ) {
+				$sample[] = array(
+					'Asset'   => (string) ( $row['hostname'] ?? '' ),
+					'Type'    => (string) ( $row['asset_type'] ?? '' ),
+					'Outcome' => ucfirst( (string) ( $row['outcome'] ?? '' ) ),
+				);
+
+				if ( count( $sample ) >= 15 ) {
+					break;
+				}
+			}
+
+			return array(
+				'ok'           => true,
+				'preview'      => true,
+				'kind'         => 'scope',
+				'filename'     => $name,
+				/* translators: 1: done, 2: total. */
+				'scope'        => sprintf( __( '%1$d of %2$d done', 'vulnhub' ), $done, $total ),
+				'rows'         => (int) $csv['rows'],
+				'columns'      => array( 'Asset', 'Type', 'Outcome' ),
+				'sample'       => $sample,
+				'more'         => max( 0, $total - count( $sample ) ),
+				'default_note' => $default_note,
+			);
+		}
+
+		$note   = '' !== $note_override ? $note_override : $default_note;
 		$upload = $connector->client()->attach( $key, $name, (string) $csv['bytes'], 'text/csv' );
 
 		if ( ! $upload->ok() ) {
@@ -338,15 +551,6 @@ final class VulnHub_Jira_Ticketer {
 				),
 			);
 		}
-
-		$done = (int) ( $counts['resolved'] ?? 0 );
-		$note = sprintf(
-			/* translators: 1: file name, 2: done, 3: total. */
-			__( 'Refreshed list attached: %1$s. %2$d of %3$d now done; the file lists every asset this ticket was raised about, with where each one stands today. Earlier attachments are out of date.', 'vulnhub' ),
-			$name,
-			$done,
-			$total
-		);
 
 		/*
 		 * Internal first, like every other comment this product posts: a reply

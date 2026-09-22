@@ -648,7 +648,15 @@ final class Rest {
 		 * @param array<string,mixed>|null $result Result.
 		 * @param array<string,mixed>      $ticket Ticket row.
 		 */
-		$result = apply_filters( 'vulnhub_refresh_ticket_attachment', null, $ticket );
+		$result = apply_filters(
+			'vulnhub_refresh_ticket_attachment',
+			null,
+			$ticket,
+			array(
+				'preview' => (bool) $request->get_param( 'preview' ),
+				'note'    => (string) $request->get_param( 'note' ),
+			)
+		);
 
 		if ( null === $result ) {
 			return new WP_Error( 'vulnhub_no_itsm', __( 'No ticketing integration is active.', 'vulnhub' ), array( 'status' => 409 ) );

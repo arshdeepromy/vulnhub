@@ -781,3 +781,38 @@ The table is ready for it. A JSM integration needs to:
   fires straight after a ticket is recorded.
 - **Create:** fill in the key instead of having the operator type it. The dialog
   already has the request type, summary, notes and the CSV to attach.
+
+## Send an updated list to Jira — review before sending
+
+The "Send an updated list to Jira" action (scope and vulnerability tickets) opens
+a review dialog before anything is sent: it fetches a **preview** (`preview:true`
+on `POST /tickets/{id}/attachment`) showing the scope counts, the file name, a
+sample of the rows, and the comment that will be posted in an **editable** box.
+Send transmits the (possibly edited) `note`; nothing reaches Jira until then. For
+a vulnerability ticket the list is the findings still **open or reopened** (fixed
+and risk-accepted are left off), attached as `open-findings-<KEY>-<date>.csv`.
+
+## Auto-verify when the evidence is already in
+
+`VulnHub_Tenable_Ticket_Check::run_due()` now also brings a check forward when a
+resolved, finding-based ticket's covered findings **all read fixed**
+(`already_clear()`). There is nothing to wait for — the confirming scan has run —
+and verifying an all-fixed ticket only stamps its findings confirmed, never
+reopens one, so it is safe to skip the due-date wait. Tickets that are not yet
+fixed keep their scheduled `next_check`.
+
+## Findings table: Last seen + out-of-service
+
+The ticket findings table shows a **Last seen** column with both sources
+("Tenable 3h ago · Defender 2 weeks ago"), from `tenable_last_scan` and
+`defender_last_seen` (added to `Tickets::findings_for`). A finding whose asset the
+CMDB no longer has in service (`lifecycle_status <> 'in_service'`) reads as
+**resolved · out of service** — the machine is gone, so it cannot carry a live
+finding.
+
+## By department tab
+
+A vulnerability ticket's findings can be grouped **by department** (the department
+of the person who owns each finding's asset), with resolved / outstanding counts
+and a progress bar per department. Resolved uses the same rule as the list: the
+scanner reports it fixed **or** the asset is out of service.

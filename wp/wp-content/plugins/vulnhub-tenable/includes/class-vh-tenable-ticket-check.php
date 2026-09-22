@@ -527,7 +527,13 @@ final class VulnHub_Tenable_Ticket_Check {
 		$due = array();
 
 		foreach ( $rows as $row ) {
-			if ( $this->plan_ticket( $row, time() ) ) {
+			// Plan the scheduled check either way, so `next_check` stays
+			// current -- but also bring the check forward when the evidence is
+			// already in: a resolved ticket whose findings all read fixed has
+			// nothing left to wait for.
+			$planned = $this->plan_ticket( $row, time() );
+
+			if ( $planned || $this->already_clear( $row ) ) {
 				$due[] = (int) $row['id'];
 			}
 		}
@@ -550,6 +556,44 @@ final class VulnHub_Tenable_Ticket_Check {
 	 * @param array<string,mixed> $ticket Ticket row.
 	 * @return bool Whether a check is due now.
 	 */
+	/**
+	 * Is a resolved, finding-based ticket already clear -- every finding it
+	 * covers now reads fixed?
+	 *
+	 * When it is, the scan that would confirm the close has already run, so
+	 * there is no reason to wait for the due date or the next scheduled scan.
+	 * Verifying an all-fixed ticket only stamps its findings confirmed; it
+	 * never reopens one, so checking early has no downside. Asset-scope
+	 * tickets are judged their own way and are left to the schedule.
+	 *
+	 * @param array<string,mixed> $ticket Ticket row.
+	 */
+	private function already_clear( array $ticket ): bool {
+		if ( 'done' !== (string) ( $ticket['status_category'] ?? '' ) ) {
+			return false;
+		}
+
+		global $wpdb;
+
+		$total = (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM ' . vh_table( 'ticket_findings' ) . ' WHERE ticket_id = %d', (int) $ticket['id'] ) ); // phpcs:ignore
+
+		if ( $total < 1 ) {
+			return false;
+		}
+
+		$not_fixed = (int) $wpdb->get_var( // phpcs:ignore
+			$wpdb->prepare(
+				'SELECT COUNT(*) FROM ' . vh_table( 'ticket_findings' ) . ' tf
+				 JOIN ' . vh_table( 'findings' ) . ' f ON f.id = tf.finding_id
+				 WHERE tf.ticket_id = %d AND f.state <> %s',
+				(int) $ticket['id'],
+				'fixed'
+			)
+		);
+
+		return 0 === $not_fixed;
+	}
+
 	public function plan_ticket( array $ticket, int $now ): bool {
 		$last   = \VulnHub\Core\Tickets::last_check( $ticket );
 		$anchor = max(

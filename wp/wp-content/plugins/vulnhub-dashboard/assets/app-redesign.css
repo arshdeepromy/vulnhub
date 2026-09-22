@@ -2949,3 +2949,22 @@ dialog.vh-ask::backdrop { background: rgba(4, 8, 18, .6); }
 	border-radius: 999px; padding: 1px 7px; min-width: 22px; text-align: center;
 }
 .vh-tabs__tab.is-active .vh-tabs__n { color: var(--vh-ink-2); }
+
+/* "Send an updated list to Jira" review modal (data-vh-reattach) */
+.vh-ra-meta { margin: 0 0 .75rem; }
+.vh-ra-table { width: 100%; border-collapse: collapse; font-size: .85rem; margin: .25rem 0 .5rem; }
+.vh-ra-table th,
+.vh-ra-table td { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid var(--vh-border, rgba(148, 163, 184, .18)); }
+.vh-ra-table th { font-weight: 600; opacity: .75; }
+.vh-ra-note-label { display: block; font-size: .8rem; opacity: .8; margin: .5rem 0 .25rem; }
+.vh-ra-note { width: 100%; box-sizing: border-box; font: inherit; padding: .5rem .6rem; border-radius: 8px;
+	border: 1px solid var(--vh-border, rgba(148, 163, 184, .3)); background: var(--vh-surface-2, rgba(15, 23, 42, .35)); color: inherit; }
+.vh-ra-err { color: var(--vh-danger, #f87171); }
+
+/* Ticket findings sub-tabs + department progress */
+.vh-subtabs { display:flex; gap:.25rem; margin:.25rem 0 1rem; border-bottom:1px solid var(--vh-border, rgba(148,163,184,.15)); }
+.vh-subtab { padding:.5rem .9rem; color:var(--vh-muted,#94a3b8); text-decoration:none; border-bottom:2px solid transparent; }
+.vh-subtab.is-active { color:var(--vh-fg,#e2e8f0); border-bottom-color:#38bdf8; }
+.vh-deptbar { display:inline-block; width:120px; height:8px; border-radius:4px; background:rgba(148,163,184,.18); overflow:hidden; vertical-align:middle; margin-right:.5rem; }
+.vh-deptbar span { display:block; height:100%; background:#fbbf24; }
+.vh-deptbar.is-clear span { background:#34d399; }
