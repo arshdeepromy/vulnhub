@@ -183,6 +183,20 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 				'help'    => __( 'The inventory moves far faster than the vulnerability picture: a machine is built, renamed or retired in minutes, while its findings only change when something rescans it. An assets-only run downloads the small asset export and skips the multi-gigabyte vulnerability one, so it can afford to run often. It never advances the vulnerability watermark, so the next normal sync still covers everything it would have.', 'vulnhub' ),
 			),
 			array(
+				'key'     => 'findings_interval_hours',
+				'label'   => __( 'Import findings at most every', 'vulnhub' ),
+				'type'    => 'select',
+				'default' => '0',
+				'options' => array(
+					'0'  => __( 'Every sync', 'vulnhub' ),
+					'6'  => __( 'Every 6 hours', 'vulnhub' ),
+					'12' => __( 'Every 12 hours', 'vulnhub' ),
+					'24' => __( 'Daily', 'vulnhub' ),
+					'48' => __( 'Every 2 days', 'vulnhub' ),
+				),
+				'help'    => __( 'The ceiling on the expensive half. Set with the schedule above, this is what lets the inventory refresh hourly while the vulnerability export runs once a day: a scheduled run that arrives before the findings are due refreshes assets only. "Sync now" always imports findings whatever this says, because somebody asked for it; "Sync assets only" always skips them. A full resync ignores it entirely — everything the source holds cannot mean half of it.', 'vulnhub' ),
+			),
+			array(
 				'key'         => 'base_url',
 				'label'       => __( 'API base URL', 'vulnhub' ),
 				'type'        => 'url',
@@ -571,6 +585,37 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 		return 0 === $last || time() - $last >= $hours * HOUR_IN_SECONDS;
 	}
 
+	/** The ceiling on how often the vulnerability export runs, in hours. 0 = every sync. */
+	public function findings_interval_hours(): int {
+		return max( 0, min( 168, (int) $this->get( 'findings_interval_hours', 0 ) ) );
+	}
+
+	/**
+	 * Is the expensive half due?
+	 *
+	 * The assets-only schedule could not, on its own, express "assets hourly,
+	 * findings daily". It only ever *downgraded* a run that was going to
+	 * happen anyway, so with the connector on an hourly schedule and assets
+	 * due every hour, every single run became assets-only and the findings
+	 * never imported at all. The cadence needs two tests, not one: the cheap
+	 * half asks "am I due", and so does the expensive half.
+	 *
+	 * Measured from `sync_watermark`, which is exactly "when a run last
+	 * imported findings" -- an assets-only run deliberately does not advance
+	 * it, so it cannot make findings look fresher than they are.
+	 */
+	public function findings_due(): bool {
+		$hours = $this->findings_interval_hours();
+
+		if ( $hours <= 0 ) {
+			return true;
+		}
+
+		$last = (int) $this->settings->get( $this->id(), 'sync_watermark', 0 );
+
+		return 0 === $last || time() - $last >= $hours * HOUR_IN_SECONDS;
+	}
+
 	/**
 	 * The pending-request flag lives in its own option, not in the connector
 	 * settings array. Settings are saved whole from an in-process copy, so a
@@ -883,7 +928,25 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 			 * `is_full`. A full resync always includes findings: "everything
 			 * the source holds" cannot mean half of it.
 			 */
-			$assets_only = ! $full && ( ! empty( $args['assets_only'] ) || $this->take_assets_only_request() || $this->assets_only_due() );
+			/*
+			 * Three ways in, and the third is a schedule rather than a
+			 * request. A *scheduled* run that arrives while the assets
+			 * refresh is due and the findings are not takes the cheap path;
+			 * that pairing is what lets the inventory follow an hourly
+			 * cadence while the 5 GB vulnerability export runs daily.
+			 *
+			 * A manual "Sync now" is deliberately exempt. Somebody pressing
+			 * it is asking for the findings, and silently handing them a
+			 * 6-second asset refresh with the same button and the same
+			 * wording is the kind of surprise that ends with the sync being
+			 * pressed four more times. The card already carries "Sync assets
+			 * only" for anyone who wants the cheap half on purpose.
+			 */
+			$scheduled_assets_only = 'manual' !== (string) ( $args['mode'] ?? 'scheduled' )
+				&& $this->assets_only_due()
+				&& ! $this->findings_due();
+
+			$assets_only = ! $full && ( ! empty( $args['assets_only'] ) || $this->take_assets_only_request() || $scheduled_assets_only );
 
 			$state  = array(
 				'phase'       => 'download',
@@ -898,7 +961,15 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 			$this->log(
 				$full
 					? sprintf( 'Staged sync: fresh FULL resync (%s), since %s; assets scanned within %d days.', $reason, wp_date( 'Y-m-d H:i', $since ), $this->asset_days() )
-					: sprintf( 'Staged sync: fresh incremental run, since %s.', wp_date( 'Y-m-d H:i', $since ) )
+					: ( $assets_only
+						? sprintf(
+							'Staged sync: fresh assets-only run, since %s (%s). The vulnerability export is skipped and the watermark stays put.',
+							wp_date( 'Y-m-d H:i', $since ),
+							$scheduled_assets_only
+								? sprintf( 'findings are not due for another %s', human_time_diff( time(), (int) $this->settings->get( $this->id(), 'sync_watermark', 0 ) + $this->findings_interval_hours() * HOUR_IN_SECONDS ) )
+								: 'asked for'
+						)
+						: sprintf( 'Staged sync: fresh incremental run, since %s.', wp_date( 'Y-m-d H:i', $since ) ) )
 			);
 		} else {
 			$this->log( sprintf( 'Staged sync: resuming %s run at phase "%s".', empty( $state['is_full'] ) ? 'incremental' : 'full', $phase ) );
@@ -1205,6 +1276,109 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 	 *
 	 * @param array<string,mixed> $state Run state.
 	 */
+	/**
+	 * How far back a removal sweep ever looks, whatever the run's own window.
+	 *
+	 * A full resync's `since` reaches back a decade, and asking Tenable for
+	 * every asset it has deleted since 2016 would drag hundreds of records
+	 * nobody here has ever held. Anything older than this has been caught by a
+	 * previous sweep or by the full resync's own absence prune.
+	 */
+	private const REMOVAL_WINDOW_DAYS = 90;
+
+	/**
+	 * Ask Tenable what it has removed, and retire it here.
+	 *
+	 * This is the half of "incremental" that the vulnerability export cannot
+	 * do. `since` on the vuln export filters on `tracking.last_found` -- when
+	 * a finding was last *seen* -- and on an agent estate every agent reports
+	 * daily, so an incremental run re-reads essentially the whole set to find
+	 * a handful of changes. There is no "changed since" filter to ask for
+	 * instead; the tenant's own vocabulary
+	 * (`GET /filters/workbenches/vulnerabilities`) offers only first_found,
+	 * last_found and the plugin's dates.
+	 *
+	 * The asset side is different, and this uses it. `is_deleted` /
+	 * `deleted_at` and `is_terminated` / `terminated_at` are real export
+	 * filters, so "what did you remove since the last run" is a question
+	 * Tenable will answer directly -- two small exports, seconds each, against
+	 * the multi-gigabyte one. Until this existed a machine Tenable dropped sat
+	 * in the estate until the next full resync noticed it was absent, up to a
+	 * week later: measured on this estate, 12 assets terminated in Tenable
+	 * were still counted as in service, carrying 108 open findings between
+	 * them -- remediation work queued against machines that no longer exist.
+	 *
+	 * Runs on every kind of run, including assets-only, because it is cheap
+	 * and because it is the inventory question, not the findings one.
+	 *
+	 * @param int $since The run's own window start, unix seconds.
+	 * @return array{deleted:int,terminated:int,retired:int,matched:int,shared:int}
+	 */
+	private function sync_removals( int $since ): array {
+		$out   = array( 'deleted' => 0, 'terminated' => 0, 'retired' => 0, 'matched' => 0, 'shared' => 0 );
+		$floor = time() - self::REMOVAL_WINDOW_DAYS * DAY_IN_SECONDS;
+		$since = max( $since, $floor );
+
+		$uuids = array();
+
+		/*
+		 * Two exports, not one. The flags are separate booleans: asking for
+		 * both true in a single export means "deleted AND terminated", which
+		 * is a much smaller set than the union we actually want.
+		 */
+		foreach ( array(
+			'deleted'    => array( 'is_deleted' => true, 'deleted_at' => $since ),
+			'terminated' => array( 'is_terminated' => true, 'terminated_at' => $since ),
+		) as $kind => $filters ) {
+			$seen = array();
+
+			try {
+				$this->client()->run_export(
+					VulnHub_Tenable_Client::KIND_ASSETS,
+					array(
+						'chunk_size' => $this->asset_chunk_size(),
+						'filters'    => $filters,
+					),
+					static function ( array $chunk ) use ( &$seen ): void {
+						foreach ( $chunk as $rec ) {
+							$uuid = (string) ( $rec['id'] ?? $rec['uuid'] ?? '' );
+
+							if ( '' !== $uuid ) {
+								$seen[ $uuid ] = true;
+							}
+						}
+					}
+				);
+			} catch ( \Throwable $e ) {
+				/*
+				 * A removal sweep that fails must not fail the sync. The
+				 * findings are already imported by this point and they are the
+				 * expensive part; losing them to a small inventory read would
+				 * be a poor trade. It is logged and the next run tries again,
+				 * over a window that still reaches back far enough to cover
+				 * this one.
+				 */
+				$this->log( sprintf( 'Removal sweep (%s) failed, skipped: %s', $kind, vh_trim( $e->getMessage(), 160 ) ) );
+				continue;
+			}
+
+			$out[ $kind ] = count( $seen );
+			$uuids       += $seen;
+		}
+
+		if ( ! $uuids ) {
+			return $out;
+		}
+
+		$result = \VulnHub\Core\Repo::retire_removed_tenable( array_keys( $uuids ) );
+
+		$out['retired'] = (int) $result['retired'];
+		$out['matched'] = (int) $result['matched'];
+		$out['shared']  = (int) $result['shared'];
+
+		return $out;
+	}
+
 	private function finalize_sync( array $state ): void {
 		/*
 		 * Prune Tenable-dropped assets -- but only on a FULL run, whose asset
@@ -1238,6 +1412,24 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 			} elseif ( (int) $result['retired'] > 0 ) {
 				$this->log( sprintf( 'Retired %d asset(s) Tenable no longer reports (Tenable-only, reversible).', (int) $result['retired'] ) );
 			}
+		}
+
+		/*
+		 * What Tenable says it removed, on every run. Before the roll-ups, so
+		 * a machine retired here drops out of the per-asset counters in the
+		 * same pass rather than carrying its open findings until the next one.
+		 */
+		$removed = $this->sync_removals( (int) ( $state['since'] ?? 0 ) );
+
+		if ( $removed['deleted'] + $removed['terminated'] > 0 ) {
+			$this->log( sprintf(
+				'Tenable reports %d deleted and %d terminated asset(s) in the window: %d matched here, %d retired, %d left alone because another source also knows them.',
+				$removed['deleted'],
+				$removed['terminated'],
+				$removed['matched'],
+				$removed['retired'],
+				$removed['shared']
+			) );
 		}
 
 		$this->log( 'Recalculating asset roll-ups…' );

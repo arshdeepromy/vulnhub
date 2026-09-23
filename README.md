@@ -250,6 +250,18 @@ multi-hundred-thousand-row export in memory. The full design is in
   assets scanned in it. Findings that come back unchanged get a light "last seen"
   update instead of a full rewrite, and the summary counts them as *unchanged*.
   The watermark only advances on a successful run.
+- **Two cadences, because the halves cost different amounts.** The asset export
+  is ~3 seconds; the vulnerability export is ~5 GB and a quarter of an hour. So
+  *Refresh assets every* and *Import findings at most every* are separate
+  settings, and a scheduled run that arrives before the findings are due
+  refreshes the inventory only. Here that is 23 of every 24 runs, each about
+  seven seconds. *Sync now* always imports findings; a full resync ignores both.
+- **Removals are asked for, not inferred.** Pruning works out that a machine is
+  gone by noticing it is absent, which is only safe on a full resync. Every run
+  also asks Tenable directly what it has deleted or terminated since the last
+  one — two small exports — and retires those, reversibly and Tenable-scoped.
+  On the first run here that caught 12 machines still counted as in service,
+  carrying 108 open findings between them.
 - **Periodic full resyncs.** An incremental run cannot see asset changes made
   without a rescan, or assets Tenable has deleted. A full resync re-reads the
   whole inventory: on the first sync, every *Full resync every N days* (default

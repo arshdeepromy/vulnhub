@@ -215,6 +215,40 @@ The fast path returns `unchanged: true`, and the run summary reports those as
 
 ---
 
+### What "incremental" cannot mean here
+
+Read the two sections above together and the limit is plain: `since` filters on
+**when a finding was last seen**, not when it last changed. Tenable has no
+filter for the second question. Asked for this tenant's own vocabulary:
+
+```
+GET /filters/workbenches/vulnerabilities   -> 67 filters
+   the only time axes: tracking.first_found, tracking.last_found,
+   and the plugin's own publication/modification dates
+```
+
+On an agent-based estate every agent checks in daily, so every open finding is
+"seen" every day and comes back in every window. Measured on a genuine
+incremental run here:
+
+```
+run 173  fresh incremental, since 2026-09-19 19:29
+         221,403 findings imported -- 221,391 of them unchanged
+         14m 36s
+```
+
+Twelve findings had actually moved. The stored download estimates say the same
+thing from the other end: `vulnhub_dl_est_incr_tenable` is 3.9 GB against
+`..._full_` 5.4 GB, so an incremental download is **73% of a full one**.
+
+This is not a defect in the watermark and it is not fixable by narrowing the
+window -- a one-hour window on a daily-reporting agent estate still returns
+every finding the agents re-observed. It is a property of the API. What follows
+from it is the rest of this page: the inventory question is asked separately
+and cheaply (removals, below, and the two cadences after that), and the
+expensive export is put on a schedule that matches how often its answer
+actually changes.
+
 ## Full resyncs
 
 A full resync re-reads everything the scanner holds: `since` = now −
@@ -311,6 +345,87 @@ is only the recently scanned hosts. It is deliberately conservative:
   nothing — a truncated or failed export can't wipe the fleet.
 
 ---
+
+## Removals: what the source says it dropped
+
+Pruning infers removal from **absence**, which is why it only runs on a full
+resync and needs the 15% abort. The asset export can also be asked the
+question directly, and that is a different and better kind of evidence:
+
+| filter | means |
+|---|---|
+| `is_deleted` + `deleted_at` | Tenable deleted the asset record, with the timestamp |
+| `is_terminated` + `terminated_at` | the machine was terminated, with the timestamp |
+
+`VulnHub_Tenable_Connector::sync_removals()` runs two small exports in the
+finalize phase of **every** run -- incremental, full and assets-only -- and
+hands the uuids to `Repo::retire_removed_tenable()`. Both cost seconds against
+the vulnerability export's minutes.
+
+Two exports and not one, because the flags are separate booleans: asking for
+both true in a single export means deleted **and** terminated, a much smaller
+set than the union.
+
+**No safety abort, deliberately.** The prune aborts over 15% because a
+truncated export makes the *absent* set longer, which is the direction that
+wipes a fleet. Here truncation can only make the list shorter, and a short list
+retires too few -- the safe direction. The reasoning is recorded on the method
+so nobody adds the abort back by analogy.
+
+Same scope and same marker as the prune: only assets Tenable owns outright
+(`primary_source = 'tenable'` and no id from any other connector), retired
+through `Lifecycle::set( …, 'missing' )` so their findings are archived with
+`prev_state`, and every retirement recorded in `PRUNED_OPTION` so
+`restore_pruned_tenable()` brings the asset and its findings back if Tenable
+ever reports it again.
+
+**What it found on first run here**, which is the reason it exists: Tenable had
+deleted 766 assets and terminated 261 in the preceding 90 days. Twelve of those
+were in this estate and **still counted as in service, carrying 108 open
+findings** -- remediation work queued against machines that no longer exist.
+Eleven were retired; the twelfth was left alone because another source also
+knows it, which is the scope rule doing its job. Until this existed they would
+have sat there until a full resync noticed they were absent, up to a week.
+
+## Two cadences: the cheap half and the expensive half
+
+The inventory changes by the minute and the findings do not. So they have
+separate schedules, and a run consults both:
+
+| setting | question | cost here |
+|---|---|---|
+| *Refresh assets every* (`assets_interval_hours`) | is the cheap half due? | ~3 s, 574 records |
+| *Import findings at most every* (`findings_interval_hours`) | is the expensive half due? | ~15 min, 5 GB |
+
+A **scheduled** run takes the assets-only path when the first is due and the
+second is not. Everything else is unchanged: *Sync now* always imports
+findings, *Sync assets only* never does, and a full resync ignores both --
+"everything the source holds" cannot mean half of it.
+
+**One test was not enough.** `assets_only_due()` shipped on its own, and it can
+only ever *downgrade* a run that was going to happen anyway. With the connector
+on an hourly schedule and assets due every hour, every single run became
+assets-only and the vulnerability export never ran at all. The expensive half
+needs its own "am I due" test, which is `findings_due()`, measured from
+`sync_watermark` -- precisely "when a run last imported findings", because an
+assets-only run deliberately does not advance it.
+
+A worked example, from this estate:
+
+```
+connector schedule       hourly
+assets every             1 h
+findings at most every   24 h
+
+cron tick          -> assets only          7 s
+Sync now           -> assets + findings   ~15 min
+Sync assets only   -> assets only          7 s
+Full resync        -> everything          ~16 min
+```
+
+Twenty-three of every twenty-four scheduled runs are now seconds long, and the
+inventory -- including anything Tenable has removed -- is never more than an
+hour stale.
 
 ## Client polling limits
 

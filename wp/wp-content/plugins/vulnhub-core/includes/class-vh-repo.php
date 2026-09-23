@@ -1964,6 +1964,122 @@ final class Repo {
 	}
 
 	/**
+	 * Retire assets Tenable says it has deleted or terminated.
+	 *
+	 * The sibling of retire_absent_tenable(), and the whole difference is the
+	 * evidence. That one *infers* removal from absence, which is why it only
+	 * runs on a full resync and why it aborts over 15%: a truncated export
+	 * looks exactly like an estate that lost machines. This one is *told* --
+	 * Tenable's asset export answers `is_deleted` / `is_terminated` with the
+	 * timestamp, so the claim is positive, dated and per asset.
+	 *
+	 * So there is deliberately no safety abort here. Truncation can only ever
+	 * make this list shorter, and a short list retires too few, which is the
+	 * safe direction. On the absence test truncation makes the set *longer*,
+	 * which is the direction that wipes a fleet.
+	 *
+	 * Same scope as the prune -- only assets Tenable owns outright, never one
+	 * Intune, Defender, the CMDB or a cloud connector also knows about, because
+	 * Tenable dropping a machine is Tenable's statement about its own
+	 * inventory, not about the estate. And the same marker, so an asset that
+	 * comes back is restored by restore_pruned_tenable() with its archived
+	 * findings, and a lifecycle somebody sets by hand is left alone.
+	 *
+	 * @param string[] $uuids Tenable asset uuids reported deleted or terminated.
+	 * @return array{retired:int,matched:int,shared:int}
+	 */
+	public static function retire_removed_tenable( array $uuids ): array {
+		global $wpdb;
+
+		$uuids = array_values( array_unique( array_filter( array_map( 'strval', $uuids ) ) ) );
+		$out   = array( 'retired' => 0, 'matched' => 0, 'shared' => 0 );
+
+		if ( ! $uuids ) {
+			return $out;
+		}
+
+		$a    = vh_table( 'assets' );
+		$rows = array();
+
+		// Chunked: this list is however many machines the source removed in the
+		// window, and a single IN() of a thousand strings is not a query worth
+		// handing MariaDB.
+		foreach ( array_chunk( $uuids, 500 ) as $batch ) {
+			$holes = implode( ',', array_fill( 0, count( $batch ), '%s' ) );
+			$rows  = array_merge(
+				$rows,
+				(array) $wpdb->get_results(
+					$wpdb->prepare(
+						// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+						"SELECT id, lifecycle_status, primary_source, intune_id, defender_id,
+						        azure_ad_device_id, azure_vm_id, aws_instance_id, gcp_instance_id,
+						        cmdb_id, cmdb_key
+						   FROM {$a}
+						  WHERE tenable_uuid IN ({$holes})",
+						$batch
+					),
+					ARRAY_A
+				)
+			);
+		}
+
+		$out['matched'] = count( $rows );
+
+		$reportable = vh_reportable_statuses();
+		$retire     = array();
+		$prev       = array();
+
+		foreach ( $rows as $r ) {
+			$shared = 'tenable' !== (string) $r['primary_source'];
+
+			foreach ( array( 'intune_id', 'defender_id', 'azure_ad_device_id', 'azure_vm_id', 'aws_instance_id', 'gcp_instance_id', 'cmdb_id', 'cmdb_key' ) as $col ) {
+				if ( '' !== (string) $r[ $col ] ) {
+					$shared = true;
+				}
+			}
+
+			if ( $shared ) {
+				++$out['shared'];
+				continue;
+			}
+
+			// Already out of the reporting scope: nothing to retire, and moving
+			// it again would overwrite a status somebody chose.
+			if ( ! in_array( (string) $r['lifecycle_status'], $reportable, true ) ) {
+				continue;
+			}
+
+			$retire[]                = (int) $r['id'];
+			$prev[ (int) $r['id'] ] = (string) $r['lifecycle_status'];
+		}
+
+		if ( ! $retire ) {
+			return $out;
+		}
+
+		Lifecycle::set( $retire, 'missing' );
+
+		// After the move, never before: Lifecycle::set() fires
+		// `vulnhub_lifecycle_changed`, which forget_pruned_tenable() listens to,
+		// so a marker written first would erase itself.
+		$marks = (array) get_option( self::PRUNED_OPTION, array() );
+		$now   = time();
+
+		foreach ( $prev as $id => $status ) {
+			$marks[ (int) $id ] = array(
+				'prev' => $status,
+				'at'   => $now,
+			);
+		}
+
+		update_option( self::PRUNED_OPTION, $marks, false );
+
+		$out['retired'] = count( $retire );
+
+		return $out;
+	}
+
+	/**
 	 * Assets a full Tenable resync retired, and the status each had before.
 	 *
 	 * A marker, not a column: it only ever holds the handful of assets the
