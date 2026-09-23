@@ -342,6 +342,20 @@ final class VulnHub_Backup_Jobs {
 	}
 
 	/**
+	 * Whether a restore is in progress right now.
+	 *
+	 * Read from this table because it is the one table the dump never
+	 * replaces, so the answer holds all the way through a restore.
+	 */
+	public static function restore_running(): bool {
+		global $wpdb;
+
+		$table = self::table();
+
+		return (bool) $wpdb->get_var( $wpdb->prepare( "SELECT 1 FROM {$table} WHERE mode = 'restore' AND status = %s LIMIT 1", self::RUNNING ) ); // phpcs:ignore WordPress.DB
+	}
+
+	/**
 	 * Recent jobs, newest first.
 	 *
 	 * @param int $limit How many rows.

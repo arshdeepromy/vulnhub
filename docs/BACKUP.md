@@ -132,6 +132,19 @@ contain its own hash; that is what the sha256 recorded on the job is for.
   the dump carries on — a half-applied dump is worse than a complete one with
   a named gap — but the job ends **failed**, naming the count and first error,
   and also fails if the tables and rows applied differ from the manifest.
+- **One transaction per batch.** Under autocommit every INSERT was its own
+  commit, each waiting on a disk flush: unnoticeable on a desktop, ~170 rows a
+  second on a Raspberry Pi. Batching took the same restore to ~700 rows/s, and
+  a pass that dies mid-batch now rolls back instead of leaving rows the saved
+  offset does not cover.
+- **Nothing else runs while it does.** Cron kept going during the first Pi
+  restore: three Tenable syncs ran against a half-restored database, and the
+  port rebuild after each one read `findings`/`vulns` before they were back,
+  found nothing, and truncated the `asset_ports` rows that had just gone in.
+  While a restore job is running, every cron process (wp-cron.php, and any
+  WP-CLI process — WP-CLI defines `DOING_CRON` too late to test) detaches the
+  callbacks of every scheduled event except the restore's own pass. The check
+  reads the jobs table, the one the dump never replaces.
 - **The object cache is flushed** once the dump is in, or Redis goes on
   serving the pre-restore options and users.
 

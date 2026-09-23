@@ -44,6 +44,46 @@ final class VulnHub_Backup_Restore_Runner {
 	 */
 	public static function hooks(): void {
 		add_action( self::PASS_HOOK, array( __CLASS__, 'on_pass' ), 10, 1 );
+		add_action( 'wp_loaded', array( __CLASS__, 'hold_cron_during_restore' ), PHP_INT_MAX );
+	}
+
+	/**
+	 * Keep every other scheduled job off the database while a restore runs.
+	 *
+	 * The dump replaces tables one at a time, alphabetically, over minutes —
+	 * on a Raspberry Pi, most of an hour. Cron kept going meanwhile: on the
+	 * first Pi restore, three Tenable syncs ran against a half-restored
+	 * database, and the port rebuild that follows every sync read findings
+	 * and vulns before they had been restored, found nothing, and truncated
+	 * the 37,470 rows of asset_ports that had just gone in.
+	 *
+	 * So in a cron process, while a restore job is running, every scheduled
+	 * event's callbacks are detached except the restore's own pass.
+	 * Recurring events have already been rescheduled by the time they run
+	 * and simply come round again once the restore is done. The check reads
+	 * the jobs table, which the dump never replaces, so it holds for the
+	 * whole restore.
+	 *
+	 * "A cron process" includes any WP-CLI process: the cron containers run
+	 * `wp cron event run`, and WP-CLI only defines DOING_CRON when it gets to
+	 * an event, long after this runs.
+	 *
+	 * @return void
+	 */
+	public static function hold_cron_during_restore(): void {
+		$cli = defined( 'WP_CLI' ) && WP_CLI;
+
+		if ( ( ! wp_doing_cron() && ! $cli ) || ! VulnHub_Backup_Jobs::restore_running() ) {
+			return;
+		}
+
+		foreach ( (array) _get_cron_array() as $events ) {
+			foreach ( array_keys( (array) $events ) as $hook ) {
+				if ( self::PASS_HOOK !== $hook ) {
+					remove_all_actions( (string) $hook );
+				}
+			}
+		}
 	}
 
 	/**
@@ -616,6 +656,18 @@ final class VulnHub_Backup_Restore_Runner {
 		$deadline   = microtime( true ) + self::BATCH_SECONDS;
 		$eof        = false;
 
+		/*
+		 * One transaction per batch, not one per row. Under autocommit every
+		 * INSERT is its own commit, and with innodb_flush_log_at_trx_commit=1
+		 * each commit waits on a disk flush: unnoticeable on a desktop, about
+		 * 170 rows a second on a Raspberry Pi — an hour for one estate. It is
+		 * also safer: a pass that dies mid-batch rolls back rows the saved
+		 * offset does not cover, instead of leaving them to be inserted twice.
+		 * The dump's DROP/CREATE TABLE commit implicitly, which is harmless:
+		 * a batch replayed from its offset drops and recreates those tables.
+		 */
+		$wpdb->query( 'START TRANSACTION' ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+
 		// Whole lines only, and the batch ends only between statements: the
 		// offset saved below is where the next pass starts, so it must never
 		// fall inside one. Dump rows run to megabytes.
@@ -655,6 +707,8 @@ final class VulnHub_Backup_Restore_Runner {
 				++$statements;
 			}
 		}
+
+		$wpdb->query( 'COMMIT' ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 
 		$new_offset = ftell( $fh );
 		fclose( $fh ); // phpcs:ignore WordPress.WP.AlternativeFunctions
