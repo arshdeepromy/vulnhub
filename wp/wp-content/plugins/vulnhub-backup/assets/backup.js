@@ -64,6 +64,7 @@
 		var track    = el( 'track' );
 		var counters = el( 'counters' );
 		var error    = el( 'error' );
+		var notice   = el( 'notice' );
 
 		if ( phase && job.phaseLabel ) {
 			phase.textContent = job.phaseLabel;
@@ -87,6 +88,11 @@
 			} else {
 				error.hidden = true;
 			}
+		}
+
+		if ( notice ) {
+			notice.textContent = job.notice || '';
+			notice.hidden = ! job.notice;
 		}
 
 		panel.classList.toggle( 'is-running', !! job.running );
@@ -237,6 +243,7 @@
 			var result = await restFetch( 'restore/upload/chunk', { method: 'POST', body: form } );
 			offset = result.received;
 			barEl.value = Math.round( ( offset / file.size ) * 100 );
+			setStatus( VulnHubBackup.i18n.uploading + ' ' + barEl.value + '%' );
 		}
 
 		await restFetch( 'restore/upload/finish', {
@@ -258,6 +265,119 @@
 		}
 	} );
 
+	/* ------------------------------------------------------------------
+	 * Following a restore
+	 *
+	 * Not through restFetch(): part way through, the restored users table
+	 * replaces the account this tab is signed in as, and every cookie-and-
+	 * nonce call from then on answers 401 — sending the stale nonce at all
+	 * makes WordPress refuse the request outright. So the watcher sends no
+	 * cookie and no nonce, only the one-job token restore/start handed back,
+	 * and it drives the passes itself so the restore does not have to wait
+	 * for cron's once-a-minute tick.
+	 * ---------------------------------------------------------------- */
+
+	var jobBox = document.getElementById( 'vh-restore-job' );
+
+	function part( name ) {
+		return jobBox ? jobBox.querySelector( '[data-vh-restore="' + name + '"]' ) : null;
+	}
+
+	function paintRestore( job ) {
+		if ( ! jobBox || ! job ) {
+			return;
+		}
+
+		jobBox.hidden = false;
+		jobBox.classList.toggle( 'is-running', !! job.running );
+
+		part( 'phase' ).textContent   = job.running ? ( job.phaseLabel || '' ) : ( job.status === 'done' ? VulnHubBackup.i18n.restoreDone : VulnHubBackup.i18n.restoreFailed );
+		part( 'status' ).textContent  = job.statusLabel || '';
+		part( 'fill' ).style.width    = ( job.progress || 0 ) + '%';
+		part( 'track' ).setAttribute( 'aria-valuenow', String( job.progress || 0 ) );
+		part( 'summary' ).textContent = job.summary || '';
+		part( 'elapsed' ).textContent = job.elapsed ? VulnHubBackup.i18n.elapsed.replace( '%s', job.elapsed ) : '';
+		part( 'hint' ).hidden         = ! job.running;
+
+		part( 'error' ).textContent = job.error || '';
+		part( 'error' ).hidden      = ! job.error;
+
+		part( 'notice' ).textContent = job.notice || '';
+		part( 'notice' ).hidden      = ! job.notice;
+
+		part( 'actions' ).hidden = job.running || job.status !== 'done';
+	}
+
+	/*
+	 * Being signed out part way through is expected here, and the progress
+	 * card says so. WordPress's own session check does not know that: its
+	 * heartbeat notices the vanished session and throws a login modal over
+	 * the page — over the progress, and over the Sign in button at the end.
+	 */
+	function quietSessionCheck() {
+		if ( window.jQuery ) {
+			window.jQuery( document ).off( 'heartbeat-tick.wp-auth-check' );
+			window.jQuery( window ).off( 'beforeunload.wp-auth-check' );
+		}
+		var modal = document.getElementById( 'wp-auth-check-wrap' );
+		if ( modal ) {
+			modal.parentNode.removeChild( modal );
+		}
+		document.body.classList.remove( 'modal-open' );
+	}
+
+	function watchRestore( id, token, misses ) {
+		quietSessionCheck();
+
+		fetch( VulnHubBackup.root + 'restore/jobs/' + id + '/watch', {
+			method: 'POST',
+			credentials: 'omit',
+			headers: { 'X-VH-Restore-Token': token },
+		} )
+			.then( function ( r ) {
+				return r.json().then( function ( body ) {
+					if ( ! r.ok ) {
+						throw new Error( body.message || VulnHubBackup.i18n.failed );
+					}
+					return body;
+				} );
+			} )
+			.then( function ( job ) {
+				paintRestore( job );
+
+				if ( job.running ) {
+					window.setTimeout( function () {
+						watchRestore( id, token, 0 );
+					}, 1000 );
+				} else {
+					try {
+						window.sessionStorage.removeItem( 'vhRestoreWatch' );
+					} catch ( e ) {}
+				}
+			} )
+			.catch( function () {
+				// The server can be busy between passes (or restarting with
+				// the restored plugins); the job carries on regardless. Say
+				// so, and keep asking, backing off.
+				misses = ( misses || 0 ) + 1;
+				if ( misses >= 2 ) {
+					part( 'summary' ).textContent = VulnHubBackup.i18n.reconnecting;
+				}
+				window.setTimeout( function () {
+					watchRestore( id, token, misses );
+				}, Math.min( 15000, 2000 * misses ) );
+			} );
+	}
+
+	// A reload mid-restore lands here signed out or signed in as someone
+	// else; pick the job back up from this tab's own record of it.
+	try {
+		var saved = JSON.parse( window.sessionStorage.getItem( 'vhRestoreWatch' ) || 'null' );
+		if ( saved && saved.id && saved.token ) {
+			watchRestore( saved.id, saved.token, 0 );
+		}
+	} catch ( e ) {}
+
 	if ( startButton ) {
 		startButton.addEventListener( 'click', function () {
 			var typed = ( confirmBox.value || '' ).trim();
@@ -268,16 +388,30 @@
 			if ( ! confirm( VulnHubBackup.i18n.confirmRestore ) ) {
 				return;
 			}
+
+			startButton.disabled = true;
+			fileInput.disabled   = true;
+			confirmBox.disabled  = true;
+			setStatus( VulnHubBackup.i18n.starting );
+
 			restFetch( 'restore/start', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify( { key: uploadedKey, confirmDomain: typed } ),
 			} )
 				.then( function ( result ) {
-					setStatus( 'Restore started (job #' + result.jobId + '). This can take a while — reloading the page will show progress.' );
+					progressEl.hidden = true;
+					try {
+						window.sessionStorage.setItem( 'vhRestoreWatch', JSON.stringify( { id: result.jobId, token: result.watchToken } ) );
+					} catch ( e ) {}
+					paintRestore( result.job );
+					watchRestore( result.jobId, result.watchToken, 0 );
 				} )
 				.catch( function ( e ) {
 					setStatus( e.message );
+					startButton.disabled = false;
+					fileInput.disabled   = false;
+					confirmBox.disabled  = false;
 				} );
 		} );
 	}

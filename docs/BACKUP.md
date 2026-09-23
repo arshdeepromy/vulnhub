@@ -135,7 +135,48 @@ contain its own hash; that is what the sha256 recorded on the job is for.
 - **The object cache is flushed** once the dump is in, or Redis goes on
   serving the pre-restore options and users.
 
+### Following it on screen
+
+Press **Restore** and the card under the button shows the phase, a bar, and
+bytes of SQL applied with tables and rows — without reloading. Two things made
+that harder than it looks:
+
+- **The restore signs you out.** Part way through, the dump replaces the users
+  table and with it the account that started the restore; every cookie-and-nonce
+  call answers 401 from then on. So `restore/start` hands the starting browser
+  a random **watch token** (only its sha256 is kept, on the job row, in a table
+  the dump never touches), and the page follows
+  `restore/jobs/<id>/watch` with that token — no cookie, no nonce — and drives
+  the passes itself rather than waiting for cron's minute tick. The token opens
+  that one job's progress and nothing else.
+- **WordPress's session check** notices the vanished session and throws its
+  login modal over the page. The watcher unbinds it; the card already says the
+  sign-out is expected.
+
+When it finishes the card says so, notes how many connector credentials this
+site's key cannot open (see *Credentials* above), and offers **Sign in** — with
+an account from the site the backup was taken on.
+
+**The progress panel no longer kills restores.** It follows whichever job is
+running and POSTs `jobs/<id>/pass`, which ran the *backup* engine; on a restore
+job its phase match fell through to "done" and closed the restore out half way
+through its database — a half-restored site labelled *Finished*. Passes now go
+to the engine that matches the job's mode, and each engine refuses the other's
+jobs.
+
+### A different domain
+
+`home` and `siteurl` are captured when the restore starts and written back once
+the dump is in, so a backup taken on one address restores onto another and
+keeps answering there. Nothing else is rewritten: the old address otherwise
+survives only in post GUIDs, which WordPress says never to change.
+
 ### The files swap
+
+**The backup plugin itself is not swapped.** The bundle carries whatever
+version of `vulnhub-backup` the backup was taken with; swapped in, the rest of
+the restore would run on that engine — older restore code, with no watch route.
+The site's own copy stays; the bundle's is set aside under staging.
 
 The restored `wp-content` is renamed into place and the old one moved into
 staging, which is deleted when the job finishes. Before that, **the backup

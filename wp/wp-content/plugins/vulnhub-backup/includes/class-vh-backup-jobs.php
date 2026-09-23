@@ -158,6 +158,10 @@ final class VulnHub_Backup_Jobs {
 			self::PHASE_UPLOAD         => __( 'Uploading to S3', 'vulnhub' ),
 			self::PHASE_RETENTION      => __( 'Tidying up older backups', 'vulnhub' ),
 			self::PHASE_DONE           => __( 'Finished', 'vulnhub' ),
+			// Restore phases (VulnHub_Backup_Restore_Runner::PHASE_*).
+			'validate'                 => __( 'Checking the backup file', 'vulnhub' ),
+			'extract_files'            => __( 'Putting plugin, theme and upload files in place', 'vulnhub' ),
+			'apply_sql'                => __( 'Restoring the database', 'vulnhub' ),
 		);
 	}
 
@@ -194,6 +198,10 @@ final class VulnHub_Backup_Jobs {
 			return 100;
 		}
 
+		if ( 'restore' === (string) ( $job['mode'] ?? '' ) ) {
+			return self::restore_progress( $job );
+		}
+
 		$order = self::phase_order();
 		$index = array_search( (string) ( $job['phase'] ?? '' ), $order, true );
 
@@ -210,6 +218,32 @@ final class VulnHub_Backup_Jobs {
 		}
 
 		return (int) min( 99, round( ( $index + $within ) * $slice ) );
+	}
+
+	/**
+	 * How far through a restore is, 0-99.
+	 *
+	 * Checking and unpacking are quick; applying the database is nearly all
+	 * of the wait, and it does know its denominator — the bytes of SQL — so
+	 * that phase gets most of the bar and moves by bytes applied.
+	 *
+	 * @param array<string,mixed> $job Hydrated job row.
+	 */
+	private static function restore_progress( array $job ): int {
+		$cursor = (array) ( $job['table_cursor_arr'] ?? array() );
+
+		switch ( (string) ( $job['phase'] ?? '' ) ) {
+			case 'validate':
+				return 2;
+			case 'extract_files':
+				return 8;
+			case 'apply_sql':
+				$total = (int) ( $cursor['sql_bytes'] ?? 0 );
+				$done  = (int) ( $cursor['sql_offset'] ?? 0 );
+				return (int) min( 99, 10 + ( $total > 0 ? floor( 89 * min( 1, $done / $total ) ) : 0 ) );
+		}
+
+		return 0;
 	}
 
 	/**

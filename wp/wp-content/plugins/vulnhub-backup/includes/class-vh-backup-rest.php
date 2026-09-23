@@ -45,6 +45,9 @@ final class VulnHub_Backup_Rest {
 		register_rest_route( self::NS, '/restore/start', array( 'methods' => 'POST', 'callback' => array( $this, 'restore_start' ), 'permission_callback' => $guard ) );
 		register_rest_route( self::NS, '/restore/jobs/(?P<id>\d+)/pass', array( 'methods' => 'POST', 'callback' => array( $this, 'restore_pass' ), 'permission_callback' => $guard ) );
 
+		// Token, not login: see can_watch().
+		register_rest_route( self::NS, '/restore/jobs/(?P<id>\d+)/watch', array( 'methods' => 'POST', 'callback' => array( $this, 'restore_pass' ), 'permission_callback' => array( $this, 'can_watch' ) ) );
+
 		register_rest_route(
 			self::NS,
 			'/download/(?P<folder>[a-z0-9\-]+)/(?P<filename>[a-z0-9\.\-]+)',
@@ -112,6 +115,32 @@ final class VulnHub_Backup_Rest {
 		return true;
 	}
 
+	/**
+	 * Permission callback for following a restore that has signed its own
+	 * operator out.
+	 *
+	 * A restore replaces the users table part way through, and with it the
+	 * account that started it: from then on every cookie-authenticated call
+	 * answers 401 and the screen went blind for the longest part of the job.
+	 * restore/start hands the browser that started it a random token — to a
+	 * logged-in manager, with the nonce, after the domain was typed — and
+	 * keeps only its sha256 on the job row, a table the dump never touches.
+	 * The token opens this one job's progress and passes and nothing else,
+	 * and stops mattering when the job ends.
+	 *
+	 * @param WP_REST_Request $request Incoming request.
+	 */
+	public function can_watch( WP_REST_Request $request ): bool {
+		$token = (string) $request->get_header( 'x-vh-restore-token' );
+		$job   = VulnHub_Backup_Jobs::get( (int) $request->get_param( 'id' ) );
+
+		return strlen( $token ) >= 32
+			&& $job
+			&& 'restore' === (string) $job['mode']
+			&& '' !== (string) $job['content_hash']
+			&& hash_equals( (string) $job['content_hash'], hash( 'sha256', $token ) );
+	}
+
 	/* =================================================================
 	 * Backup jobs
 	 * ============================================================== */
@@ -160,9 +189,16 @@ final class VulnHub_Backup_Rest {
 	 * @return WP_REST_Response
 	 */
 	public function pass( WP_REST_Request $request ): WP_REST_Response {
-		$id = (int) $request->get_param( 'id' );
+		$id  = (int) $request->get_param( 'id' );
+		$job = VulnHub_Backup_Jobs::get( $id );
 
-		VulnHub_Backup_Runner::run( $id, VulnHub_Backup_Runner::WEB_BUDGET );
+		// The progress panel follows whichever job is running, and a restore
+		// is a job too: it has to be driven by its own engine.
+		if ( $job && 'restore' === (string) $job['mode'] ) {
+			VulnHub_Backup_Restore_Runner::run( $id, VulnHub_Backup_Restore_Runner::budget() );
+		} else {
+			VulnHub_Backup_Runner::run( $id, VulnHub_Backup_Runner::WEB_BUDGET );
+		}
 
 		$job = VulnHub_Backup_Jobs::get( $id );
 
@@ -189,7 +225,7 @@ final class VulnHub_Backup_Rest {
 	 * @param array<string,mixed> $job Hydrated job row.
 	 * @return array<string,mixed>
 	 */
-	private static function summarise( array $job ): array {
+	public static function summarise( array $job ): array {
 		$counters = (array) $job['counters_arr'];
 		$status   = (string) $job['status'];
 
@@ -211,13 +247,81 @@ final class VulnHub_Backup_Rest {
 			'folder'      => (string) $job['folder'],
 			'error'       => (string) $job['error'],
 			'counters'    => $counters,
-			'summary'     => self::counter_line( $counters ),
+			'summary'     => 'restore' === (string) $job['mode'] ? self::restore_line( $job ) : self::counter_line( $counters ),
+			'notice'      => 'restore' === (string) $job['mode'] ? self::restore_notice( $job ) : '',
 			'createdAt'   => (string) $job['created_at'],
 			'startedAt'   => (string) $job['started_at'],
 			'startedAgo'  => '' !== (string) $job['started_at'] ? vh_ago( (string) $job['started_at'] ) : '',
 			'finishedAt'  => (string) $job['finished_at'],
 			'elapsed'     => self::elapsed( $job ),
 		);
+	}
+
+	/**
+	 * One line of where a restore has got to.
+	 *
+	 * @param array<string,mixed> $job Hydrated job row.
+	 */
+	private static function restore_line( array $job ): string {
+		$cursor = (array) ( $job['table_cursor_arr'] ?? array() );
+		$bits   = array();
+
+		if ( (int) ( $cursor['sql_bytes'] ?? 0 ) > 0 ) {
+			$bits[] = sprintf(
+				/* translators: 1: bytes of SQL applied, 2: bytes in total. */
+				__( '%1$s of %2$s applied', 'vulnhub' ),
+				size_format( (int) ( $cursor['sql_offset'] ?? 0 ), 1 ),
+				size_format( (int) $cursor['sql_bytes'], 1 )
+			);
+		}
+
+		if ( (int) ( $cursor['tables'] ?? 0 ) > 0 ) {
+			$bits[] = sprintf(
+				/* translators: %s: number of tables. */
+				_n( '%s table', '%s tables', (int) $cursor['tables'], 'vulnhub' ),
+				number_format_i18n( (int) $cursor['tables'] )
+			);
+		}
+
+		if ( (int) ( $cursor['rows'] ?? 0 ) > 0 ) {
+			$bits[] = sprintf(
+				/* translators: %s: number of database rows. */
+				__( '%s rows', 'vulnhub' ),
+				number_format_i18n( (int) $cursor['rows'] )
+			);
+		}
+
+		return implode( ' · ', $bits );
+	}
+
+	/**
+	 * What the operator needs to know once a restore has finished.
+	 *
+	 * @param array<string,mixed> $job Hydrated job row.
+	 */
+	private static function restore_notice( array $job ): string {
+		if ( VulnHub_Backup_Jobs::DONE !== (string) $job['status'] ) {
+			return '';
+		}
+
+		$cursor = (array) ( $job['table_cursor_arr'] ?? array() );
+		$notice = __( 'Restore complete. This site now has the users from the backup: sign in again with an account from the site the backup was taken on.', 'vulnhub' );
+		$bad    = (int) ( $cursor['undecryptable'] ?? 0 );
+
+		if ( $bad > 0 ) {
+			$notice .= ' ' . sprintf(
+				/* translators: %s: number of saved credentials. */
+				_n(
+					'%s saved connector credential could not be decrypted with this site\'s encryption key. Set VULNHUB_ENCRYPTION_KEY to the original site\'s key, or enter the credentials again under Settings.',
+					'%s saved connector credentials could not be decrypted with this site\'s encryption key. Set VULNHUB_ENCRYPTION_KEY to the original site\'s key, or enter the credentials again under Settings.',
+					$bad,
+					'vulnhub'
+				),
+				number_format_i18n( $bad )
+			);
+		}
+
+		return $notice;
 	}
 
 	/**
@@ -423,13 +527,22 @@ final class VulnHub_Backup_Rest {
 			return new WP_Error( 'vulnhub_backup_confirm', __( 'Type this site\'s domain to confirm the restore.', 'vulnhub' ), array( 'status' => 400 ) );
 		}
 
-		$job_id = VulnHub_Backup_Restore_Runner::start( $key );
+		$token  = bin2hex( random_bytes( 32 ) );
+		$job_id = VulnHub_Backup_Restore_Runner::start( $key, $token );
 
 		if ( ! $job_id ) {
 			return new WP_Error( 'vulnhub_backup_restore', __( 'The restore could not be started.', 'vulnhub' ), array( 'status' => 400 ) );
 		}
 
-		return rest_ensure_response( array( 'jobId' => $job_id ) );
+		$job = VulnHub_Backup_Jobs::get( $job_id );
+
+		return rest_ensure_response(
+			array(
+				'jobId'      => $job_id,
+				'watchToken' => $token,
+				'job'        => $job ? self::summarise( $job ) : array(),
+			)
+		);
 	}
 
 	/**

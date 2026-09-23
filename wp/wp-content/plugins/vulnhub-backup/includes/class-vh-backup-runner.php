@@ -224,7 +224,11 @@ final class VulnHub_Backup_Runner {
 
 		$idle['status'] = (string) $job['status'];
 
-		if ( VulnHub_Backup_Jobs::RUNNING !== (string) $job['status'] ) {
+		// Restores share the jobs table but not this engine. Run on one, the
+		// phase match falls through to "done" and closes the restore out
+		// half way through its database — exactly what the progress panel
+		// did when it followed a restore job.
+		if ( VulnHub_Backup_Jobs::RUNNING !== (string) $job['status'] || 'restore' === (string) $job['mode'] ) {
 			return $idle;
 		}
 

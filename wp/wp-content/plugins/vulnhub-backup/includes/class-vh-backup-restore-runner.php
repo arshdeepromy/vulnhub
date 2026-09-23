@@ -84,9 +84,13 @@ final class VulnHub_Backup_Restore_Runner {
 	 * table as backups — a restore is a job with mode 'restore'.
 	 *
 	 * @param string $storage_key The chunked-upload storage key.
+	 * @param string $watch_token Secret the starting browser follows the job
+	 *                            with once the restored users table has
+	 *                            signed it out (see VulnHub_Backup_Rest).
+	 *                            Only its sha256 is kept.
 	 * @return int New job id, or 0.
 	 */
-	public static function start( string $storage_key ): int {
+	public static function start( string $storage_key, string $watch_token = '' ): int {
 		if ( ! VulnHub_Backup_Storage::valid_key( $storage_key ) || ! VulnHub_Backup_Storage::exists( $storage_key ) ) {
 			return 0;
 		}
@@ -104,7 +108,27 @@ final class VulnHub_Backup_Restore_Runner {
 			return 0;
 		}
 
-		VulnHub_Backup_Jobs::update( $job_id, array( 'started_at' => current_time( 'mysql', true ) ) );
+		/*
+		 * Where this site lives, taken now, before the dump replaces home and
+		 * siteurl with the addresses of the site the backup came from. They
+		 * are put back once the database is in, so a backup restores onto a
+		 * different domain and still answers on this one.
+		 */
+		$cursor = array(
+			'target_home'    => (string) get_option( 'home' ),
+			'target_siteurl' => (string) get_option( 'siteurl' ),
+		);
+
+		VulnHub_Backup_Jobs::update(
+			$job_id,
+			array(
+				'started_at'   => current_time( 'mysql', true ),
+				'table_cursor' => (string) wp_json_encode( $cursor ),
+				// A restore job has no archive of its own to hash; the column
+				// holds the watch token's hash instead.
+				'content_hash' => '' === $watch_token ? '' : hash( 'sha256', $watch_token ),
+			)
+		);
 
 		if ( function_exists( 'vulnhub' ) ) {
 			vulnhub()->logger->audit( 'backup.restore_start', 'Started a restore from an uploaded backup', 'backup_job', $job_id, array(), 'warning' );
@@ -126,7 +150,7 @@ final class VulnHub_Backup_Restore_Runner {
 	public static function run( int $job_id, float $budget ): void {
 		$job = VulnHub_Backup_Jobs::get( $job_id );
 
-		if ( ! $job || VulnHub_Backup_Jobs::RUNNING !== (string) $job['status'] ) {
+		if ( ! $job || VulnHub_Backup_Jobs::RUNNING !== (string) $job['status'] || 'restore' !== (string) $job['mode'] ) {
 			return;
 		}
 
@@ -472,9 +496,40 @@ final class VulnHub_Backup_Restore_Runner {
 			}
 		}
 
+		self::keep_restore_engine( $old, $live, $staging );
 		self::carry_over( $old, $live );
 
 		return true;
+	}
+
+	/**
+	 * Keep this site's own copy of the backup plugin through the swap.
+	 *
+	 * The bundle's wp-content carries whatever version of this plugin the
+	 * backup was taken with. Swapped in, the rest of the restore — the whole
+	 * database — would run on that engine instead of the one that started
+	 * it: an older backup brings back older restore code half way through,
+	 * and the watch route the screen is following may not exist in it. The
+	 * code that starts a restore finishes it; the bundle's copy is set aside
+	 * under staging.
+	 *
+	 * @param string $old     The previous wp-content, moved aside.
+	 * @param string $live    The restored wp-content, now live.
+	 * @param string $staging Staging directory.
+	 * @return void
+	 */
+	private static function keep_restore_engine( string $old, string $live, string $staging ): void {
+		$mine = '/plugins/' . basename( dirname( __DIR__ ) );
+
+		if ( ! is_dir( $old . $mine ) ) {
+			return;
+		}
+
+		if ( is_dir( $live . $mine ) ) {
+			rename( $live . $mine, $staging . '/bundled-' . basename( $mine ) );
+		}
+
+		rename( $old . $mine, $live . $mine );
 	}
 
 	/**
@@ -553,6 +608,9 @@ final class VulnHub_Backup_Restore_Runner {
 			return true;
 		}
 
+		// The progress bar's denominator.
+		$cursor['sql_bytes'] = (int) filesize( $sql );
+
 		$statements = 0;
 		$buffer     = '';
 		$deadline   = microtime( true ) + self::BATCH_SECONDS;
@@ -603,21 +661,84 @@ final class VulnHub_Backup_Restore_Runner {
 
 		$cursor['sql_offset'] = $new_offset;
 
+		if ( $eof ) {
+			self::point_at_this_site( $cursor );
+
+			// Every table was just replaced underneath the object cache
+			// (Redis here), which would otherwise go on serving the settings,
+			// users and options from before the restore.
+			wp_cache_flush();
+
+			$cursor['undecryptable'] = self::count_undecryptable();
+		}
+
 		VulnHub_Backup_Jobs::update(
 			$job_id,
 			array( 'table_cursor' => (string) wp_json_encode( $cursor ) )
 		);
 
 		if ( $eof ) {
-			// Every table was just replaced underneath the object cache
-			// (Redis here), which would otherwise go on serving the settings,
-			// users and options from before the restore.
-			wp_cache_flush();
-
 			self::check_applied( $job_id, $staging, $cursor );
 		}
 
 		return $eof;
+	}
+
+	/**
+	 * Put back this site's own home and siteurl, which the dump has just
+	 * replaced with the addresses of the site the backup was taken on.
+	 *
+	 * Nothing else is rewritten: the old address otherwise survives only in
+	 * post GUIDs, which WordPress says never to change.
+	 *
+	 * @param array<string,mixed> $cursor Apply cursor holding target_home/target_siteurl.
+	 * @return void
+	 */
+	private static function point_at_this_site( array $cursor ): void {
+		global $wpdb;
+
+		foreach ( array( 'home' => 'target_home', 'siteurl' => 'target_siteurl' ) as $option => $key ) {
+			$value = (string) ( $cursor[ $key ] ?? '' );
+
+			if ( '' !== $value ) {
+				$wpdb->update( $wpdb->options, array( 'option_value' => $value ), array( 'option_name' => $option ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			}
+		}
+	}
+
+	/**
+	 * How many restored connector credentials this site's key cannot open.
+	 *
+	 * The backup holds them encrypted, never the key. Restored onto a stack
+	 * with a different VULNHUB_ENCRYPTION_KEY they come back unreadable, and
+	 * the operator should hear that from the restore, not from the first sync
+	 * that fails.
+	 */
+	private static function count_undecryptable(): int {
+		global $wpdb;
+
+		if ( ! class_exists( '\VulnHub\Core\Crypto' ) ) {
+			return 0;
+		}
+
+		$values = (array) $wpdb->get_col( "SELECT option_value FROM {$wpdb->options} WHERE option_name LIKE 'vulnhub\\_sec\\_%'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$bad    = 0;
+
+		foreach ( $values as $value ) {
+			$data = maybe_unserialize( (string) $value );
+			$data = is_array( $data ) ? $data : array( $data );
+
+			array_walk_recursive(
+				$data,
+				static function ( $item ) use ( &$bad ): void {
+					if ( is_string( $item ) && str_starts_with( $item, 'vhenc1:' ) && '' === \VulnHub\Core\Crypto::decrypt( $item ) ) {
+						++$bad;
+					}
+				}
+			);
+		}
+
+		return $bad;
 	}
 
 	/**

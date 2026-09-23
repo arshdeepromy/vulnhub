@@ -143,8 +143,8 @@ $secret_hint = $settings->secret_hint( 'backup_s3', 'secret_access_key' );
 
 	<?php if ( $vh_panel ) : ?>
 		<?php
-		$vh_counters = (array) $vh_panel['counters_arr'];
-		$vh_is_run   = VulnHub_Backup_Jobs::RUNNING === (string) $vh_panel['status'];
+		$vh_summary = VulnHub_Backup_Rest::summarise( $vh_panel );
+		$vh_is_run  = VulnHub_Backup_Jobs::RUNNING === (string) $vh_panel['status'];
 		?>
 		<div class="vh-backup-progress<?php echo $vh_is_run ? ' is-running' : ''; ?>"
 			data-vh-backup-progress="<?php echo esc_attr( (string) $vh_panel['id'] ); ?>"
@@ -169,18 +169,9 @@ $secret_hint = $settings->secret_hint( 'backup_s3', 'secret_access_key' );
 			<p class="vh-backup-progress__meta">
 				<span data-vh-backup-counters>
 					<?php
-					echo esc_html(
-						trim(
-							sprintf(
-								/* translators: 1: tables done, 2: tables total, 3: rows, 4: files. */
-								__( '%1$s of %2$s tables · %3$s rows · %4$s files', 'vulnhub' ),
-								number_format_i18n( (int) ( $vh_counters['tables_done'] ?? 0 ) ),
-								number_format_i18n( (int) ( $vh_counters['tables_total'] ?? 0 ) ),
-								number_format_i18n( (int) ( $vh_counters['rows_exported'] ?? 0 ) ),
-								number_format_i18n( (int) ( $vh_counters['files_archived'] ?? 0 ) )
-							)
-						)
-					);
+					// The same line the poller paints, so the first paint and
+					// every later one agree — including for a restore job.
+					echo esc_html( $vh_summary['summary'] );
 					?>
 				</span>
 				<span class="vh-backup-progress__started">
@@ -199,6 +190,8 @@ $secret_hint = $settings->secret_hint( 'backup_s3', 'secret_access_key' );
 			<?php else : ?>
 				<p class="vh-backup-progress__error" data-vh-backup-error hidden></p>
 			<?php endif; ?>
+
+			<p class="vh-backup-progress__notice" data-vh-backup-notice<?php echo '' === $vh_summary['notice'] ? ' hidden' : ''; ?>><?php echo esc_html( $vh_summary['notice'] ); ?></p>
 		</div>
 	<?php endif; ?>
 
@@ -224,7 +217,17 @@ $secret_hint = $settings->secret_hint( 'backup_s3', 'secret_access_key' );
 					<td><?php echo esc_html( (string) $job['mode'] ); ?></td>
 					<td><?php echo esc_html( (string) ( VulnHub_Backup_Jobs::phases()[ (string) $job['phase'] ] ?? $job['phase'] ) ); ?></td>
 					<td><?php echo esc_html( (string) ( VulnHub_Backup_Jobs::statuses()[ (string) $job['status'] ] ?? $job['status'] ) ); ?></td>
-					<td><?php echo esc_html( sprintf( '%d rows, %d files', (int) ( $counters['rows_exported'] ?? 0 ), (int) ( $counters['files_archived'] ?? 0 ) ) ); ?></td>
+					<td>
+						<?php
+						// A restore keeps its counts on its cursor, not in the
+						// backup counters, which read "0 rows, 0 files" for it.
+						echo esc_html(
+							'restore' === (string) $job['mode']
+								? VulnHub_Backup_Rest::summarise( $job )['summary']
+								: sprintf( '%d rows, %d files', (int) ( $counters['rows_exported'] ?? 0 ), (int) ( $counters['files_archived'] ?? 0 ) )
+						);
+						?>
+					</td>
 				</tr>
 			<?php endforeach; ?>
 		</tbody>
@@ -306,6 +309,36 @@ $secret_hint = $settings->secret_hint( 'backup_s3', 'secret_access_key' );
 		</label>
 	</p>
 	<button type="button" class="button button-secondary" id="vh-restore-start" disabled><?php esc_html_e( 'Restore', 'vulnhub' ); ?></button>
+
+	<?php
+	/*
+	 * Live progress for a restore started from this tab. It is followed with
+	 * a one-job token rather than the login, because the restore replaces the
+	 * users table — and with it this session — part way through.
+	 */
+	?>
+	<div class="vh-backup-progress" id="vh-restore-job" hidden aria-live="polite">
+		<div class="vh-backup-progress__head">
+			<strong data-vh-restore="phase"></strong>
+			<span class="vh-backup-progress__status" data-vh-restore="status"></span>
+		</div>
+		<div class="vh-backup-progress__track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+			aria-label="<?php esc_attr_e( 'Restore progress', 'vulnhub' ); ?>" data-vh-restore="track">
+			<span class="vh-backup-progress__fill" data-vh-restore="fill"></span>
+		</div>
+		<p class="vh-backup-progress__meta">
+			<span data-vh-restore="summary"></span>
+			<span data-vh-restore="elapsed"></span>
+		</p>
+		<p class="vh-backup-progress__hint" data-vh-restore="hint">
+			<?php esc_html_e( 'Keep this tab open to follow the restore. Part way through, the restored database replaces this site\'s users and you are signed out — that is expected, and the progress here carries on. If you close the tab, the restore still finishes on the server.', 'vulnhub' ); ?>
+		</p>
+		<p class="vh-backup-progress__error" data-vh-restore="error" hidden></p>
+		<p class="vh-backup-progress__notice" data-vh-restore="notice" hidden></p>
+		<p class="vh-backup-progress__actions" data-vh-restore="actions" hidden>
+			<a class="button button-primary" href="<?php echo esc_url( wp_login_url( admin_url( 'admin.php?page=vulnhub-backup' ) ) ); ?>"><?php esc_html_e( 'Sign in', 'vulnhub' ); ?></a>
+		</p>
+	</div>
 </div>
 
 <div class="vh-card">

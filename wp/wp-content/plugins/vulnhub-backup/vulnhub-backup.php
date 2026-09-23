@@ -179,7 +179,13 @@ function vulnhub_backup_asset_ver( string $rel ): string {
 function vulnhub_backup_enqueue(): void {
 	vulnhub_backup_load();
 
-	wp_enqueue_style( 'vulnhub-backup', VULNHUB_BACKUP_URL . 'assets/backup.css', array( 'vulnhub-app' ), vulnhub_backup_asset_ver( 'assets/backup.css' ) );
+	// 'vulnhub-app' is only registered on the portal. Named as a hard
+	// dependency in wp-admin, WordPress silently dropped this stylesheet, and
+	// the progress panel rendered with no box and no bar. The rules fall back
+	// to wp-admin colours where the portal's --vh-* tokens are absent.
+	$vh_deps = wp_style_is( 'vulnhub-app', 'registered' ) ? array( 'vulnhub-app' ) : array();
+
+	wp_enqueue_style( 'vulnhub-backup', VULNHUB_BACKUP_URL . 'assets/backup.css', $vh_deps, vulnhub_backup_asset_ver( 'assets/backup.css' ) );
 	wp_enqueue_script( 'vulnhub-backup', VULNHUB_BACKUP_URL . 'assets/backup.js', array(), vulnhub_backup_asset_ver( 'assets/backup.js' ), true );
 
 	wp_localize_script(
@@ -201,6 +207,12 @@ function vulnhub_backup_enqueue(): void {
 				'failedJob'      => __( 'The backup failed.', 'vulnhub' ),
 				'cancelled'      => __( 'Backup cancelled.', 'vulnhub' ),
 				'working'        => __( 'Working…', 'vulnhub' ),
+				'starting'       => __( 'Checking the backup and starting the restore…', 'vulnhub' ),
+				'restoreDone'    => __( 'Restore complete', 'vulnhub' ),
+				'restoreFailed'  => __( 'The restore failed', 'vulnhub' ),
+				/* translators: %s: how long the restore has been running, e.g. "3 mins". */
+				'elapsed'        => __( 'running for %s', 'vulnhub' ),
+				'reconnecting'   => __( 'Waiting for the server — the restore carries on meanwhile…', 'vulnhub' ),
 			),
 		)
 	);
