@@ -24,3 +24,7 @@ dev/shots/
 
 # Local AWS access working notes — real account IDs, never commit.
 docs/AWS-EXPOSURE-WIP.md
+
+# Pick-up-here notes. Names real accounts and appliances by design; the
+# sanitised version of everything in it is already in docs/. Never commit.
+WORKLOG.md
