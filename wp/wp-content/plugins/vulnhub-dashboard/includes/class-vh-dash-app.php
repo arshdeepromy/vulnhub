@@ -4285,6 +4285,14 @@ final class VulnHub_Dash_App {
 		$vh_ids  = VulnHub_Dash_Ticket_Report::ids_for( $vh_sla, $vh_tsev );
 		$vh_cat  = self::q( 'status_category' );
 
+		// "For you": what is waiting on the viewer, as one more set of ids.
+		$vh_for     = in_array( self::q( 'tfor' ), VulnHub_Dash_Ticket_Signals::FILTERS, true ) ? self::q( 'tfor' ) : '';
+		$vh_for_ids = VulnHub_Dash_Ticket_Signals::ids_for( $vh_for );
+
+		if ( null !== $vh_for_ids ) {
+			$vh_ids = null === $vh_ids ? $vh_for_ids : array_values( array_intersect( $vh_ids, $vh_for_ids ) );
+		}
+
 		/*
 		 * Open or closed is the first question this screen answers, so it is a
 		 * tab rather than one value in a filter: day to day nobody wants a
@@ -4344,6 +4352,7 @@ final class VulnHub_Dash_App {
 		// Remediation progress for every row in one rollup, not one query per
 		// ticket: the bar is on 50 rows.
 		$vh_prog = Tickets::progress( array_map( static fn( array $r ): int => (int) $r['id'], $q['rows'] ) );
+		$vh_sig  = VulnHub_Dash_Ticket_Signals::for_rows( $q['rows'] );
 		?>
 		<div class="vh-page-head">
 			<div>
@@ -4383,6 +4392,13 @@ final class VulnHub_Dash_App {
 				<a href="<?php echo esc_url( remove_query_arg( array( 'sla', 'tsev', 'tp' ) ) ); ?>"><?php esc_html_e( 'Clear this filter', 'vulnhub' ); ?></a>
 			</div>
 		<?php endif; ?>
+
+		<?php
+		VulnHub_Dash_Ticket_Signals::strip(
+			$vh_for,
+			static fn( array $a ): string => add_query_arg( $a, remove_query_arg( array( 'tfor', 'tp' ) ) ) . '#vh-ticket-list'
+		);
+		?>
 
 		<nav class="vh-tabs vh-tabs--count" aria-label="<?php esc_attr_e( 'Which tickets', 'vulnhub' ); ?>">
 			<?php
@@ -4486,15 +4502,20 @@ final class VulnHub_Dash_App {
 							default                    => 'neutral',
 						};
 						?>
-						<tr>
+						<?php $vh_f = $vh_sig[ (int) $t['id'] ] ?? array(); ?>
+						<tr class="<?php echo esc_attr( VulnHub_Dash_Ticket_Signals::row_class( $vh_f ) ); ?>">
 							<td>
 								<a class="vh-mono" href="<?php echo esc_url( self::page_url( 'tickets', array( 'ticket' => (int) $t['id'] ) ) ); ?>"><strong><?php echo esc_html( (string) $t['external_key'] ); ?></strong></a>
 								<?php if ( '' !== (string) $t['url'] ) : ?>
 									<a class="vh-meta" href="<?php echo esc_url( (string) $t['url'] ); ?>" target="_blank" rel="noopener noreferrer" aria-label="<?php esc_attr_e( 'Open in Jira', 'vulnhub' ); ?>">&nearr;</a>
 								<?php endif; ?>
+								<?php echo VulnHub_Dash_Ticket_Signals::bell( $vh_f ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
 							</td>
 							<td><?php echo esc_html( Tickets::kind_label( (string) $t['kind'] ) ); ?></td>
-							<td><?php echo esc_html( vh_trim( (string) $t['summary'], 78 ) ); ?></td>
+							<td>
+								<?php echo VulnHub_Dash_Ticket_Signals::tags( $vh_f ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
+								<?php echo esc_html( vh_trim( (string) $t['summary'], 78 ) ); ?>
+							</td>
 							<td><span class="vh-chip vh-chip--<?php echo 'done' === $t['status_category'] ? 'good' : 'neutral'; ?>"><?php echo esc_html( (string) $t['status'] ); ?></span></td>
 							<td><?php echo VulnHub_Dash_Tickets::assigned_html( $t ); // phpcs:ignore WordPress.Security.EscapeOutput ?></td>
 							<td class="vh-col-comment"><?php echo VulnHub_Dash_Tickets::last_comment_html( $t ); // phpcs:ignore WordPress.Security.EscapeOutput ?></td>

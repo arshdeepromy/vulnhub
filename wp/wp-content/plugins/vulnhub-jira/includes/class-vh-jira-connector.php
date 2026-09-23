@@ -943,6 +943,8 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 			}
 		}
 
+		$this->read_moved_conversations();
+
 		foreach ( $by_key as $key => $row ) {
 			if ( isset( $seen[ $key ] ) ) {
 				continue;
@@ -985,7 +987,7 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 	private function tickets_to_poll( bool $include_done = false ): array {
 		global $wpdb;
 
-		$sql = 'SELECT id, external_key, status, status_category, resolution, assignee, priority
+		$sql = 'SELECT id, external_key, status, status_category, resolution, assignee, priority, payload_json
 			FROM ' . vh_table( 'tickets' ) . "
 			WHERE provider = %s AND external_key <> ''";
 
@@ -1069,6 +1071,22 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 
 		$was_done = 'done' === (string) $row['status_category'];
 		$is_done  = 'done' === $normalised['status_category'];
+
+		/*
+		 * A comment moves Jira's `updated` and nothing else this poll reads,
+		 * so that is the signal to read the conversation again -- once, for
+		 * the tickets that moved, rather than every ticket every poll. A
+		 * ticket never read before is read once to start it off.
+		 */
+		$kept = json_decode( (string) ( $row['payload_json'] ?? '' ), true );
+		$kept = is_array( $kept ) ? $kept : array();
+
+		if ( ! $is_done && (
+			! is_array( $kept['conversation'] ?? null )
+			|| (string) ( $kept['updated'] ?? '' ) !== (string) $normalised['payload']['updated']
+		) ) {
+			$this->moved[ (int) $row['id'] ] = (string) $normalised['external_key'];
+		}
 
 		$changed = (string) $row['status'] !== $normalised['status']
 			|| (string) $row['status_category'] !== $normalised['status_category']
@@ -1554,6 +1572,226 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 	}
 
 	/**
+	 * Tickets whose conversation this poll should read, id => key.
+	 *
+	 * @var array<int,string>
+	 */
+	private array $moved = array();
+
+	/**
+	 * How many conversations one poll reads at most. Each is one call; a
+	 * first poll over a large backlog finishes the rest on the next one.
+	 */
+	private const CONVERSATIONS_PER_POLL = 40;
+
+	/**
+	 * Read the conversations of the tickets that moved during this poll.
+	 */
+	private function read_moved_conversations(): void {
+		$read = 0;
+
+		foreach ( $this->moved as $id => $key ) {
+			if ( $read >= self::CONVERSATIONS_PER_POLL ) {
+				$this->log( sprintf( 'Read %d conversations; the other %d wait for the next poll.', $read, count( $this->moved ) - $read ) );
+				break;
+			}
+
+			$this->forget_comments( $key );
+			$this->read_conversation( $id, $key );
+			++$read;
+		}
+
+		$this->moved = array();
+	}
+
+	/**
+	 * Read an issue's comments and keep what the Tickets list needs from
+	 * them: the newest comment, and the conversation summary that answers
+	 * "is anyone waiting on me" (see conversation()).
+	 *
+	 * The same 50-comment read the comments dialog makes, so the two share a
+	 * cache entry. A failed read keeps what was stored: a refresh must not
+	 * lose a mention because Jira hiccupped.
+	 *
+	 * @return array<string,mixed>|null The newest comment.
+	 */
+	public function read_conversation( int $ticket_id, string $key ): ?array {
+		$read = $this->comments( $key );
+
+		if ( empty( $read['ok'] ) ) {
+			return null;
+		}
+
+		\VulnHub\Core\Tickets::set_last_comment( $ticket_id, $read['comments'][0] ?? null );
+		\VulnHub\Core\Tickets::set_conversation( $ticket_id, self::conversation( $read['comments'] ) );
+
+		return $read['comments'][0] ?? null;
+	}
+
+	/**
+	 * What a ticket's conversation says about who owes whom a reply.
+	 *
+	 * Stored rather than worked out on every page view, because it needs the
+	 * whole conversation and the list only ever has the newest comment. Kept
+	 * free of anyone's identity, so each viewer's own answer is read off it
+	 * at display time:
+	 *
+	 * - `last_by`: each author's most recent comment, so "has this person
+	 *   replied since" is one comparison.
+	 * - `mentions`: every @mention, by account id.
+	 * - `said`: the newest comments that are a person talking -- not an
+	 *   automation, not a relayed field change (see is_noise()) -- with the
+	 *   start of their text, so a viewer's name written in plain words can be
+	 *   found as well as a proper @mention. A relayed comment is credited to
+	 *   the person it relays.
+	 *
+	 * All three are lists of records rather than maps keyed by account id: a
+	 * numeric-looking key comes back from JSON as an int.
+	 *
+	 * @param array<int,array<string,mixed>> $comments Normalised, newest first.
+	 * @return array<string,mixed>
+	 */
+	public static function conversation( array $comments ): array {
+		$last_by  = array();
+		$seen     = array();
+		$mentions = array();
+		$said     = array();
+
+		foreach ( $comments as $c ) {
+			$author = (string) ( $c['author_id'] ?? '' );
+			$at     = (string) ( $c['created'] ?? '' );
+			$body   = (string) ( $c['body'] ?? '' );
+
+			if ( '' !== $author && ! isset( $seen[ $author ] ) ) {
+				$seen[ $author ] = true;
+				$last_by[]       = array( 'id' => $author, 'at' => $at );
+			}
+
+			foreach ( (array) ( $c['mentions'] ?? array() ) as $who ) {
+				if ( count( $mentions ) < 30 ) {
+					$mentions[] = array(
+						'id'     => (string) $who,
+						'by'     => (string) ( $c['author'] ?? '' ),
+						'by_id'  => $author,
+						'at'     => $at,
+						'public' => ! empty( $c['public'] ),
+					);
+				}
+			}
+
+			if ( count( $said ) < 10 && 'app' !== (string) ( $c['author_type'] ?? '' ) && ! self::is_noise( $body ) ) {
+				$said[] = array(
+					'by'    => self::relayed_by( $body ) ?? (string) ( $c['author'] ?? '' ),
+					'by_id' => $author,
+					'at'    => $at,
+					'text'  => mb_substr( $body, 0, 400 ),
+				);
+			}
+		}
+
+		return array(
+			'read'     => count( $comments ),
+			'last_by'  => $last_by,
+			'mentions' => $mentions,
+			'said'     => $said,
+			'seen_at'  => vh_now(),
+		);
+	}
+
+	/**
+	 * Whether a comment is a record of a field changing rather than somebody
+	 * saying something: "Status changed to: …", "<Field> changed in <other
+	 * system> to: …" -- the lines a desk integration posts when it mirrors
+	 * another tool. Nobody is waiting on an answer to one.
+	 *
+	 * Filter `vulnhub_ticket_comment_is_noise` for other shapes.
+	 */
+	public static function is_noise( string $body ): bool {
+		$first = strtok( trim( $body ), "\n" );
+		$noise = false !== $first && (bool) preg_match( '/^[^\n]{1,80}?\bchanged (?:in [^\n]{1,60}? )?to:/iu', $first );
+
+		return (bool) apply_filters( 'vulnhub_ticket_comment_is_noise', $noise, $body );
+	}
+
+	/**
+	 * The person a relayed comment speaks for: "<Name> in <other system>
+	 * commented:" opens the relay's own post. Null when it is not one.
+	 */
+	public static function relayed_by( string $body ): ?string {
+		return preg_match( '/^\s*([^\n]{2,60}?) in [^\n]{1,40}? commented:/u', $body, $m ) ? trim( $m[1] ) : null;
+	}
+
+	/**
+	 * The Jira account a portal user is: ['id' => '', 'name' => ''] when it
+	 * cannot be told.
+	 *
+	 * Only a portal admin (`vulnhub_admin`) is ever matched, and never an
+	 * account that is also a WordPress administrator: those are the site's
+	 * own logins, not people working tickets. The match needs both halves --
+	 * Jira's search by the user's email has to return an account, and that
+	 * account's display name has to be the user's own. An email alone can
+	 * belong to a shared mailbox; a name alone can belong to two people.
+	 *
+	 * Remembered in user meta against the name and email it was made with,
+	 * so changing either asks again; a miss is asked again a day later.
+	 *
+	 * @return array{id:string,name:string}
+	 */
+	public function jira_identity( int $user_id ): array {
+		$none = array( 'id' => '', 'name' => '' );
+		$user = $user_id > 0 ? get_userdata( $user_id ) : false;
+
+		if ( ! $user || ! in_array( 'vulnhub_admin', (array) $user->roles, true ) || in_array( 'administrator', (array) $user->roles, true ) ) {
+			return $none;
+		}
+
+		$email = strtolower( trim( (string) $user->user_email ) );
+		$name  = self::same_name( (string) $user->display_name );
+
+		if ( '' === $email || '' === $name || ! $this->is_enabled() ) {
+			return $none;
+		}
+
+		$asked  = md5( $email . '|' . $name );
+		$cached = get_user_meta( $user_id, 'vulnhub_jira_identity', true );
+
+		if ( is_array( $cached ) && $asked === ( $cached['asked'] ?? '' )
+			&& ( '' !== (string) ( $cached['id'] ?? '' ) || time() - (int) ( $cached['at'] ?? 0 ) < DAY_IN_SECONDS ) ) {
+			return array( 'id' => (string) $cached['id'], 'name' => (string) ( $cached['name'] ?? '' ) );
+		}
+
+		$found    = $none;
+		$response = $this->client()->user_search( $email );
+
+		foreach ( $response->ok() ? (array) $response->data() : array() as $u ) {
+			$theirs = strtolower( (string) ( $u['emailAddress'] ?? '' ) );
+
+			// Jira hides most addresses; an account the search returned for
+			// this address, with the address hidden, still matched on it.
+			if ( ( '' === $theirs || $theirs === $email )
+				&& 'atlassian' === (string) ( $u['accountType'] ?? '' )
+				&& self::same_name( (string) ( $u['displayName'] ?? '' ) ) === $name
+			) {
+				$found = array( 'id' => (string) ( $u['accountId'] ?? '' ), 'name' => (string) ( $u['displayName'] ?? '' ) );
+				break;
+			}
+		}
+
+		if ( $response->ok() || '' !== $found['id'] ) {
+			update_user_meta( $user_id, 'vulnhub_jira_identity', $found + array( 'asked' => $asked, 'at' => time() ) );
+		}
+
+		return $found;
+	}
+
+	/**
+	 * A name, compared the way people write it: case and spacing ignored.
+	 */
+	private static function same_name( string $name ): string {
+		return mb_strtolower( trim( (string) preg_replace( '/\s+/u', ' ', $name ) ) );
+	}
+
+	/**
 	 * The newest comment on an issue, or null when there are none and when the
 	 * read fails -- a caller refreshing a status should not lose the status
 	 * because the comments could not be read.
@@ -1666,18 +1904,22 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 		$body   = (array) ( $raw['body'] ?? array() );
 
 		return array(
-			'id'        => (string) ( $raw['id'] ?? '' ),
-			'author'    => (string) ( $author['displayName'] ?? __( 'Unknown', 'vulnhub' ) ),
-			'author_id' => (string) ( $author['accountId'] ?? '' ),
-			'avatar'    => (string) ( $author['avatarUrls']['24x24'] ?? '' ),
-			'body'      => trim( VulnHub_Jira_Adf::to_text( $body ) ),
-			'html'      => VulnHub_Jira_Adf::to_html( $body ),
+			'id'          => (string) ( $raw['id'] ?? '' ),
+			'author'      => (string) ( $author['displayName'] ?? __( 'Unknown', 'vulnhub' ) ),
+			'author_id'   => (string) ( $author['accountId'] ?? '' ),
+			// `app` is Automation for Jira and its kind: a comment nobody is
+			// waiting on an answer to.
+			'author_type' => (string) ( $author['accountType'] ?? '' ),
+			'avatar'      => (string) ( $author['avatarUrls']['24x24'] ?? '' ),
+			'mentions'    => VulnHub_Jira_Adf::mentions( $body ),
+			'body'        => trim( VulnHub_Jira_Adf::to_text( $body ) ),
+			'html'        => VulnHub_Jira_Adf::to_html( $body ),
 			// Jira sends ISO8601 with the site's own offset. Storage is UTC,
 			// always -- left alone, a comment from this morning reads "in 12
 			// hours" on a New Zealand site.
-			'created'   => (string) ( vh_to_mysql( $raw['created'] ?? '' ) ?? '' ),
-			'updated'   => (string) ( vh_to_mysql( $raw['updated'] ?? '' ) ?? '' ),
-			'public'    => ! array_key_exists( 'jsdPublic', $raw ) || (bool) $raw['jsdPublic'],
+			'created'     => (string) ( vh_to_mysql( $raw['created'] ?? '' ) ?? '' ),
+			'updated'     => (string) ( vh_to_mysql( $raw['updated'] ?? '' ) ?? '' ),
+			'public'      => ! array_key_exists( 'jsdPublic', $raw ) || (bool) $raw['jsdPublic'],
 		);
 	}
 
@@ -1760,11 +2002,7 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 		 * refreshes first. A failure to read comments never fails the refresh
 		 * -- the status is the point, the comment is the colour.
 		 */
-		$comment = $this->latest_comment( $key );
-
-		if ( null !== $comment ) {
-			\VulnHub\Core\Tickets::set_last_comment( (int) $ticket['id'], $comment );
-		}
+		$comment = $this->read_conversation( (int) $ticket['id'], $key );
 
 		if ( 'done' === $normalised['status_category'] && ! $was_done ) {
 			\VulnHub\Core\Tickets::mark_closed( (int) $ticket['id'], $normalised['resolution'] );

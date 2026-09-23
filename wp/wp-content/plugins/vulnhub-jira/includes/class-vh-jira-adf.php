@@ -310,6 +310,9 @@ final class VulnHub_Jira_Adf {
 		if ( isset( $doc['type'] ) && 'text' === $doc['type'] ) {
 			return (string) ( $doc['text'] ?? '' );
 		}
+		if ( isset( $doc['type'] ) && 'mention' === $doc['type'] ) {
+			return self::mention_label( $doc );
+		}
 
 		foreach ( (array) ( $doc['content'] ?? array() ) as $node ) {
 			if ( ! is_array( $node ) ) {
@@ -545,6 +548,10 @@ final class VulnHub_Jira_Adf {
 	public static function to_html( array $node ): string {
 		$type = (string) ( $node['type'] ?? '' );
 
+		if ( 'mention' === $type ) {
+			return '<span class="vh-mention">' . esc_html( self::mention_label( $node ) ) . '</span>';
+		}
+
 		if ( 'text' === $type ) {
 			$html = esc_html( (string) ( $node['text'] ?? '' ) );
 
@@ -579,9 +586,54 @@ final class VulnHub_Jira_Adf {
 		};
 	}
 
+	/**
+	 * Every account a document @mentions, in order, once each.
+	 *
+	 * A mention is a node of its own carrying the account id, not text: the
+	 * "@Name" a person reads is only a label, and names are neither unique
+	 * nor stable. So "was I mentioned" is answered by id, never by searching
+	 * the words for somebody's name.
+	 *
+	 * @param array<string,mixed> $node ADF document or node.
+	 * @return string[] Account ids.
+	 */
+	public static function mentions( array $node ): array {
+		$out = array();
+
+		if ( 'mention' === (string) ( $node['type'] ?? '' ) ) {
+			$id = trim( (string) ( $node['attrs']['id'] ?? '' ) );
+
+			return '' !== $id ? array( $id ) : array();
+		}
+
+		foreach ( (array) ( $node['content'] ?? array() ) as $child ) {
+			if ( is_array( $child ) ) {
+				$out = array_merge( $out, self::mentions( $child ) );
+			}
+		}
+
+		return array_values( array_unique( $out ) );
+	}
+
 	/* =================================================================
 	 * Internals
 	 * ============================================================== */
+
+	/**
+	 * What a mention reads as. Jira stores the label with its "@", but not
+	 * always; an unlabelled mention still has to read as one.
+	 *
+	 * @param array<string,mixed> $node Mention node.
+	 */
+	private static function mention_label( array $node ): string {
+		$label = trim( (string) ( $node['attrs']['text'] ?? '' ) );
+
+		if ( '' === $label ) {
+			return '@' . __( 'someone', 'vulnhub' );
+		}
+
+		return str_starts_with( $label, '@' ) ? $label : '@' . $label;
+	}
 
 	/**
 	 * Drop the empty nodes that `text()` returns for blank input.

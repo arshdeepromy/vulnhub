@@ -2968,3 +2968,122 @@ dialog.vh-ask::backdrop { background: rgba(4, 8, 18, .6); }
 .vh-deptbar { display:inline-block; width:120px; height:8px; border-radius:4px; background:rgba(148,163,184,.18); overflow:hidden; vertical-align:middle; margin-right:.5rem; }
 .vh-deptbar span { display:block; height:100%; background:#fbbf24; }
 .vh-deptbar.is-clear span { background:#34d399; }
+
+/* ---------------------------------------------------------------------
+ * Tickets: what is waiting on you (VulnHub_Dash_Ticket_Signals).
+ * No column of its own -- the row's edge, a bell beside the key, and tags
+ * above the summary. A ticket past its due date after you sent the current
+ * list glows: nothing is left on your side, it is time to chase.
+ * ------------------------------------------------------------------- */
+:root {
+	--vh-mention: #b69cff;
+	--vh-sig-reply: var(--vh-warn);
+	--vh-sig-assigned: var(--vh-accent);
+}
+:root[data-theme="light"] { --vh-mention: #6a3bd2; }
+
+/* The row's edge takes the strongest signal's colour. */
+.vh-table tbody tr.vh-trow--you > td:first-child { box-shadow: inset 3px 0 0 var(--vh-sig, var(--vh-accent)); }
+.vh-table tbody tr.vh-trow--mention  { --vh-sig: var(--vh-mention); }
+.vh-table tbody tr.vh-trow--reply    { --vh-sig: var(--vh-sig-reply); }
+.vh-table tbody tr.vh-trow--assigned { --vh-sig: var(--vh-sig-assigned); }
+.vh-table tbody tr.vh-trow--you > td { background: color-mix(in srgb, var(--vh-sig) 5%, transparent); }
+
+/* Overdue, no fresh list: marked, not shouted. */
+.vh-table tbody tr.vh-trow--overdue > td:first-child { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--vh-bad) 55%, transparent); }
+
+/* Overdue after the current list went out: the glow. */
+.vh-table tbody tr.vh-trow--chase > td {
+	background: color-mix(in srgb, var(--vh-bad) 9%, transparent);
+	box-shadow: inset 0 1px 0 color-mix(in srgb, var(--vh-bad) 45%, transparent), inset 0 -1px 0 color-mix(in srgb, var(--vh-bad) 45%, transparent);
+	animation: vh-chase 2.8s ease-in-out infinite;
+}
+.vh-table tbody tr.vh-trow--chase > td:first-child {
+	box-shadow: inset 4px 0 0 var(--vh-bad), inset 0 1px 0 color-mix(in srgb, var(--vh-bad) 45%, transparent), inset 0 -1px 0 color-mix(in srgb, var(--vh-bad) 45%, transparent);
+}
+.vh-table tbody tr.vh-trow--chase > td:last-child {
+	box-shadow: inset -1px 0 0 color-mix(in srgb, var(--vh-bad) 45%, transparent), inset 0 1px 0 color-mix(in srgb, var(--vh-bad) 45%, transparent), inset 0 -1px 0 color-mix(in srgb, var(--vh-bad) 45%, transparent);
+}
+@keyframes vh-chase {
+	0%, 100% { background: color-mix(in srgb, var(--vh-bad) 7%, transparent); }
+	50%      { background: color-mix(in srgb, var(--vh-bad) 17%, transparent); }
+}
+
+/* The bell beside the key. */
+.vh-tbell {
+	--c: var(--vh-accent);
+	position: relative; display: inline-grid; place-items: center; vertical-align: middle;
+	width: 22px; height: 22px; margin-left: 4px; border-radius: 7px;
+	color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 40%, transparent);
+}
+.vh-tbell--mention { --c: var(--vh-mention); }
+.vh-tbell--reply   { --c: var(--vh-sig-reply); }
+.vh-tbell svg { width: 13px; height: 13px; transform-origin: 50% 2px; animation: vh-ring 5s ease-in-out infinite; }
+.vh-tbell i {
+	position: absolute; top: -6px; right: -7px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 999px;
+	background: var(--c); color: var(--vh-plane, #0b0f17); font: 700 9.5px/14px inherit; font-style: normal; text-align: center;
+}
+@keyframes vh-ring {
+	0%, 86%, 100% { transform: rotate(0); }
+	88% { transform: rotate(16deg); }  90% { transform: rotate(-14deg); }
+	92% { transform: rotate(10deg); }  94% { transform: rotate(-6deg); }
+	96% { transform: rotate(2deg); }
+}
+
+/* Tags above the summary. */
+.vh-ttags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 5px; }
+.vh-ttag {
+	--c: var(--vh-muted);
+	display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px 1px 6px; border-radius: 999px;
+	font-size: 10.5px; font-weight: 600; line-height: 17px; white-space: nowrap; cursor: help;
+	color: var(--c); background: color-mix(in srgb, var(--c) 13%, transparent);
+	border: 1px solid color-mix(in srgb, var(--c) 38%, transparent);
+}
+.vh-ttag svg { width: 11px; height: 11px; flex: none; }
+.vh-ttag b { font-weight: 800; }
+.vh-ttag--mention  { --c: var(--vh-mention); }
+.vh-ttag--reply    { --c: var(--vh-sig-reply); }
+.vh-ttag--assigned { --c: var(--vh-sig-assigned); }
+.vh-ttag--overdue  { --c: var(--vh-bad); background: transparent; }
+.vh-ttag--chase    { --c: var(--vh-bad); background: var(--vh-bad); color: #fff; border-color: transparent; box-shadow: 0 0 10px color-mix(in srgb, var(--vh-bad) 55%, transparent); }
+.vh-ttag--sent     { --c: var(--vh-muted); font-weight: 500; }
+
+/* "For you": one chip per signal, each a filter on the list. */
+.vh-foryou {
+	display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0 10px; padding: 9px 12px;
+	border: 1px solid var(--vh-line, rgba(148,163,184,.2)); border-radius: 12px; background: var(--vh-raised-2, transparent);
+}
+.vh-foryou__bell { position: relative; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: var(--vh-muted); background: color-mix(in srgb, var(--vh-muted) 12%, transparent); }
+.vh-foryou__bell svg { width: 17px; height: 17px; transform-origin: 50% 2px; }
+.vh-foryou.has-yours .vh-foryou__bell { color: var(--vh-warn); background: color-mix(in srgb, var(--vh-warn) 16%, transparent); }
+.vh-foryou.has-yours .vh-foryou__bell svg { animation: vh-ring 4s ease-in-out 1s infinite; }
+.vh-foryou__bell i {
+	position: absolute; top: -5px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px;
+	background: var(--vh-bad); color: #fff; font: 700 10px/16px inherit; font-style: normal; text-align: center;
+}
+.vh-foryou__h { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--vh-muted); margin-right: 4px; }
+.vh-foryou__chip {
+	--c: var(--vh-muted);
+	display: inline-flex; align-items: center; gap: 7px; padding: 4px 6px 4px 11px; border-radius: 999px;
+	font-size: 12.5px; color: var(--vh-ink); text-decoration: none;
+	border: 1px solid color-mix(in srgb, var(--c) 40%, transparent); background: color-mix(in srgb, var(--c) 8%, transparent);
+	transition: background .15s ease, border-color .15s ease;
+}
+.vh-foryou__chip b { min-width: 20px; padding: 0 6px; border-radius: 999px; font-size: 11.5px; line-height: 18px; text-align: center; color: var(--c); background: color-mix(in srgb, var(--c) 18%, transparent); }
+.vh-foryou__chip:hover { background: color-mix(in srgb, var(--c) 16%, transparent); }
+.vh-foryou__chip.is-active { border-color: var(--c); background: color-mix(in srgb, var(--c) 22%, transparent); box-shadow: 0 0 0 1px var(--c); }
+.vh-foryou__chip.is-zero { opacity: .55; }
+.vh-foryou__chip--mention  { --c: var(--vh-mention); }
+.vh-foryou__chip--reply    { --c: var(--vh-sig-reply); }
+.vh-foryou__chip--assigned { --c: var(--vh-sig-assigned); }
+.vh-foryou__chip--chase, .vh-foryou__chip--overdue { --c: var(--vh-bad); }
+.vh-foryou__note { flex-basis: 100%; }
+
+/* A mention inside a comment reads as one. */
+.vh-mention { color: var(--vh-mention); font-weight: 600; }
+
+@media (prefers-reduced-motion: reduce) {
+	.vh-table tbody tr.vh-trow--chase > td { animation: none; background: color-mix(in srgb, var(--vh-bad) 13%, transparent); }
+	.vh-tbell svg, .vh-foryou.has-yours .vh-foryou__bell svg { animation: none; }
+}

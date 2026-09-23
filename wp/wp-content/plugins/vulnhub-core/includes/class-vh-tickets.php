@@ -187,7 +187,7 @@ final class Tickets {
 			// A sync replaces the provider's fields, not the record of the last
 			// check, which only this site knows.
 			$kept = $existing ? json_decode( (string) $existing['payload_json'], true ) : null;
-			foreach ( array( 'last_check', 'next_check', 'last_comment' ) as $own ) {
+			foreach ( array( 'last_check', 'next_check', 'last_comment', 'conversation', 'list_sent' ) as $own ) {
 				if ( is_array( $kept ) && is_array( $kept[ $own ] ?? null ) && ! isset( $payload[ $own ] ) ) {
 					$payload[ $own ] = $kept[ $own ];
 				}
@@ -946,6 +946,54 @@ final class Tickets {
 		}
 
 		self::set_payload_value( $ticket_id, 'last_comment', $comment );
+	}
+
+	/**
+	 * Who owes whom a reply on a ticket, as the last read of its comments left
+	 * it -- see VulnHub_Jira_Connector::conversation(). Null until the
+	 * conversation has been read once.
+	 *
+	 * @param array<string,mixed> $ticket Ticket row.
+	 * @return array<string,mixed>|null
+	 */
+	public static function conversation( array $ticket ): ?array {
+		$payload = json_decode( (string) ( $ticket['payload_json'] ?? '' ), true );
+
+		return is_array( $payload ) && is_array( $payload['conversation'] ?? null ) ? $payload['conversation'] : null;
+	}
+
+	/**
+	 * @param array<string,mixed> $conversation Summary of the comments.
+	 */
+	public static function set_conversation( int $ticket_id, array $conversation ): void {
+		self::set_payload_value( $ticket_id, 'conversation', $conversation );
+	}
+
+	/**
+	 * When an updated list was last sent to the ticket, or null.
+	 *
+	 * @param array<string,mixed> $ticket Ticket row.
+	 * @return array{at:string,by:int,file:string}|null `at` is UTC.
+	 */
+	public static function list_sent( array $ticket ): ?array {
+		$payload = json_decode( (string) ( $ticket['payload_json'] ?? '' ), true );
+
+		return is_array( $payload ) && is_array( $payload['list_sent'] ?? null ) ? $payload['list_sent'] : null;
+	}
+
+	/**
+	 * Record that an updated list went to the ticket, now, from this user.
+	 */
+	public static function set_list_sent( int $ticket_id, string $file ): void {
+		self::set_payload_value(
+			$ticket_id,
+			'list_sent',
+			array(
+				'at'   => vh_now(),
+				'by'   => get_current_user_id(),
+				'file' => $file,
+			)
+		);
 	}
 
 	/**

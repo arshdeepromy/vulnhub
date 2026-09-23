@@ -235,6 +235,7 @@ final class VulnHub_Jira_Ticketer {
 		// ticket, so keep the newest one rather than throwing the trip away.
 		if ( ! empty( $read['ok'] ) ) {
 			\VulnHub\Core\Tickets::set_last_comment( (int) $ticket['id'], $read['comments'][0] ?? null );
+			\VulnHub\Core\Tickets::set_conversation( (int) $ticket['id'], VulnHub_Jira_Connector::conversation( $read['comments'] ) );
 		}
 
 		return $read;
@@ -376,6 +377,8 @@ final class VulnHub_Jira_Ticketer {
 		}
 
 		$connector->forget_comments( $key );
+
+		\VulnHub\Core\Tickets::set_list_sent( $ticket_id, $name );
 
 		vulnhub()->logger->audit(
 			'ticket.attachment_refreshed',
@@ -575,6 +578,8 @@ final class VulnHub_Jira_Ticketer {
 
 		$connector->forget_comments( $key );
 
+		\VulnHub\Core\Tickets::set_list_sent( (int) $ticket['id'], $name );
+
 		vulnhub()->logger->audit(
 			'ticket.attachment_refreshed',
 			sprintf( '%s: %s (%d rows, %d of %d done)', $key, $name, (int) $csv['rows'], $done, $total ),
@@ -711,6 +716,12 @@ final class VulnHub_Jira_Ticketer {
 
 		if ( ! empty( $posted['ok'] ) && isset( $posted['comment'] ) ) {
 			\VulnHub\Core\Tickets::set_last_comment( (int) $ticket['id'], (array) $posted['comment'] );
+
+			// A reply is what clears "waiting on you" and an unanswered
+			// mention, so the conversation is read again now, not at the
+			// next poll -- otherwise the flag outlives the answer.
+			$connector->forget_comments( (string) ( $ticket['external_key'] ?? '' ) );
+			$connector->read_conversation( (int) $ticket['id'], (string) ( $ticket['external_key'] ?? '' ) );
 		}
 
 		return $posted;

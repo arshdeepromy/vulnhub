@@ -801,6 +801,82 @@ the same component is rendered inline on the ticket page — from one function
     comment on, and says so rather than looking like a ticket nobody has
     commented on.
 
+## Waiting on you: tags, the glow, and the bell
+
+The Tickets list marks what needs the person looking at it, without a column
+of its own (`VulnHub_Dash_Ticket_Signals`). Four signals, open tickets only:
+
+| Signal | When | Shown as |
+|---|---|---|
+| **Mentioned you** | a comment @mentions your Jira account, or writes your name, and you have not commented since | violet `@ Mentioned you` tag, violet row edge, bell |
+| **Your reply** | the newest comment that is a person talking is somebody else's, on a ticket you raised, are assigned, have commented on or were mentioned on | amber tag, amber edge, bell |
+| **Assigned to you** | the Jira assignee is your account | `Yours` tag, accent edge, bell |
+| **Chase** | past its due date (end of the day, site time) *after* an updated list was sent | the row glows red, with `N days over` and `list sent …` |
+
+Overdue with no updated list sent is marked quietly (red outline tag, thin red
+edge): the next step there is sending the list, not chasing.
+
+- **Tags sit above the summary; the bell sits beside the key.** Every tag and
+  the bell carry a title saying who, and when.
+- **For you** above the tabs is one chip per signal with its count, and each
+  chip is a filter: `tfor` = `mention` | `reply` | `assigned` | `chase` |
+  `overdue`. It narrows by id, the same way the report's drill-downs do, and
+  combines with them.
+- **The topbar bell** takes the same signals through `vulnhub_notifications`:
+  mentions and chase as critical, replies as a warning, assignments as info,
+  each linking to its filter.
+
+### What is not a person talking
+
+Three kinds of comment never make a ticket "yours", and never count as
+mentioning you:
+
+- **Automations** — `accountType = app`.
+- **Relayed field changes** — a desk that mirrors another tool posts lines
+  like "Owner changed in <tool> to: …". `VulnHub_Jira_Connector::is_noise()`
+  matches `<field> changed [in <tool>] to:` on the first line; filter
+  `vulnhub_ticket_comment_is_noise` for other shapes. The same relay's
+  "<Name> in <tool> commented:" posts *are* a person, and are credited to
+  that name (`relayed_by()`) — including you, so a reply you made in the
+  other tool counts as your reply.
+- **Templates** — the same words, bar names and the greeting, on more than
+  one ticket: the desk's "Hi <name>, thanks for raising this, the team are on
+  it" and its routing note. Compared by word overlap (80% of at least six
+  words), because a macro's wording drifts. An identical human note posted on
+  several tickets is taken for a broadcast.
+
+A name written in plain words counts as a mention (full name, or the first
+name as a word of its own), because a relayed comment has no @mention to
+carry — only the words.
+
+### Where it comes from
+
+Nothing on the list calls Jira.
+
+- **The conversation.** Reading a ticket's comments stores a summary in
+  `payload_json.conversation` (`VulnHub_Jira_Connector::conversation()`):
+  each author's latest comment (`last_by`), every @mention by account id
+  (`mentions`), and the newest ten comments that are a person talking, with
+  the start of their text (`said`). Both are lists of records, never maps keyed by account id —
+  a numeric-looking key comes back from JSON as an int. It is refreshed on
+  Verify, when the comments dialog opens, after posting a reply (so the flag
+  clears with the answer), and by the Jira poll for tickets whose `updated`
+  moved, at most 40 a poll.
+- **Mentions are ids.** `VulnHub_Jira_Adf::mentions()` reads the `mention`
+  nodes; a display name is never searched for. Mentions also render now, as
+  `@Name`, in the comment text and HTML — they used to drop out.
+- **Who "you" is.** `VulnHub_Jira_Connector::jira_identity()` matches
+  **portal admins only** (`vulnhub_admin`), and never an account that is also
+  a WordPress `administrator`. The match needs both halves: Jira's
+  `/user/search` for the user's email returns the account, *and* its display
+  name is the user's own (case and spacing ignored). Remembered in user meta
+  `vulnhub_jira_identity` against the email and name it was made with, so
+  changing either asks again; a miss is asked again a day later. With no
+  match the strip says so and only the SLA signals show.
+- **List sent.** Sending an updated list records `payload_json.list_sent`
+  (`at`, `by`, `file`). Lists sent before that are read from the
+  `ticket.attachment_refreshed` audit rows.
+
 ## Status
 
 Nothing polls `jsm` rows: `VulnHub_Jira_Connector::tickets_to_poll()` selects
