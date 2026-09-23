@@ -183,7 +183,8 @@ The vulnerabilities list has its own vocabulary, beyond `search` / `severity` /
 | `patch_available=direct\|app\|app_shipped\|app_waiting\|app_unknown\|1\|0`, `support=eol\|insupport` | the narrower questions: is there a direct patch, does the fix come through an update to the app that ships the component, either, or no fix; is the platform still supported |
 | `os_eol=yes\|no`, `ticketed=yes\|no` | the host's OS is past vendor support or not; the finding is on a ticket or not |
 | `hosting=<env>`, `platform=<os>` | the same environment vocabulary as the assets list; platform is windows / linux / macos |
-| `product`, `zone`, `route`, `delivery`, `poc`, `sev_not`, `asset` | URL-only drill-downs from the dashboard, each with a banner |
+| `product` + `pkind` | the product row that was clicked — **both parts**, because a slug alone is shared by the package and the application view of the same software |
+| `zone`, `route`, `delivery`, `poc`, `sev_not`, `asset` | URL-only drill-downs from the dashboard, each with a banner |
 
 `fix` is the parameter name because **`action` belongs to WordPress**:
 `admin-post.php` dispatches on it, the export form posts there, and a filter of
@@ -192,6 +193,27 @@ argument passed to `Repo::findings()` still calls it `action`. Anything added to
 that screen has to reach `VulnHub_Dash_Export` too — the export carries its own
 list of arguments, and a filter missing from it makes the CSV stop matching the
 screen without saying so.
+
+### One vulnerability's affected assets
+
+`?vuln=<id>` is not a third tab but a page of its own, and its **Affected
+assets** panel is the findings list scoped to that plugin. It understands
+`search`, `state`, `asset_type`, `team_id`, `department`, `location_id`,
+`hosting`, `ticketed`, `age`, `life` and `overdue` -- the device half of the
+list's vocabulary. Severity, patch and action are the vulnerability's own and
+would answer nothing here.
+
+Two things differ from the list on purpose:
+
+* **`state` defaults to `open_any`, and "every state" is the token `any`**,
+  not an empty value, because an empty select value cannot reach the export
+  (`docs/FILTERS.md`).
+* **`life` defaults to unscoped**, not to the reporting scope. This panel has
+  never applied one, and changing the default would move the Exposure card's
+  counts beside it. The first option says so in words.
+
+The panel carries the selection bar and **Raise ticket for selected**, both
+the list's and both unmodified -- see `docs/TICKETS.md`.
 
 ### Marks on a row
 

@@ -1,8 +1,8 @@
 # Filters, and the audit that keeps them honest
 
 Every number on this platform is a promise: *click me and you will get exactly
-these rows*. Six things were breaking that promise. They are listed below with
-what each one did, and the two scripts that would have caught them.
+these rows*. Eight things were breaking that promise. They are listed below
+with what each one did, and the two scripts that would have caught them.
 
 Re-run both after touching a list screen, a repo filter or a widget:
 
@@ -207,6 +207,68 @@ the cell and the caption explains it, so this is by design — but the link itse
 said only "11". It now carries a label: *"11 critical vulnerabilities under 30
 days — open the 1,201 asset findings behind them"*. The audit script exempts
 this widget by name, with that reasoning attached.
+
+---
+
+## 7. "Any state" downloaded open findings
+
+The affected-assets panel offers Open / Fixed / **Any state**, and Any state
+was the empty string. An empty value is not emitted as a hidden input, so the
+export form carried no `state` at all, and
+`VulnHub_Dash_Export::findings_base()` falls back to its own `open_any`
+default -- a screen showing 64 findings handed back a file of 8, with nothing
+on either of them to say so.
+
+It is now the token `any`, which `Repo::findings()` reads as "no state
+predicate": the same thing absence means to the query, but a thing that
+survives a form. Links carrying the old `state=` still land on it.
+
+This is 2a with the sign reversed. There, a filter the form owned had no
+control; here, a control the form owned had a value the wire could not carry.
+Both end as a file that disagrees with the screen above it.
+
+---
+
+## 8. A product row linked by half its own identity
+
+The Exposure-by-product page groups by **product, slug, kind and class** — so
+the same software seen two ways is two rows, `curl` the distro package beside
+`Curl` the application, `openssl` the package beside `OpenSSL` the library.
+That split is deliberate: patching a distro package and updating an
+application are different work, and the badge on the row says which.
+
+The rows linked by **slug alone**.
+
+> A row reading **PostgreSQL · APP · 1 asset · 2 findings** opened a list of
+> **55** — its own 2, plus the 53 belonging to the `postgresql` package row
+> sitting directly above it.
+
+On this estate 14 slugs are shared that way, `curl` the worst of them: the
+76-finding application row opened all 1,153. Twenty-eight of the 643 rows on
+the page disagreed with the list behind them.
+
+The fix is to make the link as narrow as the row rather than to merge the rows:
+`Repo::findings()` gained a `product_kind` filter, carried as `pkind`, and its
+test is the grouping expression character for character. `(slug, kind)` is
+unique across all 643 rows, so the pair identifies one exactly.
+
+### 8a. ...and the same row made two cuts its link did not
+
+Fixing the slug left three rows still out — `OpenSSL`, `libcurl` and `SQLite`,
+each by a handful. The product counts exclude **informational detections**
+(Tenable's enumeration plugins carry a plugin name and describe no vulnerable
+software, and they once took 14 of the top 25 rows) and **accepted risk**. The
+link carried neither, so the list was the card's number plus 13 info rows.
+
+Both cuts now travel with the link, as `sev_not=info` and `excepted=exclude`,
+and — this is the part that matters — **the banner says so**. A URL-only filter
+with no visible explanation is problem 2 wearing a different hat: before this,
+the only place `sev_not` was ever explained was inside the download-zone
+banner, so arriving from a product row narrowed the list with nothing on screen
+admitting it.
+
+**Checked:** every one of the 643 rows in the default scope, each opened and
+counted against the number printed on it.
 
 ---
 

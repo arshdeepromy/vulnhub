@@ -61,6 +61,10 @@
 <h2>Reading a row</h2>
 <p>Each row shows severity, the vulnerability (expand <em>What the scanner reports</em> for the description, fix and scores, or follow <em>Full detail</em>), the asset, its location, the vulnerable file path, the owner (names are masked until you press the eye in the column header), the due date and any ticket. With <code>route=edge</code> a <em>Reachable via</em> column lists the listening services. The row's <strong>Ticket</strong> button (raise-ticket permission, no ticket yet) raises one straight away, and <strong>Except</strong> starts an exception request. Select rows to <em>Export selected</em> or <em>Raise ticket for selected</em>, or select every match across pages. More rows load as you scroll. Sort by severity, vulnerability, asset or due date. See <a href="?doc=tickets-exceptions">Tickets &amp; exceptions</a>.</p>
 
+<h2>Raising from one vulnerability</h2>
+<p>A vulnerability's own page carries the same two controls over its <strong>Affected assets</strong> panel: tick the machines you want (or <em>Select all N matching these filters</em>) and press <em>Export selected</em> or <em>Raise ticket for selected</em>. It is the findings list narrowed to a single plugin, so it is the same ticket flow and the same review — but the scope is already one update, so the summary names one vulnerability, the description carries its detail once, and the attached CSV is the machine list, with the columns chosen in the review.</p>
+<p>The panel filters the machines the same way the list does: search, state, asset type, team, department, site, hosting, whether the finding is on a ticket, age, lifecycle and past-SLA. Those filters reach the table, the CSV and the ticket alike — <em>Select all N matching</em> is resolved on the server by the same query the table was drawn with, so the number offered, the number exported and the number on the ticket are one number.</p>
+
 <p>The <em>Except</em> button opens the exception request form inside the portal (the Exception register screen renders it in place), so it works for portal-only accounts.</p>
 
 <h2>A vulnerability's detail page</h2>

@@ -1054,6 +1054,10 @@ final class VulnHub_Dash_Export {
 				 * attributed to libcurl" handed back all 228,000 rows.
 				 */
 				'product_slug'    => self::get( 'product_slug' ),
+				// And its kind, for the same reason as the slug above: the
+				// screen's product filter is two parts, and a file that reads
+				// back only one of them holds both halves of a shared slug.
+				'product_kind'    => self::get( 'product_kind' ),
 				'route'           => self::get( 'route' ),
 				'delivery'        => self::get( 'delivery' ),
 				'poc'             => self::get( 'poc' ),
@@ -1308,6 +1312,10 @@ final class VulnHub_Dash_Export {
 				'search'          => self::get( 'search' ),
 				'overdue'         => self::get( 'overdue' ),
 				'product_slug'    => self::get( 'product_slug' ),
+				// And its kind, for the same reason as the slug above: the
+				// screen's product filter is two parts, and a file that reads
+				// back only one of them holds both halves of a shared slug.
+				'product_kind'    => self::get( 'product_kind' ),
 				'route'           => self::get( 'route' ),
 				'poc'             => self::get( 'poc' ),
 				'patch_available' => self::get( 'patch_available' ),

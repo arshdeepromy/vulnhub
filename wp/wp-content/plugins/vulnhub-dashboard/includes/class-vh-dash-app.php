@@ -850,6 +850,101 @@ final class VulnHub_Dash_App {
 	 *
 	 * @param int $vuln_id Vulnerability id.
 	 */
+	/**
+	 * The Affected assets filters, in the two vocabularies that have to agree.
+	 *
+	 * One vulnerability's rows are findings, so this panel is the findings
+	 * list narrowed to a single plugin -- and everything that reads it back
+	 * reads it the way the findings list is read: the table through
+	 * Repo::findings(), and the CSV (the download, "Export selected", and the
+	 * attachment on a ticket raised from "Select all N matching") through
+	 * VulnHub_Dash_Export::findings_base(), which rebuilds the query from the
+	 * export form's hidden inputs.
+	 *
+	 * Those two name several of the same filters differently -- `vuln` /
+	 * `vuln_id`, `life` / `lifecycle`, `ticketed` / `has_ticket` -- and a name
+	 * that does not round-trip is precisely how a file stops matching the
+	 * screen above it without saying so (docs/FILTERS.md has six of these).
+	 * So both shapes are built here, once, beside each other: change a filter
+	 * and you cannot add it to one and forget the other.
+	 *
+	 * @param int $vuln_id The vulnerability being viewed.
+	 * @return array{args:array<string,mixed>,carry:array<string,string>,life_bad:string}
+	 */
+	private static function vuln_assets_filters( int $vuln_id ): array {
+		/*
+		 * `any` rather than an empty string, so "every state" survives into
+		 * the export form -- an empty hidden input is not emitted at all, and
+		 * the export would fall back to its own open-only default. See the
+		 * note on the state filter in Repo::findings().
+		 */
+		$vh_state = self::q( 'state', 'open_any' );
+		$vh_state = '' === $vh_state ? 'any' : $vh_state;
+
+		$vh_life     = self::q( 'life' );
+		$vh_life_bad = '';
+		$vh_life_ok  = array_merge( array( 'reportable', 'in_service_all', 'all' ), array_keys( vh_lifecycle_statuses() ) );
+
+		if ( '' !== $vh_life && ! in_array( $vh_life, $vh_life_ok, true ) ) {
+			$vh_life_bad = $vh_life;
+			$vh_life     = '';
+		}
+
+		// `ticketed` on the wire (yes|no), `has_ticket` (1|0) in both queries,
+		// because `ticket` already names the ticket page's own parameter.
+		$vh_ticketed = match ( self::q( 'ticketed' ) ) {
+			'yes'   => '1',
+			'no'    => '0',
+			default => '',
+		};
+
+		$carry = array(
+			// `vuln`, not `vuln_id`: that is the key findings_base() reads.
+			// The repository's own name would be forwarded into the form,
+			// read by nothing, and the file would hold the whole estate.
+			'vuln'        => (string) $vuln_id,
+			'state'       => $vh_state,
+			'search'      => self::q( 'search' ),
+			'asset_type'  => self::q( 'asset_type' ),
+			'team_id'     => self::q( 'team_id' ),
+			'department'  => self::q( 'department' ),
+			'location_id' => self::q( 'location_id' ),
+			'hosting'     => self::q( 'hosting' ),
+			'has_ticket'  => $vh_ticketed,
+			'lifecycle'   => $vh_life,
+			'age'         => self::q( 'age' ),
+			'overdue'     => self::q( 'overdue' ),
+			'orderby'     => 'risk_score',
+			'order'       => 'DESC',
+		);
+
+		$args = array(
+			'vuln_id'     => $vuln_id,
+			'state'       => $vh_state,
+			'search'      => $carry['search'],
+			'asset_type'  => $carry['asset_type'],
+			'team_id'     => self::qi( 'team_id' ),
+			'department'  => $carry['department'],
+			'location_id' => $carry['location_id'],
+			'hosting'     => $carry['hosting'],
+			'has_ticket'  => $vh_ticketed,
+			'lifecycle'   => $vh_life,
+			'age'         => $carry['age'],
+			'overdue'     => $carry['overdue'],
+			'orderby'     => 'risk_score',
+			'order'       => 'DESC',
+		);
+
+		return array(
+			// '0' is a real answer on has_ticket ("not on a ticket"), so the
+			// comparison is strict: a loose one would strip it and quietly
+			// widen the list to every finding.
+			'args'     => array_filter( $args, static fn( $vh_v ): bool => '' !== $vh_v && 0 !== $vh_v ),
+			'carry'    => array_filter( $carry, static fn( string $vh_v ): bool => '' !== $vh_v ),
+			'life_bad' => $vh_life_bad,
+		);
+	}
+
 	private static function view_vulnerability( int $vuln_id ): void {
 		$v = Repo::vuln( $vuln_id );
 
@@ -861,16 +956,25 @@ final class VulnHub_Dash_App {
 		$per   = 25;
 		$paged = max( 1, self::qi( 'vp', 1 ) );
 
+		$vh_filters = self::vuln_assets_filters( $vuln_id );
+		$vh_fargs   = $vh_filters['args'];
+
 		$affected = Repo::findings(
-			array(
-				'vuln_id' => $vuln_id,
-				'state'   => self::q( 'state', 'open_any' ),
-				'orderby' => 'risk_score',
-				'limit'   => $per,
-				'offset'  => ( $paged - 1 ) * $per,
+			array_merge(
+				$vh_fargs,
+				array(
+					'limit'  => $per,
+					'offset' => ( $paged - 1 ) * $per,
+				)
 			)
 		);
 
+		/*
+		 * The headline counts above describe the vulnerability, not the
+		 * filtered view of it, so they are deliberately not narrowed by the
+		 * panel's filters -- "64 assets affected" has to keep meaning 64
+		 * while somebody narrows the table underneath it to one team.
+		 */
 		$all   = Repo::findings( array( 'vuln_id' => $vuln_id, 'limit' => 1 ) );
 		$total = (int) $affected['total'];
 		$pages = max( 1, (int) ceil( $total / $per ) );
@@ -978,35 +1082,207 @@ final class VulnHub_Dash_App {
 				 * machines is very often here to hand that list to whoever
 				 * patches them, and until now the only way to get it was to
 				 * go back out and rebuild the filter on the list screen.
+				 *
+				 * It carries every filter below, not just the state, and the
+				 * count is on the button: the download is the whole filtered
+				 * set rather than the page, and saying so on the control is
+				 * the only way a reader can tell which of the two they are
+				 * about to get.
 				 */
 				VulnHub_Dash_Export::button(
 					'findings',
-					array(
-						'vuln'  => $vuln_id,
-						'state' => self::q( 'state', 'open_any' ),
-					)
+					$vh_filters['carry'],
+					$total,
+					_n( 'asset', 'assets', $total, 'vulnhub' )
 				);
 				?>
+				<?php if ( current_user_can( Caps::RAISE_TICKET ) ) : ?>
+					<?php
+					/*
+					 * The same control the vulnerability list carries, and the
+					 * same code behind it: the rows here are findings, so a
+					 * selection of them is a selection of findings and the
+					 * existing draft-review-send flow covers it unchanged
+					 * (docs/TICKETS.md). What differs is only the scope the
+					 * reader arrived with -- one vulnerability -- so the
+					 * ticket is about one update on N machines, and the CSV
+					 * Jira receives is that machine list.
+					 */
+					?>
+					<button type="button" class="vh-btn vh-btn--primary vh-btn--sm" data-vh-raise><?php esc_html_e( 'Raise ticket for selected', 'vulnhub' ); ?></button>
+				<?php endif; ?>
 			</header>
 
+			<?php if ( '' !== $vh_filters['life_bad'] ) : ?>
+				<div class="vh-notice vh-notice--warn">
+					<?php
+					printf(
+						/* translators: %s: the unrecognised value supplied in the URL. */
+						esc_html__( '%s is not a lifecycle filter this page knows, so it has been ignored and every asset is counted.', 'vulnhub' ),
+						'<code>life=' . esc_html( $vh_filters['life_bad'] ) . '</code>'
+					);
+					?>
+				</div>
+			<?php endif; ?>
+
 			<form class="vh-filters" method="get">
+				<?php
+				/*
+				 * hidden_filters() deliberately never re-emits `vuln` -- it is
+				 * the page's own identity, not a filter -- so this form has to
+				 * carry it itself or Apply would land on the vulnerability
+				 * list. Everything the form does own is named below so it is
+				 * not emitted twice; anything else in the URL rides along, the
+				 * same rule the other list screens follow (docs/FILTERS.md).
+				 */
+				self::hidden_filters(
+					array( 'state', 'search', 'asset_type', 'team_id', 'department', 'location_id', 'hosting', 'ticketed', 'life', 'age', 'overdue' )
+				);
+				?>
 				<input type="hidden" name="vuln" value="<?php echo esc_attr( (string) $vuln_id ); ?>">
+				<label><?php esc_html_e( 'Search', 'vulnhub' ); ?>
+					<input type="search" name="search" value="<?php echo esc_attr( self::q( 'search' ) ); ?>" placeholder="<?php esc_attr_e( 'Host, IP, owner, team…', 'vulnhub' ); ?>">
+				</label>
 				<label><?php esc_html_e( 'State', 'vulnhub' ); ?>
 					<select name="state">
 						<option value="open_any" <?php selected( self::q( 'state', 'open_any' ), 'open_any' ); ?>><?php esc_html_e( 'Open', 'vulnhub' ); ?></option>
 						<option value="fixed" <?php selected( self::q( 'state' ), 'fixed' ); ?>><?php esc_html_e( 'Fixed', 'vulnhub' ); ?></option>
-						<option value="" <?php selected( self::q( 'state' ), '' ); ?>><?php esc_html_e( 'Any state', 'vulnhub' ); ?></option>
+						<?php
+						/*
+						 * `any`, not an empty value. An empty select value is
+						 * dropped on the way into the export form, which then
+						 * falls back to open-only -- so "Any state" on screen
+						 * used to download open findings. Both old links
+						 * (`state=`) and this one mean the same thing now.
+						 */
+						?>
+						<option value="any" <?php selected( in_array( self::q( 'state', 'open_any' ), array( '', 'any' ), true ), true ); ?>><?php esc_html_e( 'Any state', 'vulnhub' ); ?></option>
 					</select>
 				</label>
+				<label><?php esc_html_e( 'Asset type', 'vulnhub' ); ?>
+					<select name="asset_type">
+						<option value=""><?php esc_html_e( 'All types', 'vulnhub' ); ?></option>
+						<?php foreach ( vh_asset_types() as $vh_at => $vh_at_label ) : ?>
+							<option value="<?php echo esc_attr( (string) $vh_at ); ?>" <?php selected( self::q( 'asset_type' ), (string) $vh_at ); ?>><?php echo esc_html( (string) $vh_at_label ); ?></option>
+						<?php endforeach; ?>
+					</select>
+				</label>
+				<label><?php esc_html_e( 'Team', 'vulnhub' ); ?>
+					<select name="team_id">
+						<option value="0"><?php esc_html_e( 'All teams', 'vulnhub' ); ?></option>
+						<?php foreach ( Repo::teams() as $vh_team ) : ?>
+							<option value="<?php echo esc_attr( (string) $vh_team['id'] ); ?>" <?php selected( self::qi( 'team_id' ), (int) $vh_team['id'] ); ?>><?php echo esc_html( (string) $vh_team['name'] ); ?></option>
+						<?php endforeach; ?>
+					</select>
+				</label>
+				<?php if ( class_exists( 'VulnHub_Departments' ) ) : ?>
+					<label><?php esc_html_e( 'Department', 'vulnhub' ); ?>
+						<select name="department">
+							<?php echo VulnHub_Departments::filter_options( self::q( 'department' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+						</select>
+					</label>
+				<?php endif; ?>
+				<label><?php esc_html_e( 'Site', 'vulnhub' ); ?>
+					<select name="location_id">
+						<option value=""><?php esc_html_e( 'All sites', 'vulnhub' ); ?></option>
+						<option value="none" <?php selected( self::q( 'location_id' ), 'none' ); ?>><?php esc_html_e( 'No site recorded', 'vulnhub' ); ?></option>
+						<?php foreach ( Repo::locations() as $vh_loc ) : ?>
+							<option value="<?php echo esc_attr( (string) $vh_loc['id'] ); ?>" <?php selected( self::q( 'location_id' ), (string) $vh_loc['id'] ); ?>><?php echo esc_html( (string) $vh_loc['name'] ); ?></option>
+						<?php endforeach; ?>
+					</select>
+				</label>
+				<?php if ( class_exists( 'VulnHub_Hosting' ) ) : ?>
+					<label><?php esc_html_e( 'Hosting', 'vulnhub' ); ?>
+						<select name="hosting">
+							<option value=""><?php esc_html_e( 'Anywhere', 'vulnhub' ); ?></option>
+							<?php foreach ( VulnHub_Hosting::environment_labels() as $vh_env => $vh_env_label ) : ?>
+								<option value="<?php echo esc_attr( (string) $vh_env ); ?>" <?php selected( self::q( 'hosting' ), (string) $vh_env ); ?>><?php echo esc_html( (string) $vh_env_label ); ?></option>
+							<?php endforeach; ?>
+						</select>
+					</label>
+				<?php endif; ?>
+				<label><?php esc_html_e( 'Ticket', 'vulnhub' ); ?>
+					<select name="ticketed">
+						<option value=""><?php esc_html_e( 'Raised or not', 'vulnhub' ); ?></option>
+						<option value="no" <?php selected( self::q( 'ticketed' ), 'no' ); ?>><?php esc_html_e( 'Not raised', 'vulnhub' ); ?></option>
+						<option value="yes" <?php selected( self::q( 'ticketed' ), 'yes' ); ?>><?php esc_html_e( 'On a ticket', 'vulnhub' ); ?></option>
+					</select>
+				</label>
+				<label><?php esc_html_e( 'Age', 'vulnhub' ); ?>
+					<select name="age">
+						<option value=""><?php esc_html_e( 'Any age', 'vulnhub' ); ?></option>
+						<?php foreach ( Repo::age_bands() as $vh_band_key => $vh_band ) : ?>
+							<option value="<?php echo esc_attr( (string) $vh_band_key ); ?>" <?php selected( self::q( 'age' ), (string) $vh_band_key ); ?>><?php echo esc_html( (string) $vh_band['label'] ); ?></option>
+						<?php endforeach; ?>
+					</select>
+				</label>
+				<label><?php esc_html_e( 'Lifecycle', 'vulnhub' ); ?>
+					<select name="life">
+						<?php
+						/*
+						 * The unfiltered option is first and says what it
+						 * actually does, because this panel has never applied
+						 * a lifecycle scope and narrowing it by default would
+						 * move the counts in the Exposure card beside it.
+						 */
+						?>
+						<option value=""><?php esc_html_e( 'Every asset, including retired', 'vulnhub' ); ?></option>
+						<option value="reportable" <?php selected( self::q( 'life' ), 'reportable' ); ?>><?php esc_html_e( 'Reporting scope (what the dashboard counts)', 'vulnhub' ); ?></option>
+						<option value="in_service_all" <?php selected( self::q( 'life' ), 'in_service_all' ); ?>><?php esc_html_e( 'Everything with an owner expectation', 'vulnhub' ); ?></option>
+						<?php foreach ( vh_lifecycle_statuses() as $vh_ls => $vh_lm ) : ?>
+							<option value="<?php echo esc_attr( (string) $vh_ls ); ?>" <?php selected( self::q( 'life' ), (string) $vh_ls ); ?>><?php echo esc_html( (string) $vh_lm['label'] ); ?></option>
+						<?php endforeach; ?>
+					</select>
+				</label>
+				<label class="vh-check">
+					<input type="checkbox" name="overdue" value="1" <?php checked( self::q( 'overdue' ), '1' ); ?>>
+					<?php esc_html_e( 'Past SLA only', 'vulnhub' ); ?>
+				</label>
 				<button class="vh-btn"><?php esc_html_e( 'Apply', 'vulnhub' ); ?></button>
+				<a class="vh-btn vh-btn--ghost" href="<?php echo esc_url( self::page_url( 'vulnerabilities', array( 'vuln' => $vuln_id ) ) ); ?>"><?php esc_html_e( 'Reset', 'vulnhub' ); ?></a>
 			</form>
 
+			<p class="vh-sub vh-muted">
+				<?php
+				printf(
+					/* translators: 1: matching assets, 2: assets affected in total. */
+					esc_html( _n( '%1$s asset matches these filters, of %2$s affected.', '%1$s assets match these filters, of %2$s affected.', $total, 'vulnhub' ) ),
+					'<strong>' . esc_html( number_format_i18n( $total ) ) . '</strong>',
+					esc_html( number_format_i18n( (int) $all['total'] ) )
+				);
+				?>
+			</p>
+
 			<?php if ( ! $affected['rows'] ) : ?>
-				<p class="vh-ok-note"><?php esc_html_e( 'No assets match that state.', 'vulnhub' ); ?></p>
+				<p class="vh-ok-note"><?php esc_html_e( 'No assets match these filters.', 'vulnhub' ); ?></p>
 			<?php else : ?>
+				<?php
+				/*
+				 * The findings list's selection bar, unchanged and doing the
+				 * same job: app.js binds to these attributes, so ticking rows
+				 * here feeds "Export selected" and "Raise ticket for selected"
+				 * with no script of its own. `data-vh-total` is the filtered
+				 * count, which is what "Select all N matching" then resolves
+				 * server-side through the very query this table was drawn
+				 * with -- so the N offered, the N exported and the N on the
+				 * ticket are one number.
+				 *
+				 * Hidden until something is ticked, and inert with scripting
+				 * off: the checkboxes and the Export button above still work
+				 * on their own.
+				 */
+				?>
+				<div class="vh-selbar" data-vh-selbar data-vh-total="<?php echo esc_attr( (string) $total ); ?>" hidden>
+					<strong class="vh-selbar__count" data-vh-selcount aria-live="polite"></strong>
+					<button type="button" class="vh-linkbtn vh-selbar__all" data-vh-selall hidden></button>
+					<span class="vh-selbar__sp"></span>
+					<button type="button" class="vh-btn vh-btn--sm vh-btn--primary" data-vh-selexport><?php esc_html_e( 'Export selected', 'vulnhub' ); ?></button>
+					<button type="button" class="vh-linkbtn" data-vh-selclear><?php esc_html_e( 'Clear', 'vulnhub' ); ?></button>
+				</div>
 				<div class="vh-tablewrap">
 					<table class="vh-table">
 						<thead><tr>
+							<th class="vh-col-check"><input type="checkbox" data-vh-all aria-label="<?php esc_attr_e( 'Select all', 'vulnhub' ); ?>"></th>
 							<th><?php esc_html_e( 'Asset', 'vulnhub' ); ?></th>
 							<th><?php esc_html_e( 'Type', 'vulnhub' ); ?></th>
 							<th><?php esc_html_e( 'App', 'vulnhub' ); ?></th>
@@ -1021,6 +1297,18 @@ final class VulnHub_Dash_App {
 						<?php foreach ( $affected['rows'] as $f ) : ?>
 							<?php $overdue = ! empty( $f['due_at'] ) && strtotime( (string) $f['due_at'] . ' UTC' ) < time(); ?>
 							<tr>
+								<?php
+								/*
+								 * The value is the finding id, not the asset
+								 * id: a row here is this vulnerability on that
+								 * machine, and that is what a ticket covers
+								 * and what the CSV has a line for. Sending
+								 * asset ids would be read as finding ids by
+								 * the draft endpoint and ticket the wrong
+								 * rows entirely.
+								 */
+								?>
+								<td><input type="checkbox" class="vh-pick" value="<?php echo esc_attr( (string) $f['id'] ); ?>" aria-label="<?php esc_attr_e( 'Select asset', 'vulnhub' ); ?>"></td>
 								<td>
 									<a class="vh-mono" href="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $f['asset_id'] ) ) ); ?>"><strong><?php echo esc_html( (string) $f['hostname'] ); ?></strong></a>
 									<span class="vh-meta"><?php echo esc_html( (string) $f['ipv4'] ); ?></span>
@@ -1131,7 +1419,7 @@ final class VulnHub_Dash_App {
 		$vh_tab       = in_array( self::q( 'tab' ), array( 'products', 'vuln_assets' ), true ) ? self::q( 'tab' ) : 'findings';
 		$vh_tab_carry = self::current_filters( array(
 			'search', 'patch_available', 'ticketed', 'os_eol', 'support', 'severity', 'asset_type', 'team_id', 'department',
-			'age', 'overdue', 'life', 'product', 'zone', 'platform', 'sev_not', 'route',
+			'age', 'overdue', 'life', 'product', 'pkind', 'zone', 'platform', 'sev_not', 'route',
 			'delivery', 'poc', 'hosting', 'asset', 'state', 'orderby', 'order', 'location_id',
 		) );
 		$vh_find_url  = self::page_url( 'vulnerabilities', $vh_tab_carry );
@@ -1301,17 +1589,59 @@ final class VulnHub_Dash_App {
 				</a>
 			</div>
 		<?php endif; ?>
-		<?php $vh_prod = self::q( 'product' ); ?>
+		<?php
+		$vh_prod  = self::q( 'product' );
+		$vh_pkind = self::q( 'pkind' );
+		/*
+		 * Both parts, or the chip describes a narrower list than the one on
+		 * screen. Arriving from "Curl [application]" and reading only
+		 * "attributed to curl" leaves the reader to wonder why the distro
+		 * package's findings are in the list -- and before the kind was
+		 * carried at all, they were.
+		 */
+		$vh_pkind_label = array(
+			'os_package'  => __( 'the operating-system package', 'vulnhub' ),
+			'application' => __( 'the application', 'vulnhub' ),
+			'library'     => __( 'the library', 'vulnhub' ),
+			'os'          => __( 'the operating system', 'vulnhub' ),
+		);
+		?>
 		<?php if ( '' !== $vh_prod ) : ?>
 			<div class="vh-notice vh-notice--info">
 				<?php
-				printf(
-					/* translators: %s: a product name/slug. */
-					esc_html__( 'Showing findings attributed to %s.', 'vulnhub' ),
-					'<strong>' . esc_html( $vh_prod ) . '</strong>'
-				);
+				if ( '' !== $vh_pkind ) {
+					printf(
+						/* translators: 1: a product name/slug, 2: what kind of thing it is. */
+						esc_html__( 'Showing findings attributed to %1$s, as %2$s.', 'vulnhub' ),
+						'<strong>' . esc_html( $vh_prod ) . '</strong>',
+						esc_html( $vh_pkind_label[ $vh_pkind ] ?? $vh_pkind )
+					);
+				} else {
+					printf(
+						/* translators: %s: a product name/slug. */
+						esc_html__( 'Showing findings attributed to %s.', 'vulnhub' ),
+						'<strong>' . esc_html( $vh_prod ) . '</strong>'
+					);
+				}
+				/*
+				 * Say the cuts out loud. The Exposure-by-product counts leave
+				 * out informational detections (Tenable's enumeration plugins
+				 * are not exposure) and accepted risk, so the link carries the
+				 * same two -- and a list quietly narrower than the filters on
+				 * screen is exactly what docs/FILTERS.md is a list of.
+				 */
+				if ( 'info' === self::q( 'sev_not' ) || 'exclude' === self::q( 'excepted' ) ) {
+					echo ' ';
+					if ( 'info' === self::q( 'sev_not' ) && 'exclude' === self::q( 'excepted' ) ) {
+						esc_html_e( 'Informational detections and accepted risk are excluded, matching the count on the Products page.', 'vulnhub' );
+					} elseif ( 'info' === self::q( 'sev_not' ) ) {
+						esc_html_e( 'Informational detections are excluded, matching the count on the Products page.', 'vulnhub' );
+					} else {
+						esc_html_e( 'Accepted risk is excluded, matching the count on the Products page.', 'vulnhub' );
+					}
+				}
 				?>
-				<a href="<?php echo esc_url( remove_query_arg( 'product' ) ); ?>"><?php esc_html_e( 'Clear this filter', 'vulnhub' ); ?></a>
+				<a href="<?php echo esc_url( remove_query_arg( array( 'product', 'pkind', 'sev_not', 'excepted' ) ) ); ?>"><?php esc_html_e( 'Clear this filter', 'vulnhub' ); ?></a>
 			</div>
 		<?php endif; ?>
 		<?php if ( '' !== $vh_patch ) : ?>
@@ -1523,6 +1853,13 @@ final class VulnHub_Dash_App {
 						<?php
 						$vh_pa   = (int) $vh_pr['assets'];
 						$vh_ppct = (int) round( 100 * $vh_pa / $vh_pmax );
+						/*
+						 * No `pkind` here, on purpose. This tab groups by slug
+						 * alone (Repo::findings() with group=product), so its row
+						 * really is both halves and the slug-only link is the one
+						 * that matches it. Adding the kind would narrow the list
+						 * below the number printed above it.
+						 */
 						$vh_purl = self::page_url( 'vulnerabilities', array_merge( $vh_pcar, array( 'product' => (string) $vh_pr['product_slug'] ) ) );
 						?>
 						<li class="vh-prodrow">
@@ -2343,6 +2680,10 @@ final class VulnHub_Dash_App {
 			'state'      => self::q( 'state', 'open_any' ),
 			'lifecycle'  => '' === $vh_vlife ? 'reportable' : $vh_vlife,
 			'product_slug' => self::q( 'product' ),
+			// `pkind` on the wire: the second half of identifying a product
+			// row, because a slug alone is shared by the package and the
+			// application view of the same software. See Repo::findings().
+			'product_kind' => self::q( 'pkind' ),
 			'severity'   => self::q( 'severity' ),
 			'age'        => self::q( 'age' ),
 			'route'      => self::q( 'route' ),
@@ -2667,7 +3008,15 @@ final class VulnHub_Dash_App {
 						$vh_pct    = (int) round( 100 * $vh_assets / $max );
 						$vh_url    = VulnHub_Dash_Portal::portal_url(
 							'vulnerabilities',
-							array( 'product' => (string) $vh_r['product_slug'], 'life' => 'reportable', 'state' => 'open_any' )
+							array(
+								'product'  => (string) $vh_r['product_slug'],
+								'pkind'    => (string) $vh_r['product_kind'],
+								'life'     => 'reportable',
+								'state'    => 'open_any',
+								// The two cuts the counts above were made with.
+								'sev_not'  => 'info',
+								'excepted' => 'exclude',
+							)
 						);
 						$vh_search = strtolower( trim( (string) $vh_r['product'] . ' ' . (string) ( $vh_r['product_kind'] ?? '' ) . ' ' . (string) ( $vh_r['bundles'] ?? '' ) ) );
 						?>

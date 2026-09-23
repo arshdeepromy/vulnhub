@@ -3708,7 +3708,15 @@ final class VulnHub_Dash_Widgets {
 			$pct    = (int) round( 100 * $assets / $max );
 			$url    = VulnHub_Dash_Portal::portal_url(
 				'vulnerabilities',
-				array( 'product' => (string) $r['product_slug'], 'life' => 'reportable', 'state' => 'open_any' )
+				array(
+					'product'  => (string) $r['product_slug'],
+					'pkind'    => (string) ( $r['product_kind'] ?? '' ),
+					'life'     => 'reportable',
+					'state'    => 'open_any',
+					// Same two cuts this widget's own counts are made with.
+					'sev_not'  => 'info',
+					'excepted' => 'exclude',
+				)
 			);
 
 			echo '<li class="vh-prodrow">';

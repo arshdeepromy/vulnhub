@@ -239,6 +239,46 @@ only for automation, which calls `VulnHub_Jira_Ticketer::raise()` directly.
    created but the upload fails, the result says so and asks for the file to be
    attached by hand.
 
+## Raising from one vulnerability
+
+The **Affected assets** panel on a vulnerability's own page (`?vuln=<id>`) is
+the findings list narrowed to a single plugin, so it carries the same two
+controls the list carries -- *Export selected* and **Raise ticket for
+selected** -- and they are the same code. A row there is a finding (this
+vulnerability on that machine), the checkbox value is its finding id, and the
+draft endpoint that has always taken `finding_ids` takes them unchanged. There
+is no second ticket type and no second flow to keep in step.
+
+What it gives a reader that the list cannot: the scope is already one update.
+The summary names one vulnerability, the description carries its detail once,
+and the attached CSV is the machine list -- one row per affected asset, with
+the columns chosen in the review.
+
+The panel's filters (search, state, asset type, team, department, site,
+hosting, ticket, age, lifecycle, past SLA) narrow that list the way the
+findings list's do, and they reach all three consumers:
+
+* the table,
+* the CSV, through `VulnHub_Dash_Export::findings_base()`,
+* and the ticket, because **Select all N matching** is resolved on the server
+  by `findings_scope()` -- the same query -- and not from what the browser had
+  on screen.
+
+`VulnHub_Dash_App::vuln_assets_filters()` is where that agreement is kept. It
+returns the filters twice, in the repository's names and in the wire names the
+export reads back (`vuln`/`vuln_id`, `life`/`lifecycle`,
+`ticketed`/`has_ticket`), because a filter added to one and forgotten in the
+other is the failure `docs/FILTERS.md` is a list of.
+
+Measured on a 64-asset vulnerability: screen 64 / CSV 64 / `findings_scope()`
+64. Narrowed to not-raised, 60 / 60 / 60; to the reporting scope, 59 / 59 / 59.
+
+**The summary still counts findings, not definitions.** A three-row selection
+here reads "3 vulnerabilities on 3 assets" where a reader would say one
+vulnerability on three machines. That wording is `summary()`'s, shared with
+every other raise, so it is left alone rather than special-cased per entry
+point.
+
 ## Raising a scope ticket
 
 **Raise Jira ticket** sits between the filters and the table on Assets & owners

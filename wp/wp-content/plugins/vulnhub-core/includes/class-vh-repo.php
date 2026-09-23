@@ -3856,7 +3856,19 @@ final class Repo {
 		$need_a = false;
 		$need_v = false;
 
-		if ( ! empty( $args['state'] ) ) {
+		/*
+		 * `any` is how a screen says "every state" out loud.
+		 *
+		 * Leaving the argument off says the same thing to this query, but it
+		 * cannot survive the trip to the CSV: an export rebuilds its filters
+		 * from the form's hidden inputs, empty values are not emitted, and
+		 * VulnHub_Dash_Export::findings_base() then falls back to its own
+		 * `open_any` default. So a list showing fixed findings alongside open
+		 * ones handed back a file of open ones -- the screen and the file
+		 * disagreeing with nothing on either of them to say so. A non-empty
+		 * token round-trips, and means here exactly what absence means.
+		 */
+		if ( ! empty( $args['state'] ) && 'any' !== $args['state'] ) {
 			if ( 'open_any' === $args['state'] ) {
 				$where[] = "f.state IN ('open','reopened')";
 			} else {
@@ -3969,6 +3981,34 @@ final class Repo {
 			 */
 			$where[]  = "( CASE WHEN v.product_kind IN ( 'library', 'os_package' ) AND f.bundle_app <> '' THEN f.bundle_app_slug ELSE v.product_slug END ) = %s";
 			$params[] = (string) $args['product_slug'];
+			$need_v   = true;
+		}
+
+		/*
+		 * The other half of identifying a product row.
+		 *
+		 * A slug is not unique on the Exposure-by-product page: that list
+		 * groups by product, slug, kind and class, so the same software seen
+		 * two ways is two rows -- `curl` the distro package and `Curl` the
+		 * application, `openssl` the package and `OpenSSL` the library. On
+		 * this estate 14 slugs are shared that way. The rows link by slug
+		 * alone, so clicking either half opened both: a row reading "1 asset ·
+		 * 2 findings" landed on a list of 55.
+		 *
+		 * They are deliberately still two rows -- patching a distro package
+		 * and updating an application are different work, and the badge says
+		 * which -- so the fix is to make the link as narrow as the row rather
+		 * than to merge them. `(slug, kind)` is unique across all 643 rows.
+		 *
+		 * The expression is the grouping expression, character for character.
+		 * Writing the test any other way is how a segment comes to disagree
+		 * with the rows it opens.
+		 */
+		if ( ! empty( $args['product_kind'] ) ) {
+			$where[]  = "( CASE WHEN v.product_kind IN ( 'library', 'os_package' ) AND f.bundle_app <> '' AND v.product_kind = 'os_package' THEN 'os_package'
+			                   WHEN v.product_kind IN ( 'library', 'os_package' ) AND f.bundle_app <> '' THEN 'application'
+			                   ELSE v.product_kind END ) = %s";
+			$params[] = (string) $args['product_kind'];
 			$need_v   = true;
 		}
 		if ( ! empty( $args['component_class'] ) ) {
