@@ -15,8 +15,21 @@ A finished backup is a single archive:
 backup-<date>-<time>-<id>.tar.gz
   ├── manifest.json     what this is, and the checksums of the other two
   ├── db.sql.gz         the database dump
-  └── wp-content.zip    plugins, themes, uploads
+  └── wp-content.zip    everything under wp-content
 ```
+
+`wp-content.zip` holds the whole tree — plugins, themes, uploads, mu-plugins,
+languages and top-level drop-ins such as `object-cache.php`. Left out: the
+backup store itself (`uploads/vulnhub-backup/` — a backup cannot contain
+itself), WordPress's scratch folders (`upgrade/`, `cache/`) and `*.log`.
+
+**Credentials are in the dump, encrypted — the key is not.** Connector secrets
+live in `vh_options` as `vhenc1:` ciphertext, and the key that opens them is
+`VULNHUB_ENCRYPTION_KEY`, injected from `.env` by `docker-compose.yml`. Neither
+`.env` nor `wp-config.php` is inside the container's `wp-content`, and a key
+stored beside its ciphertext protects nothing. **Keep `VH_ENC_KEY` somewhere
+safe on its own**: restored onto a stack with a different key, every connector
+credential has to be entered again.
 
 It used to be a *folder* holding those three files, which meant "take a backup"
 produced three things to download and keep together, and restoring meant
@@ -49,6 +62,38 @@ The result is a plain gzip-compressed tar. `gzip -t`, `tar -tvzf` and `tar -xzf`
 all accept it, which matters: a backup you can only open with the thing that
 broke is not much of a backup.
 
+### Crash safety, and proving the result
+
+Every phase appends to a file across passes and records its cursor in the job
+row. The row is durable the moment MariaDB commits it; the appended bytes are
+not, until the kernel writes them. A host that went down in between (a WSL VM
+restart did exactly this) left the cursor ahead of the file: the next pass
+carried on after a run of zero bytes, **every gzip reader stopped at those
+zeros**, a restore would have loaded 46 of 62 tables — and the job still said
+*done*. So:
+
+- **sync before checkpoint.** `VulnHub_Backup_Storage::sync_file()` fsyncs the
+  dump / archive and records its byte length in the cursor *before* the cursor
+  is committed.
+- **rewind on resume.** `rewind_to_checkpoint()` cuts a file that is longer
+  than its checkpoint (a batch written but never recorded — it would land
+  twice) and starts the phase over when it is shorter (bytes lost).
+- **The zip resumes from what it really holds** — its `numFiles`, not the
+  cursor — and must hold every listed file before the phase ends.
+- **The dump is read back before the job moves on.** `count_dump()` reads
+  `db.sql.gz` with the same reader a restore uses and fails the job unless it
+  finds every table and row the export counted. `tables_total` and
+  `rows_exported` go into `manifest.json` so a restore can check itself too.
+
+To check a set by hand: `gzip -t db.sql.gz` (catches trailing garbage), then
+count `^CREATE TABLE` and `^INSERT INTO` against the manifest.
+
+### Downloading
+
+The download links carry the core `wp_rest` nonce (`_wpnonce`). Without it the
+REST API ignores the login cookie, treats the request as anonymous, and the
+download answers **401 rest_forbidden**.
+
 ---
 
 ## Restoring
@@ -72,6 +117,32 @@ member whose path tries to escape the staging directory — `../../wp-config.php
 
 There is no checksum of the archive inside the archive, because a file cannot
 contain its own hash; that is what the sha256 recorded on the job is for.
+
+### Applying the dump
+
+- **Inflated once, then seeked.** `gzseek()` on a read stream gets there by
+  decompressing from the start, so every pass re-read everything before its
+  offset — thousands of passes over a gigabyte. The dump is decompressed to
+  `db.sql` in staging once, and each pass `fseek()`s straight to its offset.
+- **Whole statements only.** Rows run to megabytes (plugin output on a
+  finding); a fixed 64KB `gzgets()` handed back fragments, and a batch that
+  ended mid-statement threw the fragment away. Lines are read whole, and a
+  batch ends only between statements.
+- **Failures are counted, not swallowed.** A failed statement is recorded and
+  the dump carries on — a half-applied dump is worse than a complete one with
+  a named gap — but the job ends **failed**, naming the count and first error,
+  and also fails if the tables and rows applied differ from the manifest.
+- **The object cache is flushed** once the dump is in, or Redis goes on
+  serving the pre-restore options and users.
+
+### The files swap
+
+The restored `wp-content` is renamed into place and the old one moved into
+staging, which is deleted when the job finishes. Before that, **the backup
+store and anything at the top level the bundle does not carry are moved
+back** — otherwise a restore deleted every local backup set (and the upload it
+was restoring from), `object-cache.php` from older bundles, and the logs. The
+swap is safe to resume if a pass dies between the rename and the phase change.
 
 ---
 

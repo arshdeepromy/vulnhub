@@ -260,8 +260,16 @@ $secret_hint = $settings->secret_hint( 'backup_s3', 'secret_access_key' );
 							? $set['files']
 							: array( 'manifest.json', 'db.sql.gz', 'wp-content.zip' );
 						?>
+						<?php
+						/*
+						 * The link needs the core wp_rest nonce. Without it the
+						 * REST API ignores the login cookie, treats the request
+						 * as anonymous, and the download answers 401.
+						 */
+						$vh_rest_nonce = wp_create_nonce( 'wp_rest' );
+						?>
 						<?php foreach ( $vh_files as $file ) : ?>
-							<a href="<?php echo esc_url( rest_url( VulnHub_Backup_Rest::NS . '/download/' . rawurlencode( (string) $set['folder'] ) . '/' . $file ) ); ?>"><?php echo esc_html( $file ); ?></a>&nbsp;
+							<a href="<?php echo esc_url( add_query_arg( '_wpnonce', $vh_rest_nonce, rest_url( VulnHub_Backup_Rest::NS . '/download/' . rawurlencode( (string) $set['folder'] ) . '/' . $file ) ) ); ?>"><?php echo esc_html( $file ); ?></a>&nbsp;
 						<?php endforeach; ?>
 					</td>
 					<td>

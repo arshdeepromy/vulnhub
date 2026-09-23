@@ -157,6 +157,14 @@ final class VulnHub_Backup_Restore_Runner {
 
 			VulnHub_Backup_Jobs::update( $job_id, array( 'locked_until' => gmdate( 'Y-m-d H:i:s', time() + self::LEASE ) ) );
 
+			// A phase that failed the job returns true to stop; it must not
+			// then be advanced, or finished again as "done" over its error.
+			$after = VulnHub_Backup_Jobs::get( $job_id );
+
+			if ( $done && ( ! $after || VulnHub_Backup_Jobs::RUNNING !== (string) $after['status'] ) ) {
+				return;
+			}
+
 			if ( $done ) {
 				$next = match ( $phase ) {
 					self::PHASE_VALIDATE      => self::PHASE_EXTRACT_FILES,
@@ -438,27 +446,66 @@ final class VulnHub_Backup_Restore_Runner {
 		$old     = $staging . '/wp-content-old';
 		$new_sub = $extract_to . '/wp-content';
 
-		if ( ! is_dir( $new_sub ) ) {
-			self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'The extracted archive did not contain a wp-content directory.', 'vulnhub' ) );
-			return true;
-		}
+		// Already swapped by a pass that died before recording the phase as
+		// done: the restored tree is live and the old one is aside.
+		$swapped = ! is_dir( $new_sub ) && is_dir( $old ) && is_dir( $live );
 
-		// Atomic swap: rename live out of the way, rename new one in. If the
-		// process dies between these two lines, wp-content-old still exists
-		// under staging and nothing has silently vanished.
-		if ( ! is_dir( $old ) ) {
-			if ( ! rename( $live, $old ) ) {
-				self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'Could not move the live wp-content directory aside. The site has not been touched.', 'vulnhub' ) );
+		if ( ! $swapped ) {
+			if ( ! is_dir( $new_sub ) ) {
+				self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'The extracted archive did not contain a wp-content directory.', 'vulnhub' ) );
+				return true;
+			}
+
+			// Atomic swap: rename live out of the way, rename new one in. If the
+			// process dies between these two lines, wp-content-old still exists
+			// under staging and nothing has silently vanished.
+			if ( ! is_dir( $old ) ) {
+				if ( ! rename( $live, $old ) ) {
+					self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'Could not move the live wp-content directory aside. The site has not been touched.', 'vulnhub' ) );
+					return true;
+				}
+			}
+
+			if ( ! rename( $new_sub, $live ) ) {
+				self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'Could not move the restored files into place. The previous wp-content is preserved under the staging directory.', 'vulnhub' ) );
 				return true;
 			}
 		}
 
-		if ( ! rename( $new_sub, $live ) ) {
-			self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'Could not move the restored files into place. The previous wp-content is preserved under the staging directory.', 'vulnhub' ) );
-			return true;
-		}
+		self::carry_over( $old, $live );
 
 		return true;
+	}
+
+	/**
+	 * Bring back what a restore must not take away.
+	 *
+	 * The old tree sits under staging, and finish() deletes staging. Without
+	 * this, restoring deleted every local backup set (the store is never
+	 * archived — a backup cannot contain itself) along with the upload being
+	 * restored from, and anything at wp-content's top level the bundle did not
+	 * carry: object-cache.php from bundles made before drop-ins were
+	 * archived, and the logs, which never are.
+	 *
+	 * @param string $old  The previous wp-content, moved aside.
+	 * @param string $live The restored wp-content, now live.
+	 * @return void
+	 */
+	private static function carry_over( string $old, string $live ): void {
+		$store = '/uploads/' . VulnHub_Backup_Storage::DIRNAME;
+
+		if ( is_dir( $old . $store ) && ! file_exists( $live . $store ) ) {
+			wp_mkdir_p( dirname( $live . $store ) );
+			rename( $old . $store, $live . $store );
+		}
+
+		$items = scandir( $old );
+
+		foreach ( is_array( $items ) ? $items : array() as $item ) {
+			if ( '.' !== $item && '..' !== $item && ! file_exists( $live . '/' . $item ) ) {
+				rename( $old . '/' . $item, $live . '/' . $item );
+			}
+		}
 	}
 
 	/* =================================================================
@@ -485,22 +532,37 @@ final class VulnHub_Backup_Restore_Runner {
 		$cursor = (array) $job['table_cursor_arr'];
 		$offset = (int) ( $cursor['sql_offset'] ?? 0 );
 
-		$gz = gzopen( $sql_gz, 'rb' );
+		/*
+		 * Apply from an inflated copy, not the .gz. gzseek() on a read stream
+		 * gets there by decompressing from the start, so every pass re-read
+		 * everything before its offset — some 3,000 passes over a gigabyte
+		 * for a real estate. Inflated once, each pass seeks straight there.
+		 * The offset is into the uncompressed SQL either way.
+		 */
+		$sql = $staging . '/db.sql';
 
-		if ( ! $gz ) {
-			self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'The database dump could not be read.', 'vulnhub' ) );
+		if ( ! is_file( $sql ) && ! self::inflate( $sql_gz, $sql ) ) {
+			self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'The database dump could not be unpacked for restore.', 'vulnhub' ) );
 			return true;
 		}
 
-		gzseek( $gz, $offset );
+		$fh = fopen( $sql, 'rb' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+		if ( ! $fh || 0 !== fseek( $fh, $offset ) ) {
+			self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'The database dump could not be read.', 'vulnhub' ) );
+			return true;
+		}
 
 		$statements = 0;
 		$buffer     = '';
 		$deadline   = microtime( true ) + self::BATCH_SECONDS;
 		$eof        = false;
 
-		while ( $statements < self::STATEMENTS_PER_BATCH && microtime( true ) < $deadline ) {
-			$line = gzgets( $gz, 65536 );
+		// Whole lines only, and the batch ends only between statements: the
+		// offset saved below is where the next pass starts, so it must never
+		// fall inside one. Dump rows run to megabytes.
+		while ( '' !== $buffer || ( $statements < self::STATEMENTS_PER_BATCH && microtime( true ) < $deadline ) ) {
+			$line = fgets( $fh );
 
 			if ( false === $line ) {
 				$eof = true;
@@ -509,21 +571,35 @@ final class VulnHub_Backup_Restore_Runner {
 
 			$trimmed = ltrim( $line );
 
-			if ( '' === trim( $trimmed ) || str_starts_with( $trimmed, '--' ) ) {
+			if ( '' === $buffer && ( '' === trim( $trimmed ) || str_starts_with( $trimmed, '--' ) ) ) {
 				continue;
 			}
 
 			$buffer .= $line;
 
 			if ( str_ends_with( rtrim( $line ), ';' ) ) {
-				$wpdb->query( $buffer ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL
+				// The dump came out of this database; do not let wpdb reject
+				// a row over its own charset heuristics.
+				$wpdb->check_current_query = false;
+
+				if ( false === $wpdb->query( $buffer ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL
+					$cursor['failed'] = (int) ( $cursor['failed'] ?? 0 ) + 1;
+					if ( ! isset( $cursor['first_error'] ) ) {
+						$cursor['first_error'] = mb_substr( (string) $wpdb->last_error, 0, 500 );
+					}
+				} elseif ( str_starts_with( $buffer, 'INSERT INTO `' ) ) {
+					$cursor['rows'] = (int) ( $cursor['rows'] ?? 0 ) + 1;
+				} elseif ( str_starts_with( $buffer, 'CREATE TABLE `' ) ) {
+					$cursor['tables'] = (int) ( $cursor['tables'] ?? 0 ) + 1;
+				}
+
 				$buffer = '';
 				++$statements;
 			}
 		}
 
-		$new_offset = gztell( $gz );
-		gzclose( $gz );
+		$new_offset = ftell( $fh );
+		fclose( $fh ); // phpcs:ignore WordPress.WP.AlternativeFunctions
 
 		$cursor['sql_offset'] = $new_offset;
 
@@ -532,7 +608,99 @@ final class VulnHub_Backup_Restore_Runner {
 			array( 'table_cursor' => (string) wp_json_encode( $cursor ) )
 		);
 
+		if ( $eof ) {
+			// Every table was just replaced underneath the object cache
+			// (Redis here), which would otherwise go on serving the settings,
+			// users and options from before the restore.
+			wp_cache_flush();
+
+			self::check_applied( $job_id, $staging, $cursor );
+		}
+
 		return $eof;
+	}
+
+	/**
+	 * Decompress the dump to a plain file, via a .part so a pass that dies
+	 * half way never leaves a short db.sql that looks finished.
+	 *
+	 * @param string $source db.sql.gz.
+	 * @param string $dest   db.sql.
+	 * @return bool
+	 */
+	private static function inflate( string $source, string $dest ): bool {
+		$in  = gzopen( $source, 'rb' );
+		$out = fopen( $dest . '.part', 'wb' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		$ok  = $in && $out;
+
+		while ( $ok && ! gzeof( $in ) ) {
+			$chunk = gzread( $in, VulnHub_Backup_Storage::COPY_CHUNK );
+			$ok    = false !== $chunk && false !== fwrite( $out, $chunk ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		}
+
+		if ( $in ) {
+			gzclose( $in );
+		}
+
+		if ( $out ) {
+			fclose( $out ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		}
+
+		return $ok && rename( $dest . '.part', $dest );
+	}
+
+	/**
+	 * Fail the restore, loudly, when the dump did not all go in.
+	 *
+	 * Keeps going past a failed statement rather than stopping half way —
+	 * a half-applied dump is worse than a fully-applied one with a named
+	 * gap — but never lets that end as "done".
+	 *
+	 * @param int                 $job_id  Job id.
+	 * @param string              $staging Staging directory (holds manifest.json).
+	 * @param array<string,mixed> $cursor  Final apply cursor.
+	 * @return void
+	 */
+	private static function check_applied( int $job_id, string $staging, array $cursor ): void {
+		$problems = array();
+		$failed   = (int) ( $cursor['failed'] ?? 0 );
+
+		if ( $failed > 0 ) {
+			$problems[] = sprintf(
+				/* translators: 1: number of statements, 2: database error. */
+				__( '%1$s statements failed (first error: %2$s)', 'vulnhub' ),
+				number_format_i18n( $failed ),
+				(string) ( $cursor['first_error'] ?? '' )
+			);
+		}
+
+		$manifest = json_decode( (string) @file_get_contents( $staging . '/manifest.json' ), true ); // phpcs:ignore WordPress.WP.AlternativeFunctions,WordPress.PHP.NoSilencedErrors
+
+		// Only bundles written since the manifest started recording counts
+		// can be checked this way.
+		if ( is_array( $manifest ) && isset( $manifest['rows_exported'], $manifest['tables_total'] ) ) {
+			$rows   = (int) ( $cursor['rows'] ?? 0 );
+			$tables = (int) ( $cursor['tables'] ?? 0 );
+
+			if ( $rows !== (int) $manifest['rows_exported'] || $tables !== (int) $manifest['tables_total'] ) {
+				$problems[] = sprintf(
+					/* translators: 1: tables restored, 2: tables in the backup, 3: rows restored, 4: rows in the backup. */
+					__( 'restored %1$s of %2$s tables and %3$s of %4$s rows', 'vulnhub' ),
+					number_format_i18n( $tables ),
+					number_format_i18n( (int) $manifest['tables_total'] ),
+					number_format_i18n( $rows ),
+					number_format_i18n( (int) $manifest['rows_exported'] )
+				);
+			}
+		}
+
+		if ( $problems ) {
+			self::finish(
+				$job_id,
+				VulnHub_Backup_Jobs::FAILED,
+				__( 'The database restore is incomplete: ', 'vulnhub' ) . implode( '; ', $problems ) . '.'
+			);
+		}
 	}
 }
 

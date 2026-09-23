@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 final class VulnHub_Backup_Storage {
 
 	/** Directory name inside wp-content/uploads. */
-	private const DIRNAME = 'vulnhub-backup';
+	public const DIRNAME = 'vulnhub-backup';
 
 	/** Slice size the browser starts with for a restore upload: 8 MB. */
 	private const CHUNK_BYTES = 8388608;
@@ -317,6 +317,146 @@ final class VulnHub_Backup_Storage {
 	 */
 	public static function tar_terminate( $gz ): void {
 		gzwrite( $gz, str_repeat( chr( 0 ), 1024 ) );
+	}
+
+	/* =================================================================
+	 * Checkpointing files that are appended to across passes
+	 *
+	 * A pass appends to a file and then records its cursor in the job row.
+	 * The row is durable the moment MariaDB commits it; the appended bytes
+	 * are not, until the kernel gets round to writing them. When the host
+	 * went down in between, the cursor survived and the tail of the file did
+	 * not — the next pass carried on appending after a run of zeros, every
+	 * gzip reader stopped at those zeros, and a finished-looking backup was
+	 * missing 24,000 findings and every table after them. So: sync the file
+	 * before the cursor is written, record its length in the cursor, and on
+	 * resume put the file back to exactly that length.
+	 * ============================================================== */
+
+	/**
+	 * Force a file's written data to disk and return its length.
+	 *
+	 * @param string $path File that was just written and closed.
+	 * @return int Length in bytes, or -1 when the file is not there.
+	 */
+	public static function sync_file( string $path ): int {
+		clearstatcache( true, $path );
+
+		if ( ! is_file( $path ) ) {
+			return -1;
+		}
+
+		$handle = fopen( $path, 'ab' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+		if ( $handle ) {
+			fsync( $handle );
+			fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+		}
+
+		clearstatcache( true, $path );
+
+		return (int) filesize( $path );
+	}
+
+	/**
+	 * Put an appended-to file back to the length its last checkpoint recorded.
+	 *
+	 * Longer means a pass wrote a batch and died before recording it — cut
+	 * the unrecorded tail off, or the batch lands twice. Shorter means data
+	 * the cursor counts as written was lost, and nothing after that point
+	 * can be trusted.
+	 *
+	 * @param string $path  File being appended to.
+	 * @param int    $bytes Length recorded at the last checkpoint.
+	 * @return bool False when the file is shorter than the checkpoint (or
+	 *              could not be cut back) and the caller has to start over.
+	 */
+	public static function rewind_to_checkpoint( string $path, int $bytes ): bool {
+		clearstatcache( true, $path );
+
+		$size = is_file( $path ) ? (int) filesize( $path ) : 0;
+
+		if ( $size === $bytes ) {
+			return true;
+		}
+
+		if ( $size < $bytes ) {
+			return false;
+		}
+
+		$handle = fopen( $path, 'r+b' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+		if ( ! $handle ) {
+			return false;
+		}
+
+		$ok = ftruncate( $handle, $bytes ) && fsync( $handle );
+		fclose( $handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions
+
+		return $ok;
+	}
+
+	/**
+	 * Read one whole line from a gzip stream, however long it is.
+	 *
+	 * gzgets() stops at its length argument, and a dump row can run to
+	 * megabytes (plugin output on a finding), so a fixed-length read hands
+	 * back pieces of a statement as if they were lines.
+	 *
+	 * @param resource $gz Open gzip handle.
+	 * @return string|false The line including its newline (the last line of
+	 *                      the stream may lack one), or false at the end.
+	 */
+	public static function gz_line( $gz ): string|false {
+		$line = gzgets( $gz, self::COPY_CHUNK );
+
+		if ( false === $line ) {
+			return false;
+		}
+
+		while ( ! str_ends_with( $line, "\n" ) ) {
+			$more = gzgets( $gz, self::COPY_CHUNK );
+
+			if ( false === $more ) {
+				break;
+			}
+
+			$line .= $more;
+		}
+
+		return $line;
+	}
+
+	/**
+	 * Count what a finished SQL dump actually contains by reading it back.
+	 *
+	 * Reads with the same gzip reader a restore uses, so if anything in the
+	 * stream would stop a restore short, it stops this count short too.
+	 *
+	 * @param string $path db.sql.gz.
+	 * @return array{tables:int,rows:int}|null Null when it cannot be opened.
+	 */
+	public static function count_dump( string $path ): ?array {
+		$gz = gzopen( $path, 'rb' );
+
+		if ( ! $gz ) {
+			return null;
+		}
+
+		$tables = 0;
+		$rows   = 0;
+
+		while ( false !== ( $line = self::gz_line( $gz ) ) ) { // phpcs:ignore Generic.CodeAnalysis.AssignmentInCondition
+			if ( str_starts_with( $line, 'INSERT INTO `' ) ) {
+				++$rows;
+			} elseif ( str_starts_with( $line, '-- Table: ' ) ) {
+				++$tables;
+			}
+		}
+
+		gzclose( $gz );
+
+		return array( 'tables' => $tables, 'rows' => $rows );
 	}
 
 	/* =================================================================

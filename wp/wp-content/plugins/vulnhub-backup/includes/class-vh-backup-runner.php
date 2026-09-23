@@ -49,6 +49,12 @@ final class VulnHub_Backup_Runner {
 	/** Members of the archive, in the order they are written. */
 	private const MEMBERS = array( 'manifest.json', 'db.sql.gz', 'wp-content.zip' );
 
+	/**
+	 * Top-level wp-content folders never archived: WordPress's own scratch
+	 * space for updates and page caches.
+	 */
+	private const SKIP_TOP_LEVEL = array( 'upgrade', 'upgrade-temp-backup', 'cache' );
+
 	/** Rows fetched per table batch. */
 	public const BATCH_ROWS = 2000;
 
@@ -429,7 +435,18 @@ final class VulnHub_Backup_Runner {
 			return true;
 		}
 
-		$cursor = (array) $job['table_cursor_arr'];
+		$cursor   = (array) $job['table_cursor_arr'];
+		$counters = (array) $job['counters_arr'];
+		$path     = $dir . '/db.sql.gz';
+
+		// Resuming: the file must be exactly as long as the checkpoint says.
+		// If it lost bytes the cursor counts as written, start the dump over.
+		// Cursors from before `bytes` was recorded are taken on trust.
+		if ( ! empty( $cursor ) && isset( $cursor['bytes'] )
+			&& ! VulnHub_Backup_Storage::rewind_to_checkpoint( $path, (int) $cursor['bytes'] ) ) {
+			$cursor = array();
+			unset( $counters['rows_exported'], $counters['tables_done'] );
+		}
 
 		if ( empty( $cursor ) ) {
 			$tables = (array) $wpdb->get_col( 'SHOW TABLES' );
@@ -451,12 +468,12 @@ final class VulnHub_Backup_Runner {
 			);
 
 			// Fresh export: truncate/create the gz stream.
-			$path = $dir . '/db.sql.gz';
-			$gz   = gzopen( $path, 'wb9' );
+			$gz = gzopen( $path, 'wb9' );
 			if ( $gz ) {
 				gzwrite( $gz, "-- VulnHub backup, generated " . gmdate( 'c' ) . "\nSET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;\n\n" );
 				gzclose( $gz );
 			}
+			$cursor['bytes'] = VulnHub_Backup_Storage::sync_file( $path );
 		}
 
 		$tables = (array) $cursor['tables'];
@@ -469,8 +486,7 @@ final class VulnHub_Backup_Runner {
 		$table  = (string) $tables[ $index ];
 		$offset = (int) $cursor['offset'];
 
-		$path = $dir . '/db.sql.gz';
-		$gz   = gzopen( $path, 'ab9' );
+		$gz = gzopen( $path, 'ab9' );
 
 		if ( ! $gz ) {
 			self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'The database export file could not be written.', 'vulnhub' ) );
@@ -505,7 +521,9 @@ final class VulnHub_Backup_Runner {
 
 		gzclose( $gz );
 
-		$counters = (array) $job['counters_arr'];
+		// On disk before the cursor that says so is committed.
+		$cursor['bytes'] = VulnHub_Backup_Storage::sync_file( $path );
+
 		$counters['rows_exported'] = (int) ( $counters['rows_exported'] ?? 0 ) + $row_count;
 
 		if ( $row_count < self::BATCH_ROWS ) {
@@ -518,8 +536,7 @@ final class VulnHub_Backup_Runner {
 		}
 
 		$counters['tables_total'] = count( $tables );
-		clearstatcache( true, $path );
-		$counters['db_bytes'] = (int) filesize( $path );
+		$counters['db_bytes']     = (int) $cursor['bytes'];
 
 		VulnHub_Backup_Jobs::update(
 			$job_id,
@@ -529,12 +546,60 @@ final class VulnHub_Backup_Runner {
 			)
 		);
 
-		return $cursor['table_index'] >= count( $tables );
+		if ( $cursor['table_index'] < count( $tables ) ) {
+			return false;
+		}
+
+		self::verify_dump( $job_id, $path, $counters );
+
+		return true;
+	}
+
+	/**
+	 * Read the finished dump back and fail the job unless it holds every
+	 * table and row the export counted.
+	 *
+	 * The job used to report "done" over a dump that a restore would stop
+	 * reading two-thirds of the way through. This is the check that would
+	 * have caught it.
+	 *
+	 * @param int                 $job_id   Job id.
+	 * @param string              $path     db.sql.gz.
+	 * @param array<string,mixed> $counters Counters as just saved.
+	 * @return void
+	 */
+	private static function verify_dump( int $job_id, string $path, array $counters ): void {
+		$found    = VulnHub_Backup_Storage::count_dump( $path );
+		$expected = array(
+			'tables' => (int) ( $counters['tables_total'] ?? 0 ),
+			'rows'   => (int) ( $counters['rows_exported'] ?? 0 ),
+		);
+
+		if ( $found === $expected ) {
+			return;
+		}
+
+		self::finish(
+			$job_id,
+			VulnHub_Backup_Jobs::FAILED,
+			null === $found
+				? __( 'The database dump could not be read back to verify it.', 'vulnhub' )
+				: sprintf(
+					/* translators: 1: tables read back, 2: tables exported, 3: rows read back, 4: rows exported. */
+					__( 'The database dump is incomplete: reading it back found %1$s of %2$s tables and %3$s of %4$s rows. Run the backup again.', 'vulnhub' ),
+					number_format_i18n( $found['tables'] ),
+					number_format_i18n( $expected['tables'] ),
+					number_format_i18n( $found['rows'] ),
+					number_format_i18n( $expected['rows'] )
+				)
+		);
 	}
 
 	/* =================================================================
-	 * Phase: files_archive — wp-content/{plugins,themes,uploads,mu-plugins}
-	 * into a ZipArchive, batched by file count.
+	 * Phase: files_archive — everything under wp-content (plugins, themes,
+	 * uploads, mu-plugins, languages, drop-ins such as object-cache.php)
+	 * into a ZipArchive, batched by file count. Left out: our own backup
+	 * store, WordPress's scratch folders, and logs.
 	 * ============================================================== */
 
 	/**
@@ -560,8 +625,22 @@ final class VulnHub_Backup_Runner {
 		if ( false === $file_list ) {
 			$file_list = array();
 
-			foreach ( array( 'plugins', 'themes', 'uploads', 'mu-plugins' ) as $sub ) {
+			$top = scandir( $content_dir );
+
+			foreach ( is_array( $top ) ? $top : array() as $sub ) {
 				$base = $content_dir . '/' . $sub;
+
+				if ( '.' === $sub || '..' === $sub || in_array( $sub, self::SKIP_TOP_LEVEL, true ) ) {
+					continue;
+				}
+
+				// Drop-ins and anything else sitting at the top level.
+				if ( is_file( $base ) ) {
+					if ( ! str_ends_with( $sub, '.log' ) ) {
+						$file_list[] = $base;
+					}
+					continue;
+				}
 
 				if ( ! is_dir( $base ) ) {
 					continue;
@@ -618,6 +697,13 @@ final class VulnHub_Backup_Runner {
 			return true;
 		}
 
+		// Files go in in list order, so the entries the zip really holds say
+		// where to carry on — not the cursor, which can outlive a zip that
+		// was lost when the host went down.
+		if ( $cursor > 0 && $zip->numFiles !== $cursor ) {
+			$cursor = $zip->numFiles;
+		}
+
 		$end       = min( $total, $cursor + self::FILES_PER_BATCH );
 		$deadline  = microtime( true ) + self::BATCH_SECONDS;
 		$content_len = strlen( $content_dir );
@@ -635,12 +721,15 @@ final class VulnHub_Backup_Runner {
 			}
 		}
 
-		$zip->close();
+		if ( ! $zip->close() ) {
+			self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'The wp-content archive could not be written.', 'vulnhub' ) );
+			return true;
+		}
 
 		$counters = (array) $job['counters_arr'];
-		$counters['files_archived'] = (int) ( $counters['files_archived'] ?? 0 ) + $archived;
-		clearstatcache( true, $zip_path );
-		$counters['zip_bytes'] = is_file( $zip_path ) ? (int) filesize( $zip_path ) : 0;
+		$counters['files_archived'] = $end;
+		$counters['files_total']    = $total;
+		$counters['zip_bytes']      = max( 0, VulnHub_Backup_Storage::sync_file( $zip_path ) );
 
 		VulnHub_Backup_Jobs::update(
 			$job_id,
@@ -652,6 +741,25 @@ final class VulnHub_Backup_Runner {
 
 		if ( $end >= $total ) {
 			delete_transient( 'vulnhub_backup_file_list_' . $job_id );
+
+			$check = new ZipArchive();
+
+			if ( true !== $check->open( $zip_path, ZipArchive::RDONLY ) || $check->numFiles !== $total ) {
+				self::finish(
+					$job_id,
+					VulnHub_Backup_Jobs::FAILED,
+					sprintf(
+						/* translators: 1: files in the archive, 2: files that should be in it. */
+						__( 'The wp-content archive is incomplete: it holds %1$s of %2$s files. Run the backup again.', 'vulnhub' ),
+						number_format_i18n( (int) $check->numFiles ),
+						number_format_i18n( $total )
+					)
+				);
+				return true;
+			}
+
+			$check->close();
+
 			self::write_manifest( $job_id, $dir );
 			return true;
 		}
@@ -691,6 +799,12 @@ final class VulnHub_Backup_Runner {
 			'zip_sha256'    => is_file( $zip_path ) ? hash_file( 'sha256', $zip_path ) : '',
 			'tables_done'   => (int) ( $job['counters_arr']['tables_done'] ?? 0 ),
 			'files_archived' => (int) ( $job['counters_arr']['files_archived'] ?? 0 ),
+			// What a restore checks its own statement counts against once it
+			// has applied the dump: a matching checksum only proves the file
+			// is the one we wrote, not that everything we meant to write is
+			// in it.
+			'tables_total'  => (int) ( $job['counters_arr']['tables_total'] ?? 0 ),
+			'rows_exported' => (int) ( $job['counters_arr']['rows_exported'] ?? 0 ),
 		);
 
 		file_put_contents( $dir . '/manifest.json', (string) wp_json_encode( $manifest, JSON_PRETTY_PRINT ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions
@@ -741,6 +855,16 @@ final class VulnHub_Backup_Runner {
 		if ( ! $members ) {
 			self::finish( $job_id, VulnHub_Backup_Jobs::FAILED, __( 'There is nothing to pack — the backup produced no files.', 'vulnhub' ) );
 			return true;
+		}
+
+		// Resuming: the archive must be exactly as long as the checkpoint
+		// says (see VulnHub_Backup_Storage::rewind_to_checkpoint()). If it
+		// lost bytes, pack it again from the start — the members are still
+		// in the working folder until this phase finishes.
+		if ( ( $index > 0 || $offset > 0 ) && isset( $cursor['bytes'] )
+			&& ! VulnHub_Backup_Storage::rewind_to_checkpoint( $archive, (int) $cursor['bytes'] ) ) {
+			$index  = 0;
+			$offset = 0;
 		}
 
 		// A restart of this phase (index 0, nothing written yet) must not
@@ -807,9 +931,11 @@ final class VulnHub_Backup_Runner {
 
 		gzclose( $gz );
 
-		$counters['package'] = array( 'index' => $index, 'offset' => $offset );
-		clearstatcache( true, $archive );
-		$counters['archive_bytes'] = is_file( $archive ) ? (int) filesize( $archive ) : 0;
+		// On disk before the cursor that says so is committed.
+		$bytes = max( 0, VulnHub_Backup_Storage::sync_file( $archive ) );
+
+		$counters['package']       = array( 'index' => $index, 'offset' => $offset, 'bytes' => $bytes );
+		$counters['archive_bytes'] = $bytes;
 
 		if ( ! $done ) {
 			VulnHub_Backup_Jobs::save_counters( $job_id, $counters );
