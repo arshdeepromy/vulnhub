@@ -89,8 +89,9 @@ final class VulnHub_AWS_Network_Page {
 			return;
 		}
 
-		$cssv = @filemtime( VULNHUB_AWS_DIR . 'assets/network.css' ); // phpcs:ignore
-		$jsv  = @filemtime( VULNHUB_AWS_DIR . 'assets/network.js' ); // phpcs:ignore
+		$cssv  = @filemtime( VULNHUB_AWS_DIR . 'assets/network.css' ); // phpcs:ignore
+		$jsv   = @filemtime( VULNHUB_AWS_DIR . 'assets/network.js' ); // phpcs:ignore
+		$topov = @filemtime( VULNHUB_AWS_DIR . 'assets/topology.js' ); // phpcs:ignore
 
 		wp_enqueue_style( 'vulnhub-aws-network', VULNHUB_AWS_URL . 'assets/network.css', array( 'vulnhub-app' ), $cssv ?: VULNHUB_AWS_VERSION );
 		wp_enqueue_script( 'vulnhub-aws-network', VULNHUB_AWS_URL . 'assets/network.js', array(), $jsv ?: VULNHUB_AWS_VERSION, true );
@@ -103,13 +104,56 @@ final class VulnHub_AWS_Network_Page {
 				'accounts' => VulnHub_AWS_Network::accounts(),
 			)
 		);
+
+		wp_enqueue_script( 'vulnhub-aws-topology', VULNHUB_AWS_URL . 'assets/topology.js', array(), $topov ?: VULNHUB_AWS_VERSION, true );
+		wp_localize_script(
+			'vulnhub-aws-topology',
+			'VH_AWS_TOPOLOGY',
+			array(
+				'rest'  => esc_url_raw( rest_url( 'vulnhub-aws/v1/topology' ) ),
+				'nonce' => wp_create_nonce( 'wp_rest' ),
+			)
+		);
+	}
+
+	/** Which tab the request is on. `estate` or `account`. */
+	private static function tab(): string {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		return isset( $_GET['tab'] ) && 'estate' === sanitize_key( (string) wp_unslash( $_GET['tab'] ) ) ? 'estate' : 'account';
 	}
 
 	public static function render(): void {
+		$tab = self::tab();
+
 		echo '<div class="vh-page-head"><div>';
 		echo '<h1>' . esc_html__( 'Cloud Network', 'vulnhub' ) . ' <span class="vh-chip vh-chip--info">' . esc_html__( 'AWS · live from your SSO login', 'vulnhub' ) . '</span></h1>';
-		echo '<p class="vh-sub">' . esc_html__( 'A live topology of one account: the internet and its routing on the left, then what is internet-facing, the compute behind it, and the data it reaches. Real resources with their names, IPs and states — click any one for its configuration, Defender health and Tenable / Plerion findings. Animated lines show the inbound ports allowed directly versus what is inspected by Check Point, and the outbound egress path.', 'vulnhub' ) . '</p>';
+		echo '<p class="vh-sub">' . esc_html(
+			'estate' === $tab
+				? __( 'Every account at once, as a flowchart: where traffic goes along the top, what stands in its path below that, and the workloads beneath. Each lane is a default route read from the VPC\'s own route tables — an inspection appliance, the transit gateway to on-premises, an internet gateway, a NAT gateway — not from what anything is named. Production and non-production are drawn separately.', 'vulnhub' )
+				: __( 'A live topology of one account: the internet and its routing at the top, then what is internet-facing, the compute behind it, and the data it reaches. Real resources with their names, IPs and states — click any one for its configuration, Defender health and Tenable / Plerion findings.', 'vulnhub' )
+		) . '</p>';
 		echo '</div></div>';
+
+		$base = remove_query_arg( array( 'tab' ) );
+		echo '<div class="vh-tabs" role="tablist">';
+		printf(
+			'<a class="vh-tabs__tab %s" href="%s">%s</a>',
+			'account' === $tab ? 'is-active' : '',
+			esc_url( $base ),
+			esc_html__( 'One account', 'vulnhub' )
+		);
+		printf(
+			'<a class="vh-tabs__tab %s" href="%s">%s</a>',
+			'estate' === $tab ? 'is-active' : '',
+			esc_url( add_query_arg( 'tab', 'estate', $base ) ),
+			esc_html__( 'Whole estate', 'vulnhub' )
+		);
+		echo '</div>';
+
+		if ( 'estate' === $tab ) {
+			self::render_estate();
+			return;
+		}
 
 		echo '<div class="vh-net-controls">';
 		echo '<label>' . esc_html__( 'Account', 'vulnhub' ) . ' <select data-vh-net-account></select></label>';
@@ -128,5 +172,57 @@ final class VulnHub_AWS_Network_Page {
 		echo '</div>';
 
 		echo '<div class="vh-net-map" data-vh-net-map role="img" aria-label="' . esc_attr__( 'AWS network dataflow diagram', 'vulnhub' ) . '"></div>';
+	}
+
+	/**
+	 * The estate flowchart.
+	 *
+	 * Four bands stacked top to bottom -- where traffic goes, what stands in
+	 * the path, the workloads, and their data -- with a lane per route out.
+	 * Reading upwards from a workload gives you its exit; reading down from
+	 * the internet gives you everything reachable that way.
+	 *
+	 * Production and non-production are drawn separately because they are
+	 * different conversations: one is a live risk register, the other is
+	 * mostly a housekeeping list, and averaging them hides both.
+	 */
+	private static function render_estate(): void {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$env = isset( $_GET['env'] ) ? sanitize_key( (string) wp_unslash( $_GET['env'] ) ) : '';
+		$env = in_array( $env, array( VulnHub_AWS_Environment::PROD, VulnHub_AWS_Environment::NONPROD ), true ) ? $env : '';
+
+		$base = remove_query_arg( array( 'env' ) );
+
+		echo '<div class="vh-estate-bar">';
+		echo '<div class="vh-segbar" role="tablist">';
+
+		foreach ( array(
+			''                              => __( 'Whole estate', 'vulnhub' ),
+			VulnHub_AWS_Environment::PROD    => __( 'Production', 'vulnhub' ),
+			VulnHub_AWS_Environment::NONPROD => __( 'Non-production', 'vulnhub' ),
+		) as $vh_k => $vh_label ) {
+			printf(
+				'<a class="vh-seg%s" href="%s"%s>%s</a>',
+				$env === (string) $vh_k ? ' is-active' : '',
+				esc_url( '' === $vh_k ? $base : add_query_arg( 'env', $vh_k, $base ) ),
+				$env === (string) $vh_k ? ' aria-current="true"' : '',
+				esc_html( $vh_label )
+			);
+		}
+
+		echo '</div>';
+		echo '<div class="vh-estate-stats" data-vh-estate-stats></div>';
+		echo '</div>';
+
+		echo '<p class="vh-sub vh-muted vh-estate-hint">' . esc_html__( 'Click any box to trace the whole path through it — everything above and below it lights up, and everything else dims. Click it again, or press Escape, to clear.', 'vulnhub' ) . '</p>';
+
+		echo '<div class="vh-estate" data-vh-estate data-vh-env="' . esc_attr( $env ) . '">';
+		echo '<p class="vh-sub vh-muted" data-vh-estate-loading>' . esc_html__( 'Reading the estate…', 'vulnhub' ) . '</p>';
+		echo '</div>';
+
+		echo '<p class="vh-sub vh-muted">' . esc_html__(
+			'Every lane is a default route read from the VPC\'s own route tables, not from what anything is called. A VPC with both a public and a private subnet has two routes out, so it counts in two lanes — the totals above are lane memberships, not distinct VPCs. Route tables decide the shape and are not drawn.',
+			'vulnhub'
+		) . '</p>';
 	}
 }

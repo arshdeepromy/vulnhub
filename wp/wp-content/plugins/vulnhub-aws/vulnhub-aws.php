@@ -113,6 +113,27 @@ add_action(
 			)
 		);
 
+		/*
+		 * The whole estate as one tree. It is a read across every captured
+		 * account, so it is built once per request and sent whole -- the
+		 * browser expands branches out of what it already holds, which is why
+		 * opening one has no spinner. Same capability as the per-account map.
+		 */
+		register_rest_route(
+			'vulnhub-aws/v1',
+			'/topology',
+			array(
+				'methods'             => 'GET',
+				'permission_callback' => static fn (): bool => is_user_logged_in() && current_user_can( \VulnHub\Core\Caps::VIEW ),
+				'callback'            => static function ( $req ) {
+					$env = sanitize_key( (string) $req->get_param( 'env' ) );
+					$env = in_array( $env, array( VulnHub_AWS_Environment::PROD, VulnHub_AWS_Environment::NONPROD ), true ) ? $env : '';
+
+					return rest_ensure_response( VulnHub_AWS_Network::estate_flow( $env ) );
+				},
+			)
+		);
+
 		register_rest_route(
 			'vulnhub-aws/v1',
 			'/cloudformation-template',
@@ -140,6 +161,7 @@ add_action(
  * The Cloud Network map page registers on its own hooks, independent of the
  * connector registry (it only reads the stored network tables).
  */
+require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-environment.php';
 require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-network.php';
 require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-network-page.php';
 VulnHub_AWS_Network_Page::init();

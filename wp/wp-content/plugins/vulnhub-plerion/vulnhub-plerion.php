@@ -45,12 +45,19 @@ add_action(
 );
 
 /**
- * Portal pages (Cloud Posture + Exposure map) register on their own hooks and
- * are independent of the connector registry.
+ * The Cloud Posture page registers on its own hooks and is independent of the
+ * connector registry.
+ *
+ * There was a second page here, Cloud Exposure, drawing an internet ->
+ * exposed -> internal map from a snapshot of Plerion's `isPubliclyExposed`
+ * assets. It was removed once Cloud Network (`vulnhub-aws`) existed: that
+ * screen answers the same question from the account's own route tables,
+ * security groups and ENIs, so it can say which ports are open and what is
+ * behind them, where this one could only say that something was exposed --
+ * Plerion publishes no security-group rules. Two screens disagreeing about
+ * the same estate, one of them with less to go on, is worse than one.
  */
 require_once VULNHUB_PLERION_DIR . 'includes/class-vh-plerion-findings.php';
 require_once VULNHUB_PLERION_DIR . 'includes/class-vh-plerion-findings-page.php';
-require_once VULNHUB_PLERION_DIR . 'includes/class-vh-plerion-exposure-page.php';
 
 VulnHub_Plerion_Findings_Page::init();
-VulnHub_Plerion_Exposure_Page::init();

@@ -185,6 +185,26 @@ passed them. The column headers are now links that toggle direction and carry
 `aria-sort`, filters survive a sort, and the order is verified against the
 database.
 
+## A synthetic click is not a click
+
+`element.click()` from inside `page.evaluate()` dispatches the event straight at
+the node. It does no hit test, so it fires happily through anything covering the
+element — and a pass built on it will report every control working while a real
+cursor cannot reach one of them. That is exactly how the Cloud Network estate
+diagram shipped with `pointer-events: none` inherited onto every button on it:
+the test clicked, the `<details>` opened, the assertion passed.
+
+It is the same trap as `click({ force: true })` above, one layer down. Assert
+clickability with Playwright's own `locator.click()`, which hit-tests and times
+out when something is in the way, and — where a whole subtree is at stake —
+check the container's computed `pointer-events` as well.
+
+**And look at the page.** Overlap, clipping and things hidden behind other
+things do not fail a DOM assertion; they are visible in a screenshot and in
+measured rectangles. Compare card and label bounding boxes for intersections,
+count how many visual rows a row of cards actually occupies, and check
+`scrollWidth > clientWidth` on text that is supposed to fit.
+
 ## Known, not bugs
 
 - **The WordPress admin bar is not shown on portal views**, for anyone

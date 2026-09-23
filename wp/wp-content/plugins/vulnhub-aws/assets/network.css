@@ -214,3 +214,280 @@
 .vh-col__h { margin-bottom: 12px; }
 .vh-flow__l--in, .vh-flow__l--app, .vh-flow__l--data, .vh-flow__l--out { stroke-dasharray: 6 6; }
 .vh-flow__cap { fill: none; stroke: rgba( 148, 163, 184, .35 ); stroke-width: 1.5; }
+
+/* =====================================================================
+ * Whole-estate tab — the flowchart.
+ *
+ * Bands are ordinary flow layout and only the connectors are SVG, in one
+ * overlay measured off the rendered cards. Laying the cards out in SVG would
+ * mean re-implementing text wrapping; drawing the elbows in HTML would mean
+ * building them out of borders. Each half does what it is good at.
+ * ================================================================== */
+
+.vh-estate-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 6px 0 18px; }
+.vh-estate-stats { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var( --vh-muted, #94a3b8 ); }
+.vh-estate-stat strong { color: var( --vh-ink, #e6edf7 ); font-size: 15px; }
+
+.vh-estate { position: relative; }
+.vh-estate-wires { position: absolute; inset: 0; pointer-events: none; overflow: visible; z-index: 0; }
+.vh-estate-wire { fill: none; stroke: rgba( 148, 163, 184, .42 ); stroke-width: 1.6; }
+.vh-estate-arrow { fill: none; stroke: rgba( 148, 163, 184, .6 ); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+.vh-estate-band { position: relative; z-index: 1; margin: 0 0 58px; }
+.vh-estate-band:last-of-type { margin-bottom: 8px; }
+.vh-estate-band__h {
+	font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+	color: var( --vh-muted, #94a3b8 ); font-weight: 600;
+	margin: 0 0 12px; padding-bottom: 7px;
+	border-bottom: 1px solid rgba( 148, 163, 184, .16 );
+}
+.vh-estate-row { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; align-items: flex-start; }
+/*
+ * The lane row must not wrap. Five lanes at a fixed 320px overflowed the width
+ * and the last one folded up into the band above, landing on top of it. They
+ * shrink instead; the band is the one place where fitting on one line is the
+ * whole point, because the lanes are meant to read as alternatives.
+ */
+.vh-estate-band--mid .vh-estate-row { flex-wrap: nowrap; align-items: stretch; }
+.vh-estate-band--mid .vh-estate-card { flex: 1 1 0; min-width: 0; max-width: none; }
+.vh-estate-band--mid .vh-estate-name { white-space: normal; }
+@media ( max-width: 1100px ) {
+	.vh-estate-band--mid .vh-estate-row { flex-wrap: wrap; }
+	.vh-estate-band--mid .vh-estate-card { flex: 1 1 210px; }
+}
+
+.vh-estate-card {
+	position: relative; z-index: 1;
+	background: var( --vh-raised-solid, #0e1526 );
+	border: 1px solid rgba( 148, 163, 184, .22 );
+	border-radius: 12px; padding: 11px 14px;
+	min-width: 210px; max-width: 320px;
+}
+.vh-estate-card--dest {
+	display: flex; align-items: center; gap: 9px;
+	min-width: 0; padding: 9px 18px; border-radius: 999px;
+	background: rgba( 56, 189, 248, .10 ); border-color: rgba( 56, 189, 248, .34 );
+}
+.vh-estate-card--onprem { background: rgba( 167, 139, 250, .10 ); border-color: rgba( 167, 139, 250, .34 ); }
+.vh-estate-card--firewall { border-color: rgba( 52, 211, 153, .40 ); box-shadow: inset 0 1px 0 rgba( 52, 211, 153, .12 ); }
+.vh-estate-card--igw      { border-color: rgba( 248, 113, 113, .40 ); }
+.vh-estate-card--nat      { border-color: rgba( 56, 189, 248, .34 ); }
+.vh-estate-card--tgw      { border-color: rgba( 167, 139, 250, .40 ); }
+
+.vh-estate-head { display: flex; align-items: center; gap: 8px; }
+.vh-estate-name { font-weight: 600; font-size: 13.5px; line-height: 1.32; }
+.vh-estate-icon { width: 17px; height: 17px; flex: 0 0 auto; }
+.vh-estate-icon--internet { color: #38bdf8; }
+.vh-estate-icon--onprem   { color: #a78bfa; }
+.vh-estate-icon--firewall { color: #34d399; }
+.vh-estate-icon--tgw      { color: #a78bfa; }
+.vh-estate-icon--igw      { color: #f87171; }
+.vh-estate-icon--nat      { color: #38bdf8; }
+.vh-estate-icon--vpc      { color: #7dd3fc; }
+
+.vh-estate-meta { display: flex; gap: 6px; font-size: 11.5px; margin-top: 7px; line-height: 1.4; }
+.vh-estate-meta__k { color: var( --vh-muted, #94a3b8 ); flex: 0 0 auto; }
+.vh-estate-meta__v { overflow-wrap: anywhere; }
+
+.vh-estate-nums { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var( --vh-muted, #94a3b8 ); margin-top: 6px; }
+.vh-estate-pub { color: #f87171; }
+
+/* A disclosure that looks like a control, because people tried to select
+ * the old muted caption instead of clicking it. */
+.vh-estate-disc { margin-top: 9px; }
+.vh-estate-disc__btn {
+	display: inline-flex; align-items: center; gap: 5px;
+	cursor: pointer; list-style: none;
+	font-size: 11.5px; font-weight: 600; letter-spacing: .01em;
+	color: var( --vh-link, #8fd7ff );
+	padding: 4px 10px; border-radius: 999px;
+	border: 1px solid rgba( 143, 215, 255, .32 );
+	background: rgba( 143, 215, 255, .08 );
+	transition: background .12s ease, border-color .12s ease;
+}
+.vh-estate-disc__btn::-webkit-details-marker { display: none; }
+.vh-estate-disc__btn:hover { background: rgba( 143, 215, 255, .18 ); border-color: rgba( 143, 215, 255, .55 ); }
+.vh-estate-disc__btn:focus-visible { outline: 2px solid var( --vh-accent, #5ee0ff ); outline-offset: 2px; }
+.vh-estate-disc__caret { display: inline-block; transition: transform .14s ease; }
+.vh-estate-disc[open] > .vh-estate-disc__btn > .vh-estate-disc__caret { transform: rotate( 90deg ); }
+.vh-estate-disc__body { margin-top: 7px; }
+.vh-estate-why p { font-size: 11.5px; color: var( --vh-muted, #94a3b8 ); margin: 0; line-height: 1.5; }
+
+/* Ports open to the world, on the card as well as on the wire. */
+.vh-estate-ports { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.vh-estate-port {
+	font-size: 10.5px; font-family: var( --vh-mono, ui-monospace, monospace );
+	padding: 1px 7px; border-radius: 999px;
+	background: rgba( 251, 146, 60, .14 ); color: #fb923c;
+	border: 1px solid rgba( 251, 146, 60, .28 );
+}
+.vh-estate-port--all { background: rgba( 248, 113, 113, .18 ); color: #f87171; border-color: rgba( 248, 113, 113, .5 ); font-weight: 700; }
+.vh-estate-port--more { background: rgba( 148, 163, 184, .12 ); color: var( --vh-muted, #94a3b8 ); border-color: rgba( 148, 163, 184, .28 ); }
+
+.vh-estate-list ul { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; }
+.vh-estate-list li { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; padding: 4px 0; border-top: 1px solid rgba( 148, 163, 184, .12 ); font-size: 11.5px; }
+.vh-estate-list li:first-child { border-top: 0; }
+.vh-estate-vpc { font-weight: 600; }
+.vh-estate-list code { font-size: 10.5px; color: var( --vh-muted, #94a3b8 ); background: none; padding: 0; }
+.vh-estate-ip { color: #7dd3fc !important; font-weight: 600; }
+.vh-estate-acct, .vh-estate-srv { color: var( --vh-muted, #94a3b8 ); }
+.vh-estate-srv { margin-left: auto; }
+
+/* Wire labels sit on a plate; these lines cross each other by design. */
+/* Labels are HTML above the cards, not SVG beneath them. */
+.vh-estate-labels { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+.vh-estate-wirelabel {
+	position: absolute; white-space: nowrap;
+	font-size: 10.5px; font-weight: 600; line-height: 1;
+	padding: 4px 9px; border-radius: 999px;
+	color: #cbd5e1;
+	background: var( --vh-plane, #050810 );
+	border: 1px solid rgba( 148, 163, 184, .34 );
+	transform: translate( -50%, -50% );
+}
+.vh-estate-wirelabel--warn { border-color: rgba( 248, 113, 113, .55 ); color: #fca5a5; background: rgba( 30, 10, 12, .97 ); }
+
+@media ( max-width: 760px ) {
+	.vh-estate-row { flex-direction: column; align-items: stretch; }
+	.vh-estate-card { max-width: none; }
+	.vh-estate-wires { display: none; }
+	.vh-estate-band { margin-bottom: 26px; }
+}
+
+/* Inbound and outbound chips read as a pair, so they are labelled and tinted
+ * differently — the same list twice with no marking is the kind of thing that
+ * gets read as a single set. */
+.vh-estate-portlbl { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var( --vh-muted, #94a3b8 ); align-self: center; margin-right: 2px; }
+.vh-estate-port--in  { background: rgba( 251, 146, 60, .14 ); color: #fb923c; border-color: rgba( 251, 146, 60, .28 ); }
+.vh-estate-port--out { background: rgba( 148, 163, 184, .12 ); color: #cbd5e1; border-color: rgba( 148, 163, 184, .26 ); }
+.vh-estate-band--fw .vh-estate-card { border-color: rgba( 52, 211, 153, .45 ); }
+
+/* =====================================================================
+ * Estate flowchart: medallions, live flow, hover detail.
+ *
+ * The diagram was legible and inert. A network map is read by following a
+ * path, so the paths move; a node is a thing you interrogate, so every node
+ * answers on hover with what its card had to abbreviate.
+ * ================================================================== */
+
+.vh-estate-med {
+	position: relative; flex: 0 0 auto;
+	width: 34px; height: 34px; border-radius: 50%;
+	display: inline-flex; align-items: center; justify-content: center;
+	background: rgba( 148, 163, 184, .10 );
+	box-shadow: 0 0 0 1px rgba( 148, 163, 184, .30 ), 0 0 0 5px rgba( 148, 163, 184, .06 );
+}
+.vh-estate-med .vh-estate-icon { width: 18px; height: 18px; }
+.vh-estate-med--internet { background: rgba( 56, 189, 248, .14 );  box-shadow: 0 0 0 1px rgba( 56, 189, 248, .45 ),  0 0 0 6px rgba( 56, 189, 248, .09 ); }
+.vh-estate-med--onprem   { background: rgba( 167, 139, 250, .14 ); box-shadow: 0 0 0 1px rgba( 167, 139, 250, .45 ), 0 0 0 6px rgba( 167, 139, 250, .09 ); }
+.vh-estate-med--firewall { background: rgba( 52, 211, 153, .14 );  box-shadow: 0 0 0 1px rgba( 52, 211, 153, .5 ),   0 0 0 6px rgba( 52, 211, 153, .10 ); }
+.vh-estate-med--tgw      { background: rgba( 167, 139, 250, .14 ); box-shadow: 0 0 0 1px rgba( 167, 139, 250, .45 ), 0 0 0 6px rgba( 167, 139, 250, .09 ); }
+.vh-estate-med--igw      { background: rgba( 248, 113, 113, .14 ); box-shadow: 0 0 0 1px rgba( 248, 113, 113, .5 ),  0 0 0 6px rgba( 248, 113, 113, .10 ); }
+.vh-estate-med--nat      { background: rgba( 56, 189, 248, .14 );  box-shadow: 0 0 0 1px rgba( 56, 189, 248, .45 ),  0 0 0 6px rgba( 56, 189, 248, .09 ); }
+.vh-estate-med--vpc      { background: rgba( 125, 211, 252, .12 ); box-shadow: 0 0 0 1px rgba( 125, 211, 252, .40 ), 0 0 0 6px rgba( 125, 211, 252, .08 ); }
+
+/* Risk lives on the ring, so it needs no sentence. */
+.vh-estate-med.is-risk { box-shadow: 0 0 0 1px rgba( 248, 113, 113, .75 ), 0 0 0 6px rgba( 248, 113, 113, .14 ); }
+.vh-estate-med__pulse {
+	position: absolute; inset: -5px; border-radius: 50%;
+	border: 1px solid rgba( 248, 113, 113, .65 );
+	animation: vhEstatePulse 2.4s ease-out infinite;
+}
+@keyframes vhEstatePulse { 0% { transform: scale( 1 ); opacity: .7 } 100% { transform: scale( 1.5 ); opacity: 0 } }
+
+/* Traffic moves along the path it takes. */
+.vh-estate-wire { stroke-dasharray: 5 7; animation: vhEstateDash 1.1s linear infinite; }
+@keyframes vhEstateDash { to { stroke-dashoffset: -24; } }
+.vh-estate-wire--inspected, .vh-estate-wire--appliance, .vh-estate-wire--stack { stroke: rgba( 52, 211, 153, .65 ); }
+.vh-estate-wire--transit { stroke: rgba( 167, 139, 250, .65 ); }
+.vh-estate-wire--direct  { stroke: rgba( 248, 113, 113, .65 ); }
+.vh-estate-wire--egress  { stroke: rgba( 56, 189, 248, .6 ); }
+
+@media ( prefers-reduced-motion: reduce ) {
+	.vh-estate-wire { animation: none; stroke-dasharray: none; }
+	.vh-estate-med__pulse { animation: none; opacity: .5; }
+}
+
+/* Everything the card had to abbreviate. */
+.vh-estate-card { transition: border-color .14s ease, transform .14s ease; }
+.vh-estate-card:hover, .vh-estate-card:focus-visible { border-color: rgba( 148, 163, 184, .55 ); transform: translateY( -1px ); }
+.vh-estate-card:focus-visible { outline: 2px solid var( --vh-accent, #5ee0ff ); outline-offset: 3px; }
+
+.vh-estate-tip {
+	position: absolute; z-index: 60; max-width: 420px;
+	opacity: 0; visibility: hidden; transition: opacity .12s ease;
+	pointer-events: none;
+}
+.vh-estate-tip.is-on { opacity: 1; visibility: visible; }
+.vh-estate-tip__in {
+	background: var( --vh-raised-solid, #0e1526 );
+	border: 1px solid rgba( 148, 163, 184, .34 );
+	border-radius: 12px; padding: 11px 14px;
+	box-shadow: 0 18px 40px rgba( 0, 0, 0, .55 );
+	font-size: 12px; line-height: 1.5;
+}
+.vh-estate-tip__in strong { display: block; margin-bottom: 6px; font-size: 13px; }
+.vh-estate-tip__in p { margin: 0 0 8px; color: var( --vh-muted, #94a3b8 ); }
+.vh-estate-tip__row { display: flex; gap: 8px; padding: 2px 0; }
+.vh-estate-tip__k { flex: 0 0 96px; color: var( --vh-muted, #94a3b8 ); }
+.vh-estate-tip__row span:last-child { overflow-wrap: anywhere; }
+
+/* =====================================================================
+ * Tracing a path.
+ *
+ * Click a node and everything on the flow through it lights; everything else
+ * dims rather than hiding, because the dimmed boxes are the context that makes
+ * the lit path mean anything.
+ * ================================================================== */
+
+.vh-estate-card { cursor: pointer; }
+.vh-estate .vh-estate-card.is-dim,
+.vh-estate .vh-estate-wirelabel.is-dim { opacity: .26; filter: saturate( .35 ); }
+.vh-estate-wire.is-dim, .vh-estate-arrow.is-dim { opacity: .12; }
+
+.vh-estate .vh-estate-card.is-lit {
+	border-color: rgba( 94, 224, 255, .75 );
+	background: linear-gradient( rgba( 94, 224, 255, .07 ), rgba( 94, 224, 255, .02 ) ), var( --vh-raised-solid, #0e1526 );
+	box-shadow: 0 0 0 1px rgba( 94, 224, 255, .35 ), 0 10px 30px rgba( 0, 0, 0, .45 );
+}
+.vh-estate .vh-estate-card.is-origin {
+	border-color: var( --vh-accent, #5ee0ff );
+	box-shadow: 0 0 0 2px rgba( 94, 224, 255, .55 ), 0 12px 34px rgba( 0, 0, 0, .5 );
+}
+.vh-estate .vh-estate-wirelabel.is-lit { border-color: rgba( 94, 224, 255, .6 ); color: #e2f6ff; }
+.vh-estate-wire.is-lit  { stroke: var( --vh-accent, #5ee0ff ); stroke-width: 2.2; opacity: 1; }
+.vh-estate-arrow.is-lit { stroke: var( --vh-accent, #5ee0ff ); stroke-width: 2.2; opacity: 1; }
+
+.vh-estate.has-selection .vh-estate-card.is-dim:hover { opacity: .6; }
+
+@media ( prefers-reduced-motion: no-preference ) {
+	.vh-estate-card { transition: opacity .16s ease, border-color .16s ease, box-shadow .16s ease, filter .16s ease; }
+}
+
+/* A public address is a lead, so every row names its owner and a server row
+ * carries a way through to the machine and what is open on it. */
+.vh-estate-ips li { align-items: baseline; }
+.vh-estate-owner { font-weight: 600; color: #e6edf7; overflow-wrap: anywhere; }
+.vh-estate-kind { color: var( --vh-muted, #94a3b8 ); font-size: 10.5px; text-transform: lowercase; }
+.vh-estate-go {
+	margin-left: auto; font-size: 10.5px; font-weight: 600;
+	color: var( --vh-link, #8fd7ff ); text-decoration: none;
+	white-space: nowrap; padding: 1px 7px; border-radius: 999px;
+	border: 1px solid rgba( 143, 215, 255, .3 ); background: rgba( 143, 215, 255, .08 );
+}
+.vh-estate-go:hover { background: rgba( 143, 215, 255, .2 ); }
+.vh-estate-sev { display: flex; gap: 4px; }
+.vh-estate-sevpill { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; }
+.vh-estate-sevpill--c { background: rgba( 248, 113, 113, .18 ); color: #f87171; }
+.vh-estate-sevpill--h { background: rgba( 251, 146, 60, .18 ); color: #fb923c; }
+
+/* Servers and network devices are different inventories, so the list says so. */
+.vh-estate-dev { color: #a78bfa; }
+.vh-estate-group {
+	display: flex !important; justify-content: space-between; align-items: baseline;
+	font-size: 10px; text-transform: uppercase; letter-spacing: .07em;
+	color: var( --vh-muted, #94a3b8 ); font-weight: 700;
+	padding: 9px 0 3px !important; border-top: 0 !important;
+}
+.vh-estate-group:first-child { padding-top: 2px !important; }
+.vh-estate-groupn { font-weight: 600; letter-spacing: 0; }

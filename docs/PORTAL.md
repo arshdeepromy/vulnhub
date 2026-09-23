@@ -76,9 +76,8 @@ viewBox) and optionally `hidden`.
 | vendors | `/vendors/` | yes |
 | eol_plan | `/eol-plan/` | yes; contributed by vulnhub-eos |
 | sources | `/inventory-sources/` | yes; which register knows what, and what each is missing |
-| network | `/cloud-network/` | yes; contributed by vulnhub-aws — the live AWS topology |
+| network | `/cloud-network/` | yes; contributed by vulnhub-aws — the live AWS topology. `?tab=estate` is the whole-estate flowchart (`&env=prod` / `&env=nonprod` draw one environment), `?tab=` anything else is one account |
 | cspm | `/cloud-posture/` | yes; contributed by vulnhub-plerion |
-| exposure | `/cloud-exposure/` | yes; contributed by vulnhub-plerion |
 | appstream | `/appstream-cleanup/` | hidden; reached from the notifications bell |
 | admin | `/portal-admin/` | hidden; reached from the gear at the foot of the rail |
 | login | `/sign-in/` | hidden |
@@ -94,16 +93,21 @@ nav. Current users:
 - vulnhub-departments (`departments`, hidden)
 - vulnhub-eos (`eol_plan`) — the EOL remediation plan; see `docs/EOS.md`
 - vulnhub-aws (`network`) — the live AWS network topology; see `docs/AWS-NETWORK.md`
-- vulnhub-plerion (`cspm` Cloud Posture, `exposure` Cloud Exposure); see `docs/PLERION.md`
+- vulnhub-plerion (`cspm` Cloud Posture); see `docs/PLERION.md`
 - vulnhub-tenable (`appstream`, hidden) — AppStream duplicate cleanup; see `docs/APPSTREAM.md`
 
 **Navigation-only links.** `vulnhub_portal_nav_extra` only adds a link, not a
 view. Each entry takes `label`, `url`, an `icon` SVG path and `active`. Nothing
 in the product uses it today; it is there for pages built outside the portal.
 
-**Primary nav order today:** Dashboard, Vulnerabilities, Alerts, Assets,
-EOL plan, Inventory sources, Tickets, Exceptions, Vendors, Docs, then the
-nav-extra links.
+**Primary nav order today:** Dashboard, Vulnerabilities, Alerts, Cloud
+Posture, Assets, EOL plan, Inventory sources, Cloud Network, Tickets,
+Exceptions, Vendors, Docs, then the nav-extra links.
+
+A *Cloud Exposure* view sat beside Cloud Posture until 23 September 2026. It
+was removed in favour of Cloud Network, which answers the same question from
+the account's own routing rather than from a posture snapshot — see
+`docs/PLERION.md`.
 
 `sources` is not a contributed view: it lives in vulnhub-dashboard
 (`class-vh-dash-sources.php`) and registers itself through the same

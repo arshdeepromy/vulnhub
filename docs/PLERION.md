@@ -1,7 +1,7 @@
-# Plerion (cloud inventory, CSPM & exposure)
+# Plerion (cloud inventory & CSPM)
 
 `vulnhub-plerion` reads Plerion's REST API — one read-only Bearer key, region host
-`https://{region}.api.plerion.com` — and brings three things into the portal, from
+`https://{region}.api.plerion.com` — and brings two things into the portal, from
 every connected AWS/Azure/GCP account, with **no per-account role to assume**.
 
 ## 1. Assets
@@ -18,12 +18,26 @@ Vulnerabilities list, be selected into a ticket, or enter a JSM/Jira flow — th
 isolation is structural, not a flag. Shown on the **Cloud Posture** page (view
 `cspm`, `/cloud-posture/`), badged CSPM · Plerion, with no raise-ticket control.
 
-## 3. Exposure map
-`sync_exposure()` snapshots `/v1/tenant/assets?isPubliclyExposed=true` per account
-into option `vulnhub_plerion_exposure`. The **Cloud Exposure** page (view
-`exposure`, `/cloud-exposure/`) draws an animated Internet → in-front → internal
-map per account. Plerion exposes no security-group port rules, so this is an
-exposure map, not a port-level flow diagram — the page says so.
+## The exposure map, and why it is gone
+
+There was a third page: **Cloud Exposure** (`/cloud-exposure/`), drawing an
+Internet → in-front → internal map per account from a `sync_exposure()`
+snapshot of `/v1/tenant/assets?isPubliclyExposed=true`.
+
+It was removed once **Cloud Network** existed (`vulnhub-aws`,
+`docs/AWS-NETWORK.md`). Both answer "what can the internet reach", but Plerion
+publishes no security-group rules, so this one could only say *that* a resource
+was exposed — never on which port, behind which balancer, or whether the
+default route goes through inspection. Cloud Network reads the account's own
+route tables, security groups, ENIs and listeners and answers all of that. Two
+screens making the same claim with different evidence is worse than one,
+particularly when the quieter one is the better informed.
+
+Removed with it: the page class and its `exposure.js`, the `.vh-exp-*` half of
+`plerion.css`, the `sync_exposure()` call and method, and the stored option —
+an hourly API call and a 34 KB snapshot of account ids that nothing read any
+more. The asset loop's own "N publicly exposed" count is unrelated and still
+in the sync message. The page itself is in the trash rather than deleted.
 
 ## Pagination gotcha
 Plerion sets `meta.total` and `meta.hasNextPage` **only on the first page**; on
@@ -56,6 +70,18 @@ inspected whose default route went straight out of an internet gateway; it now
 decides that from the route table alone.
 
 ---
+**It also fills in the accounts AWS cannot reach.** The inspection stack — the
+gateway load balancer every workload VPC routes into, the firewall appliances
+behind it, the transit-gateway hub — usually sits in a network account the
+operator's SSO login has no assignment to. Because this connector is onboarded
+centrally rather than per account, it can see that one, and
+`VulnHub_AWS_Network::import_posture_network()` copies those load balancers,
+transit gateways and auto-scaling groups into the topology store with
+`source = 'plerion'`. Accounts the AWS capture reads live are skipped. Without
+it the middle of the Cloud Network flowchart is a blank.
+
+---
+
 _Related:_ `vulnhub-aws` also has a **Resource Explorer** org-inventory option
 (`VulnHub_AWS_Explorer`) that lists assets and security groups across the org from
 one central identity via `resource-explorer-2:Search` — index only (ARN, type,

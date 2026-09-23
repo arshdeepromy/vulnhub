@@ -187,8 +187,16 @@ final class VulnHub_AWS_Connector extends Connector {
 				'placeholder' => 'arn:aws:resource-explorer-2:REGION:ACCOUNT:view/OrgView/…',
 				'help'        => __( 'Recommended. The organisation view to search, copied from the Resource Explorer console. Left blank, Search uses the default view for this account, which may only cover this one account.', 'vulnhub' ),
 			),
+			array(
+				'key'         => 'environment_rules',
+				'label'       => __( 'Environment naming rules', 'vulnhub' ),
+				'type'        => 'textarea',
+				'placeholder' => "p1aa = prod\nt3aa = nonprod",
+				'help'        => __( 'AWS records no production flag, so the only evidence is naming. The obvious words — prod, dev, test, sit, uat, staging, and the traps non-prod and pre-prod — are understood already. Add this estate\'s own codes here, one per line, as "fragment = prod" or "fragment = nonprod". A fragment may be a plain string or a /regex/. These are matched before the built-in words, so a local convention always wins, and the Cloud Network screen reports how many VPCs it still could not place.', 'vulnhub' ),
+			),
 		);
 	}
+
 
 	/** A client built from the stored settings, or null when not configured. */
 	public function is_configured(): bool {

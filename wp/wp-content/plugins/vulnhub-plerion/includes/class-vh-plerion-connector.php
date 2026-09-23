@@ -215,8 +215,6 @@ final class VulnHub_Plerion_Connector extends Connector {
 			$posture = $this->sync_findings( $client );
 		}
 
-		$this->sync_exposure( $client );
-
 		$this->bump( 'seen', $imported );
 
 		return array(
@@ -363,58 +361,6 @@ final class VulnHub_Plerion_Connector extends Connector {
 		\VulnHub\Core\Repo::upsert_asset( $payload );
 
 		return true;
-	}
-
-	/**
-	 * Snapshot the publicly-exposed assets per account for the exposure map.
-	 * Stored in an option so the page renders without a live API call.
-	 */
-	private function sync_exposure( VulnHub_Plerion_Client $client ): void {
-		$providers = array_values( array_filter( array_map( 'trim', explode( ',', (string) $this->get( 'providers', 'AWS' ) ) ) ) );
-		$query     = array( 'isPubliclyExposed' => 'true' );
-
-		if ( $providers ) {
-			$query['providers'] = implode( ',', $providers );
-		}
-
-		$by_account = array();
-
-		try {
-			$client->each_asset(
-				$query,
-				function ( array $r ) use ( &$by_account ): void {
-					$acct = (string) ( $r['providerAccountId'] ?? '' );
-					$acct = '' !== $acct ? $acct : 'unknown';
-
-					$name = self::tag( $r, 'Name' );
-
-					if ( '' === $name ) {
-						$rn   = (string) ( $r['resourceName'] ?? '' );
-						$name = '' !== $rn ? $rn : (string) ( $r['resourceId'] ?? '' );
-					}
-
-					$by_account[ $acct ][] = array(
-						'name'   => $name,
-						'type'   => (string) ( $r['resourceType'] ?? '' ),
-						'region' => (string) ( $r['region'] ?? '' ),
-						'risk'   => (float) ( $r['riskScore'] ?? 0 ),
-						'url'    => (string) ( $r['resourceURL'] ?? '' ),
-					);
-				}
-			);
-		} catch ( \Throwable $e ) {
-			$this->log( 'exposure snapshot: ' . $e->getMessage() );
-
-			return;
-		}
-
-		update_option(
-			'vulnhub_plerion_exposure',
-			array( 'generated_at' => gmdate( 'c' ), 'accounts' => $by_account ),
-			false
-		);
-
-		$this->log( sprintf( 'Exposure snapshot: %d account(s) with exposed assets.', count( $by_account ) ) );
 	}
 
 	/** Read a tag value by key from Plerion's Key/Value tag array. */

@@ -1,30 +1,4 @@
-/* Plerion Cloud Posture + Exposure map */
+/* Plerion Cloud Posture */
 .vh-plerion-badge { font-size: .55em; vertical-align: middle; letter-spacing: .04em; }
 .vh-chip--info { background: rgba(56,189,248,.14); color: #38bdf8; border: 1px solid rgba(56,189,248,.35); }
 .vh-plerion-msg { max-width: 460px; }
-
-/* Exposure map */
-.vh-exp-controls { margin: .5rem 0 1rem; display:flex; gap:1rem; align-items:center; flex-wrap:wrap; }
-.vh-exp-controls select { padding:.4rem .6rem; border-radius:8px; }
-.vh-exp-map { background: var(--vh-surface, rgba(15,23,42,.4)); border:1px solid var(--vh-border, rgba(148,163,184,.15)); border-radius:12px; padding:10px; overflow:auto; }
-.vh-exp-svg { width:100%; height:auto; color: rgba(148,163,184,.5); }
-.vh-exp-net circle { fill: rgba(56,189,248,.18); stroke:#38bdf8; stroke-width:1.5; }
-.vh-exp-pulse { fill:none; stroke:#38bdf8; opacity:.6; transform-box: fill-box; transform-origin:center; animation: vhExpPulse 2.4s ease-out infinite; }
-@keyframes vhExpPulse { 0%{ transform:scale(1); opacity:.55 } 100%{ transform:scale(2.4); opacity:0 } }
-.vh-exp-net text, .vh-exp-internal text { fill:#e2e8f0; font-size:13px; }
-.vh-exp-cap { fill: rgba(148,163,184,.8) !important; font-size:11px !important; }
-.vh-exp-col { fill: rgba(148,163,184,.9); font-size:12px; letter-spacing:.03em; }
-.vh-exp-internal rect { fill: rgba(148,163,184,.1); stroke: rgba(148,163,184,.4); }
-.vh-exp-edge { fill:none; stroke-width:1.5; stroke-dasharray:5 6; }
-.vh-exp-edge--in { stroke:#38bdf8; opacity:.5; animation: vhExpDash 1s linear infinite; }
-.vh-exp-edge--out { stroke: rgba(148,163,184,.5); opacity:.4; animation: vhExpDash 1.6s linear infinite; }
-@keyframes vhExpDash { to { stroke-dashoffset:-22; } }
-.vh-exp-node text { fill:#f8fafc; font-size:12px; }
-.vh-exp-node rect { stroke-width:1.5; }
-.vh-exp-node--crit rect { fill: rgba(248,113,113,.18); stroke:#f87171; }
-.vh-exp-node--warn rect { fill: rgba(251,191,36,.16); stroke:#fbbf24; }
-.vh-exp-node--ok   rect { fill: rgba(52,211,153,.15); stroke:#34d399; }
-.vh-exp-node { animation: vhExpIn .4s ease both; }
-@keyframes vhExpIn { from { opacity:0 } to { opacity:1 } }
-.vh-exp-sub { fill: rgba(148,163,184,.7); font-size:10px; }
-.vh-exp-tag { fill: rgba(148,163,184,.75); font-size:10px; letter-spacing:.03em; }

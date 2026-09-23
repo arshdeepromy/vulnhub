@@ -62,6 +62,7 @@ final class VulnHub_AWS_Network {
 				public_ip varchar(64) NOT NULL DEFAULT '',
 				state varchar(24) NOT NULL DEFAULT '',
 				sg_ids varchar(512) NOT NULL DEFAULT '',
+				source varchar(12) NOT NULL DEFAULT 'aws',
 				detail text NOT NULL,
 				last_seen datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
 				PRIMARY KEY  (id),
@@ -135,8 +136,16 @@ final class VulnHub_AWS_Network {
 	public static function capture( VulnHub_AWS_Client $client, string $account, string $region, string $now ): int {
 		global $wpdb;
 
-		// Replace this account+region's slice so a re-sync reflects deletions.
-		foreach ( array( self::nodes_table(), self::sgs_table(), self::rules_table(), self::routes_table() ) as $t ) {
+		/*
+		 * Replace this account+region's slice so a re-sync reflects deletions
+		 * -- but only the rows this capture wrote. The same table also holds
+		 * nodes imported from the cloud-posture inventory, for the accounts
+		 * this login cannot reach at all, and a blind DELETE would throw those
+		 * away every time a neighbouring account synced.
+		 */
+		$wpdb->query( $wpdb->prepare( "DELETE FROM " . self::nodes_table() . " WHERE account_id = %s AND region = %s AND source = 'aws'", $account, $region ) ); // phpcs:ignore
+
+		foreach ( array( self::sgs_table(), self::rules_table(), self::routes_table() ) as $t ) {
 			$wpdb->query( $wpdb->prepare( "DELETE FROM {$t} WHERE account_id = %s AND region = %s", $account, $region ) ); // phpcs:ignore
 		}
 
@@ -149,6 +158,7 @@ final class VulnHub_AWS_Network {
 		$written += self::capture_enis( $client, $account, $region, $now );
 		$written += self::capture_addresses( $client, $account, $region, $now );
 		$written += self::capture_load_balancers( $client, $account, $region, $now );
+		$written += self::capture_vpc_endpoints( $client, $account, $region, $now );
 
 		return $written;
 	}
@@ -563,6 +573,74 @@ final class VulnHub_AWS_Network {
 	}
 
 	/** Route tables: where each 0.0.0.0/0 (and other) route points -- IGW, NAT, TGW, peering. */
+	/**
+	 * VPC endpoints — and the one that matters is the Gateway Load Balancer.
+	 *
+	 * A workload VPC whose default route points at a `vpce-` is sending
+	 * everything internet-bound into an inline inspection appliance. Until
+	 * this reader existed the route was all we had: the screen could say
+	 * traffic left through *an* endpoint, and nothing about what was on the
+	 * other side of it.
+	 *
+	 * The endpoint's `serviceName` closes that gap. It is the same string in
+	 * every VPC pointed at the same appliance, so it is the join that turns
+	 * dozens of unrelated `vpce-` ids into one firewall on the diagram —
+	 * without matching on anybody's resource name, which is the mistake
+	 * recorded under *The direct-vs-inspected story*.
+	 */
+	private static function capture_vpc_endpoints( VulnHub_AWS_Client $client, string $account, string $region, string $now ): int {
+		global $wpdb;
+		$nt = self::nodes_table();
+		$n  = 0;
+
+		$res = $client->query( 'ec2', $region, array( 'Action' => 'DescribeVpcEndpoints', 'Version' => '2016-11-15' ) );
+
+		if ( empty( $res['ok'] ) ) {
+			return $n;
+		}
+
+		foreach ( $res['xml']->vpcEndpointSet->item ?? array() as $e ) { // phpcs:ignore
+			$id   = (string) ( $e->vpcEndpointId ?? '' ); // phpcs:ignore
+			$type = (string) ( $e->vpcEndpointType ?? '' ); // phpcs:ignore
+
+			if ( '' === $id ) {
+				continue;
+			}
+
+			/*
+			 * Only the ones that can be in a data path. An Interface endpoint
+			 * to a service like SSM or ECR is a private route to an AWS API,
+			 * not a hop in this estate's topology, and drawing hundreds of
+			 * them would bury the one that is.
+			 */
+			if ( 'GatewayLoadBalancer' !== $type ) {
+				continue;
+			}
+
+			$wpdb->query(
+				$wpdb->prepare(
+					"INSERT INTO {$nt} (account_id, region, node_type, resource_id, name, vpc_id, subnet_id, private_ip, public_ip, state, sg_ids, detail, last_seen)
+					 VALUES (%s,%s,'vpce',%s,%s,%s,'','','',%s,'',%s,%s)
+					 ON DUPLICATE KEY UPDATE name = VALUES(name), vpc_id = VALUES(vpc_id), state = VALUES(state), detail = VALUES(detail), last_seen = VALUES(last_seen)", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+					$account,
+					$region,
+					$id,
+					// The service is the node's identity here, not the endpoint
+					// id: two VPCs pointing at the same service are behind the
+					// same appliance, and that is the fact the diagram needs.
+					(string) ( $e->serviceName ?? '' ), // phpcs:ignore
+					(string) ( $e->vpcId ?? '' ), // phpcs:ignore
+					(string) ( $e->state ?? '' ), // phpcs:ignore
+					(string) wp_json_encode( array( 'endpoint_type' => $type ) ),
+					$now
+				)
+			);
+			++$n;
+		}
+
+		return $n;
+	}
+
 	private static function capture_routes( VulnHub_AWS_Client $client, string $account, string $region, string $now ): int {
 		global $wpdb;
 		$rt = self::routes_table();
@@ -594,6 +672,124 @@ final class VulnHub_AWS_Network {
 		}
 
 		return $n;
+	}
+
+	/** Plerion resource types that are hops, and the node type each becomes. */
+	private const PLERION_NET_TYPES = array(
+		'AWS::ElasticLoadBalancingV2::LoadBalancer' => 'elb',
+		'AWS::EC2::TransitGateway'                  => 'tgw',
+		'AWS::AutoScaling::AutoScalingGroup'        => 'asg',
+		'AWS::EC2::Instance'                        => 'instance',
+	);
+
+	/**
+	 * Fill in the accounts this login cannot read, from the posture inventory.
+	 *
+	 * The estate's inspection appliances sit in a network account that the SSO
+	 * login has no assignment to -- `list_roles` returns nothing for it -- so
+	 * the AWS capture can never see the load balancer every other account
+	 * routes into, nor the firewalls behind it, nor the transit gateway that
+	 * owns the hub. The posture connector *can* see it, because it is
+	 * onboarded centrally rather than per account.
+	 *
+	 * So the middle of the diagram comes from there. The rows are written with
+	 * `source = 'plerion'`, which is what keeps a neighbouring account's
+	 * capture from deleting them, and is also the honest label: they are an
+	 * inventory record, not a live read of that account's configuration. What
+	 * they cannot give is a security group, a route table or an interface --
+	 * only that the resource exists, in which account and region.
+	 *
+	 * Accounts the AWS capture already reads are skipped: a live read beats an
+	 * inventory every time, and importing both would draw each node twice.
+	 *
+	 * @return array{imported:int,accounts:int,skipped:int}
+	 */
+	public static function import_posture_network(): array {
+		global $wpdb;
+
+		$out = array( 'imported' => 0, 'accounts' => 0, 'skipped' => 0 );
+
+		if ( ! function_exists( 'vulnhub' ) || ! class_exists( 'VulnHub_Plerion_Client' ) ) {
+			return $out;
+		}
+
+		$connector = vulnhub()->connectors->get( 'plerion' );
+
+		if ( ! $connector || ! $connector->is_enabled() ) {
+			return $out;
+		}
+
+		try {
+			$ref    = new ReflectionMethod( $connector, 'client' );
+			$ref->setAccessible( true );
+			$client = $ref->invoke( $connector );
+		} catch ( \Throwable $e ) {
+			return $out;
+		}
+
+		$nt   = self::nodes_table();
+		$live = array();
+
+		foreach ( (array) $wpdb->get_col( "SELECT DISTINCT account_id FROM {$nt} WHERE source = 'aws'" ) as $a ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$live[ (string) $a ] = true;
+		}
+
+		$now  = vh_now();
+		$seen = array();
+
+		try {
+			$client->each_asset(
+				array( 'providers' => 'AWS', 'resourceTypes' => implode( ',', array_keys( self::PLERION_NET_TYPES ) ) ),
+				static function ( array $r ) use ( &$out, &$seen, $live, $nt, $now, $wpdb ): void {
+					$acct = (string) ( $r['providerAccountId'] ?? '' );
+					$type = (string) ( $r['resourceType'] ?? '' );
+					$name = (string) ( $r['resourceName'] ?? '' );
+
+					if ( '' === $acct || isset( $live[ $acct ] ) ) {
+						++$out['skipped'];
+						return;
+					}
+
+					$kind = self::PLERION_NET_TYPES[ $type ] ?? '';
+
+					if ( '' === $kind ) {
+						return;
+					}
+
+					// The inventory's own id is a PRN; keep a stable, readable
+					// key so a re-import updates rather than duplicates.
+					$id = (string) ( $r['resourceId'] ?? '' );
+					$id = '' !== $name ? $kind . ':' . $name : $kind . ':' . md5( $id );
+
+					$wpdb->query(
+						$wpdb->prepare(
+							"INSERT INTO {$nt} (account_id, region, node_type, resource_id, name, vpc_id, subnet_id, private_ip, public_ip, state, sg_ids, detail, source, last_seen)
+							 VALUES (%s,%s,%s,%s,%s,'','','','','','',%s,'plerion',%s)
+							 ON DUPLICATE KEY UPDATE name = VALUES(name), node_type = VALUES(node_type), detail = VALUES(detail), last_seen = VALUES(last_seen)", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+							$acct,
+							(string) ( $r['region'] ?? '' ),
+							$kind,
+							$id,
+							$name,
+							(string) wp_json_encode( array(
+								'resource_type' => $type,
+								'exposed'       => ! empty( $r['isPubliclyExposed'] ),
+							) ),
+							$now
+						)
+					);
+
+					++$out['imported'];
+					$seen[ $acct ] = true;
+				}
+			);
+		} catch ( \Throwable $e ) {
+			return $out;
+		}
+
+		$out['accounts'] = count( $seen );
+
+		return $out;
 	}
 
 	/** Accounts that have a captured network graph. @return string[] */
@@ -1071,6 +1267,1113 @@ final class VulnHub_AWS_Network {
 			'peers'      => $peers,
 		);
 	}
+
+	/**
+	 * The inline inspection stack: the gateway load balancer and what is behind it.
+	 *
+	 * Only the appliances in the account that owns the gateway load balancer
+	 * count. Every auto-scaling group in the estate arrives through the same
+	 * posture import, and one of them is the posture vendor's own scanning
+	 * appliance sitting in its own account -- which is not a firewall and is
+	 * not in anybody's data path. Tying the set to the load balancer's account
+	 * is the data-driven cut; matching on what things are named is the mistake
+	 * this file already records once.
+	 *
+	 * `accounts` is the same cut expressed as a lookup, which is what makes an
+	 * EC2 instance an appliance rather than a server. It is an account-level
+	 * answer, so a non-appliance instance in the inspection account would be
+	 * counted as a device: group membership would be the exact signal, and it
+	 * is not captured. On this estate the account holds nothing else.
+	 *
+	 * Read once per request -- `estate_flow()` asks twice, for the counts and
+	 * then for the firewall band.
+	 *
+	 * @return array{gwlbs:array<int,array<string,string>>,firewalls:array<int,array<string,string>>,accounts:array<string,bool>}
+	 */
+	private static function inspection_stack(): array {
+		static $cache = null;
+
+		if ( null !== $cache ) {
+			return $cache;
+		}
+
+		global $wpdb;
+		$nt         = self::nodes_table();
+		$appliances = array();
+
+		foreach ( (array) $wpdb->get_results( "SELECT node_type, name, account_id FROM {$nt} WHERE node_type IN ('elb','asg') AND source = 'plerion'", ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$appliances[] = array(
+				'type' => (string) $r['node_type'],
+				'name' => (string) $r['name'],
+				'acct' => (string) $r['account_id'],
+			);
+		}
+
+		$gwlbs    = array_values( array_filter( $appliances, static fn( array $a ): bool => 'elb' === $a['type'] ) );
+		$accounts = array();
+
+		foreach ( $gwlbs as $g ) {
+			$accounts[ (string) $g['acct'] ] = true;
+		}
+
+		$cache = array(
+			'gwlbs'     => $gwlbs,
+			'accounts'  => $accounts,
+			'firewalls' => array_values(
+				array_filter(
+					$appliances,
+					static fn( array $a ): bool => 'asg' === $a['type'] && isset( $accounts[ (string) $a['acct'] ] )
+				)
+			),
+		);
+
+		return $cache;
+	}
+
+	/**
+	 * Is this thing a device, or something running on one?
+	 *
+	 * The diagram was mixing the two. An elastic network interface was being
+	 * listed beside servers, and a NAT gateway was being counted as if it were
+	 * a host -- which is like putting a patch-panel port and a switch in the
+	 * same inventory as the database server plugged into them.
+	 *
+	 * The test is what the thing would be if the estate were built out of
+	 * metal: would it be its own box in a rack?
+	 *
+	 * | AWS                                  | In a rack                    | Class    |
+	 * |--------------------------------------|------------------------------|----------|
+	 * | internet gateway                     | border router                | network  |
+	 * | NAT gateway                          | NAT router                   | network  |
+	 * | transit gateway                      | core router                  | network  |
+	 * | load balancer (app / net / gateway)  | load-balancer appliance      | network  |
+	 * | VPC endpoint                         | service proxy                | network  |
+	 * | EC2 in the inspection stack          | the firewall appliance       | network  |
+	 * | WorkSpaces desktop                   | a desk, not a rack           | desktop  |
+	 * | **any other EC2**                    | **a server**                 | server   |
+	 * | **elastic network interface**        | **a NIC — a port on a box**  | **none** |
+	 *
+	 * An interface is deliberately never a device. It is a port, and it always
+	 * belongs to one of the rows above; resolving it to its owner is what
+	 * `estate_flow()` does before anything gets counted.
+	 *
+	 * **An EC2 instance is a server.** It was briefly classed by
+	 * `sourceDestCheck`, on the reasoning that an instance forwarding traffic
+	 * for other hosts is a hop rather than a host. That is true of the packet
+	 * and wrong about the estate: a box someone patches, backs up and owns is
+	 * a server whatever it does with a route, and moving a handful of them out
+	 * of the server count made the fleet smaller than it is. The single
+	 * exception is the inline firewall, which happens to be a vendor appliance
+	 * shipped as an AMI -- nobody administers it as a server, and it is the
+	 * one EC2 that genuinely belongs in the network cabinet.
+	 *
+	 * That exception is decided by `inspection_stack()`, from the account that
+	 * owns the gateway load balancer -- not from what anything is called.
+	 *
+	 * @param string $kind      What the resource is (`nat_gateway`, `instance`, …).
+	 * @param bool   $appliance This instance is part of the inspection stack.
+	 */
+	public static function device_class( string $kind, bool $appliance = false ): string {
+		$network = array( 'nat_gateway', 'nat', 'igw', 'tgw', 'elb', 'load_balancer', 'network_load_balancer', 'gateway_load_balancer', 'vpce', 'vpc_endpoint', 'asg' );
+
+		if ( in_array( $kind, $network, true ) ) {
+			return 'network';
+		}
+
+		if ( 'workspace' === $kind ) {
+			return 'desktop';
+		}
+
+		if ( 'instance' === $kind ) {
+			return $appliance ? 'network' : 'server';
+		}
+
+		return 'server';
+	}
+
+	/** What to call each class on screen. */
+	public static function device_label( string $class ): string {
+		return match ( $class ) {
+			'network' => __( 'network device', 'vulnhub' ),
+			'desktop' => __( 'virtual desktop', 'vulnhub' ),
+			default   => __( 'server', 'vulnhub' ),
+		};
+	}
+
+	/**
+	 * How an internet-bound default route is read as a path off the internet.
+	 *
+	 * The route table says which one applies; nothing here is matched on a
+	 * resource's name. A Gateway Load Balancer endpoint is a `vpce-` sitting
+	 * in the `gatewayId` of a `0.0.0.0/0` route, which is exactly how an
+	 * inline inspection appliance is wired, so that is what it is called --
+	 * not "Check Point", which would be reading a vendor into a route id.
+	 * Where the appliance's own name is captured it is shown on the node.
+	 *
+	 * @return array<string,array<string,string>>
+	 */
+	private static function path_kinds(): array {
+		return array(
+			'inspected' => array(
+				'kind'  => 'firewall',
+				'label' => __( 'Inspected — gateway load-balancer endpoint', 'vulnhub' ),
+				'help'  => __( 'The VPC sends everything internet-bound to a gateway load-balancer endpoint, which is how an inline inspection appliance is wired in. Inbound and outbound both pass through it.', 'vulnhub' ),
+			),
+			'appliance' => array(
+				'kind'  => 'firewall',
+				'label' => __( 'Inspected — inline appliance', 'vulnhub' ),
+				'help'  => __( 'The default route points at a network interface, so a virtual appliance in this VPC is in the path.', 'vulnhub' ),
+			),
+			'transit'   => array(
+				'kind'  => 'tgw',
+				'label' => __( 'Via transit gateway', 'vulnhub' ),
+				'help'  => __( 'Everything internet-bound leaves through a transit gateway, so the egress and any inspection happen in whichever account owns that hub — not here.', 'vulnhub' ),
+			),
+			'direct'    => array(
+				'kind'  => 'igw',
+				'label' => __( 'Direct — internet gateway', 'vulnhub' ),
+				'help'  => __( 'The default route goes straight out of an internet gateway. Anything in this VPC holding a public address is reachable from the internet with nothing in between.', 'vulnhub' ),
+			),
+			'egress'    => array(
+				'kind'  => 'nat',
+				'label' => __( 'Outbound only — NAT gateway', 'vulnhub' ),
+				'help'  => __( 'The default route is a NAT gateway: these workloads can start a connection outwards, and nothing on the internet can start one inwards.', 'vulnhub' ),
+			),
+		);
+	}
+
+	/** Which path a default route represents, from its target. '' = not a path. */
+	private static function path_for_route( string $target_type, string $target_id ): string {
+		if ( 'tgw' === $target_type || 0 === strpos( $target_id, 'tgw-' ) ) {
+			return 'transit';
+		}
+		if ( 'igw' === $target_type || 0 === strpos( $target_id, 'igw-' ) ) {
+			return 'direct';
+		}
+		if ( 'nat' === $target_type || 0 === strpos( $target_id, 'nat-' ) ) {
+			return 'egress';
+		}
+		if ( 0 === strpos( $target_id, 'vpce-' ) ) {
+			return 'inspected';
+		}
+		if ( 'eni' === $target_type || 0 === strpos( $target_id, 'eni-' ) ) {
+			return 'appliance';
+		}
+
+		return '';
+	}
+
+	/**
+	 * The whole estate as one tree, rooted at the internet.
+	 *
+	 * The per-account map answers "how is this account wired". This answers
+	 * the question you cannot ask it 43 accounts at a time: **by what route
+	 * does anything here meet the internet, and what is behind each one.**
+	 *
+	 * Three things shape it:
+	 *
+	 * - **The branches are paths, and a path is a property of a VPC's route
+	 *   table, not of an account.** So the first level under the internet is
+	 *   how traffic actually leaves -- an inspection endpoint, a transit
+	 *   gateway, an internet gateway, a NAT gateway -- and a VPC appears under
+	 *   every path its own route tables really have. A VPC with a public
+	 *   subnet and a private one has two, and showing it once would be picking
+	 *   which half to tell you about.
+	 * - **No route tables as nodes.** They decide the shape and then stay out
+	 *   of it; a route table is not a thing anyone is looking for on a map of
+	 *   what is exposed.
+	 * - **Applications and data sit apart, and say why.** The posture
+	 *   inventory records no VPC for Lambda, ECS, load balancers, RDS, S3 or
+	 *   DynamoDB, so hanging them under a network path would be an invention.
+	 *   They get their own branch, per account, labelled for what it is.
+	 *
+	 * Everything is returned in one payload and the browser expands branches
+	 * from it, so opening one costs nothing and there is no spinner on a
+	 * click. Only leaf lists are capped.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public static function estate_tree(): array {
+		global $wpdb;
+
+		$nt     = self::nodes_table();
+		$rt     = self::routes_table();
+		$rl     = self::rules_table();
+		$cr     = $wpdb->prefix . 'vulnhub_cloud_resources';
+		$assets = $wpdb->prefix . 'vulnhub_assets';
+		$acct_t = $wpdb->prefix . 'vulnhub_aws_accounts';
+
+		/* ---- labels ---- */
+		$labels = array();
+		foreach ( (array) $wpdb->get_results( "SELECT account_id, label FROM {$acct_t}", ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			if ( '' !== (string) $r['label'] ) {
+				$labels[ (string) $r['account_id'] ] = (string) $r['label'];
+			}
+		}
+
+		$vpc_names = array();
+		foreach ( (array) $wpdb->get_results( "SELECT account_id, resource_id, name FROM {$nt} WHERE node_type = 'vpc'", ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$vpc_names[ $r['account_id'] . '|' . $r['resource_id'] ] = (string) $r['name'];
+		}
+
+		/* ---- security groups open to the internet, and on which ports ---- */
+		$open_sg = array();
+		foreach ( (array) $wpdb->get_results( "SELECT account_id, group_id, protocol, from_port, to_port FROM {$rl} WHERE direction = 'in' AND source IN ('0.0.0.0/0','::/0')", ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$open_sg[ $r['account_id'] . '|' . $r['group_id'] ][] = self::port_label(
+				array( 'protocol' => (string) $r['protocol'], 'from_port' => (int) $r['from_port'], 'to_port' => (int) $r['to_port'] )
+			);
+		}
+
+		/* ---- posture per instance ---- */
+		$posture = array();
+		foreach ( (array) $wpdb->get_results( "SELECT id, aws_instance_id, hostname, open_critical, open_high, lifecycle_status FROM {$assets} WHERE aws_instance_id <> ''", ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$posture[ (string) $r['aws_instance_id'] ] = $r;
+		}
+
+		/* ---- paths, per account+VPC ---- */
+		$paths   = self::path_kinds();
+		$members = array();   // path => acct|vpc => [ target ids ]
+		$targets = array();   // path => target id => true
+
+		foreach ( (array) $wpdb->get_results( "SELECT account_id, vpc_id, target_type, target_id FROM {$rt} WHERE dest_cidr IN ('0.0.0.0/0','::/0')", ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$path = self::path_for_route( (string) $r['target_type'], (string) $r['target_id'] );
+
+			if ( '' === $path || '' === (string) $r['vpc_id'] ) {
+				continue;
+			}
+
+			$members[ $path ][ $r['account_id'] . '|' . $r['vpc_id'] ][ (string) $r['target_id'] ] = true;
+			$targets[ $path ][ (string) $r['target_id'] ]                                          = true;
+		}
+
+		/* ---- instances, by account+VPC ---- */
+		$servers = array();
+		$counts  = array( 'instances' => 0, 'public' => 0 );
+
+		foreach ( (array) $wpdb->get_results( "SELECT account_id, resource_id, name, vpc_id, subnet_id, private_ip, public_ip, state, sg_ids FROM {$nt} WHERE node_type = 'instance'", ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$acct  = (string) $r['account_id'];
+			$id    = (string) $r['resource_id'];
+			$ports = array();
+
+			foreach ( array_filter( array_map( 'trim', explode( ',', (string) $r['sg_ids'] ) ) ) as $gid ) {
+				if ( isset( $open_sg[ $acct . '|' . $gid ] ) ) {
+					$ports = array_merge( $ports, $open_sg[ $acct . '|' . $gid ] );
+				}
+			}
+
+			$ports = array_values( array_unique( $ports ) );
+			sort( $ports );
+
+			$public = '' !== (string) $r['public_ip'];
+			$meta   = array();
+
+			if ( $public ) {
+				$meta[] = array( 'k' => __( 'Public IP', 'vulnhub' ), 'v' => (string) $r['public_ip'] );
+			}
+			if ( '' !== (string) $r['private_ip'] ) {
+				$meta[] = array( 'k' => __( 'Private IP', 'vulnhub' ), 'v' => (string) $r['private_ip'] );
+			}
+			if ( '' !== (string) $r['state'] ) {
+				$meta[] = array( 'k' => __( 'State', 'vulnhub' ), 'v' => (string) $r['state'] );
+			}
+			if ( $ports ) {
+				$meta[] = array( 'k' => __( 'Open to 0.0.0.0/0', 'vulnhub' ), 'v' => implode( ', ', array_slice( $ports, 0, 8 ) ) );
+			}
+
+			$node = array(
+				'id'    => $id,
+				'kind'  => 'ec2',
+				'label' => '' !== (string) $r['name'] ? (string) $r['name'] : $id,
+				'sub'   => $id,
+				'meta'  => $meta,
+				'open'  => $public || (bool) $ports,
+			);
+
+			if ( isset( $posture[ $id ] ) ) {
+				$node['sev'] = array(
+					'c' => (int) $posture[ $id ]['open_critical'],
+					'h' => (int) $posture[ $id ]['open_high'],
+				);
+				$node['meta'][] = array( 'k' => __( 'Lifecycle', 'vulnhub' ), 'v' => (string) $posture[ $id ]['lifecycle_status'] );
+			}
+
+			$servers[ $acct . '|' . (string) $r['vpc_id'] ][] = $node;
+			++$counts['instances'];
+
+			if ( $public ) {
+				++$counts['public'];
+			}
+		}
+
+		/* ---- applications and data, per account (no VPC is recorded for them) ---- */
+		$app_kinds  = array( 'lambda' => 1, 'ecs' => 1, 'alb' => 1, 'apigw' => 1 );
+		$data_kinds = array( 'rds' => 1, 's3' => 1, 'dynamodb' => 1 );
+		$by_account = array();
+
+		foreach ( (array) $wpdb->get_results( "SELECT account_id, kind, resource_id, name, exposed FROM {$cr} WHERE kind <> 'ec2' ORDER BY exposed DESC, kind, name", ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$kind = (string) $r['kind'];
+			$tier = isset( $app_kinds[ $kind ] ) ? 'apps' : ( isset( $data_kinds[ $kind ] ) ? 'data' : '' );
+
+			if ( '' === $tier ) {
+				continue;
+			}
+
+			$by_account[ (string) $r['account_id'] ][ $tier ][] = array(
+				'id'    => (string) $r['resource_id'],
+				'kind'  => $kind,
+				'label' => '' !== (string) $r['name'] ? (string) $r['name'] : (string) $r['resource_id'],
+				'sub'   => strtoupper( $kind ),
+				'open'  => (bool) $r['exposed'],
+				'meta'  => (bool) $r['exposed'] ? array( array( 'k' => __( 'Exposure', 'vulnhub' ), 'v' => __( 'the posture source reports this publicly exposed', 'vulnhub' ) ) ) : array(),
+			);
+		}
+
+		/* ---- build ---- */
+		/*
+		 * Not typed `string $acct`, deliberately. An AWS account id is twelve
+		 * digits, and PHP turns a numeric string used as an array key into an
+		 * int -- so every key read back out of these maps arrives as an int
+		 * and a typed parameter is a TypeError under strict_types. Cast on the
+		 * way in and the call sites stay readable.
+		 */
+		$name_of = static function ( $acct ) use ( $labels ): string {
+			$acct = (string) $acct;
+
+			return isset( $labels[ $acct ] ) ? $labels[ $acct ] . ' (' . $acct . ')' : $acct;
+		};
+
+		$branches = array();
+
+		foreach ( $paths as $path => $def ) {
+			if ( empty( $members[ $path ] ) ) {
+				continue;
+			}
+
+			$by_acct = array();
+
+			foreach ( array_keys( $members[ $path ] ) as $key ) {
+				list( $acct, $vpc ) = explode( '|', $key, 2 );
+
+				$rows  = $servers[ $key ] ?? array();
+				$open  = array_values( array_filter( $rows, static fn( array $n ): bool => ! empty( $n['open'] ) ) );
+				$shut  = array_values( array_filter( $rows, static fn( array $n ): bool => empty( $n['open'] ) ) );
+				$kids  = array();
+
+				if ( $open ) {
+					$kids[] = self::tier_node( 'open', __( 'Reachable — public address or a group open to 0.0.0.0/0', 'vulnhub' ), $open );
+				}
+				if ( $shut ) {
+					$kids[] = self::tier_node( 'internal', __( 'Internal only', 'vulnhub' ), $shut );
+				}
+
+				$vname = (string) ( $vpc_names[ $key ] ?? '' );
+
+				$by_acct[ $acct ][] = array(
+					'id'       => $path . ':' . $key,
+					'kind'     => 'vpc',
+					'label'    => '' !== $vname ? $vname : $vpc,
+					'sub'      => $vpc,
+					'count'    => count( $rows ),
+					'countfor' => _n( 'server', 'servers', count( $rows ), 'vulnhub' ),
+					'meta'     => array( array( 'k' => __( 'Leaves through', 'vulnhub' ), 'v' => implode( ', ', array_keys( $members[ $path ][ $key ] ) ) ) ),
+					'children' => $kids,
+				);
+			}
+
+			ksort( $by_acct );
+			$acct_nodes = array();
+			$vpc_total  = 0;
+
+			foreach ( $by_acct as $acct => $vpcs ) {
+				usort( $vpcs, static fn( array $a, array $b ): int => strcasecmp( (string) $a['label'], (string) $b['label'] ) );
+				$vpc_total += count( $vpcs );
+
+				$acct_nodes[] = array(
+					'id'       => $path . ':acct:' . $acct,
+					'kind'     => 'account',
+					'label'    => $name_of( $acct ),
+					'count'    => count( $vpcs ),
+					'countfor' => _n( 'VPC', 'VPCs', count( $vpcs ), 'vulnhub' ),
+					'children' => $vpcs,
+				);
+			}
+
+			$branches[] = array(
+				'id'       => 'path:' . $path,
+				'kind'     => (string) $def['kind'],
+				'label'    => (string) $def['label'],
+				'help'     => (string) $def['help'],
+				'count'    => count( $acct_nodes ),
+				'countfor' => _n( 'account', 'accounts', count( $acct_nodes ), 'vulnhub' ),
+				'meta'     => array(
+					array( 'k' => __( 'VPCs on this path', 'vulnhub' ), 'v' => (string) $vpc_total ),
+					array( 'k' => __( 'Gateways', 'vulnhub' ), 'v' => implode( ', ', array_slice( array_keys( $targets[ $path ] ?? array() ), 0, 6 ) ) ),
+				),
+				'children' => $acct_nodes,
+			);
+		}
+
+		/*
+		 * Anything the branches above did not account for.
+		 *
+		 * A VPC lands on a branch by having an internet-bound default route.
+		 * A VPC that has none -- a fully private one, or one whose route
+		 * tables the read could not see -- would otherwise take its servers
+		 * out of the picture entirely, and a map that quietly omits machines
+		 * is worse than one that admits it cannot place them. On this estate
+		 * the branch is empty, and it exists so that it cannot stop being
+		 * true without saying so.
+		 */
+		$unplaced = array();
+
+		foreach ( $servers as $key => $rows ) {
+			foreach ( $paths as $path => $unused ) {
+				if ( isset( $members[ $path ][ $key ] ) ) {
+					continue 2;
+				}
+			}
+
+			list( $acct, $vpc ) = explode( '|', (string) $key, 2 );
+			$vname              = (string) ( $vpc_names[ $key ] ?? '' );
+
+			$unplaced[ $acct ][] = array(
+				'id'       => 'orphan:' . $key,
+				'kind'     => 'vpc',
+				'label'    => '' !== $vname ? $vname : $vpc,
+				'sub'      => $vpc,
+				'count'    => count( $rows ),
+				'countfor' => _n( 'server', 'servers', count( $rows ), 'vulnhub' ),
+				'children' => array( self::tier_node( 'unplaced', __( 'Servers', 'vulnhub' ), $rows ) ),
+			);
+		}
+
+		if ( $unplaced ) {
+			ksort( $unplaced );
+			$nodes = array();
+
+			foreach ( $unplaced as $acct => $vpcs ) {
+				$nodes[] = array(
+					'id'       => 'orphan:acct:' . $acct,
+					'kind'     => 'account',
+					'label'    => $name_of( $acct ),
+					'count'    => count( $vpcs ),
+					'countfor' => _n( 'VPC', 'VPCs', count( $vpcs ), 'vulnhub' ),
+					'children' => $vpcs,
+				);
+			}
+
+			$branches[] = array(
+				'id'       => 'path:unplaced',
+				'kind'     => 'service',
+				'label'    => __( 'No internet-bound route recorded', 'vulnhub' ),
+				'help'     => __( 'These VPCs hold servers but have no default route in the capture — either they are genuinely private, or the route tables could not be read for that account. They are listed here rather than left off the map.', 'vulnhub' ),
+				'count'    => count( $nodes ),
+				'countfor' => _n( 'account', 'accounts', count( $nodes ), 'vulnhub' ),
+				'children' => $nodes,
+			);
+		}
+
+		/* ---- the branch that is not a network path ---- */
+		ksort( $by_account );
+		$svc_accounts = array();
+		$svc_total    = 0;
+
+		foreach ( $by_account as $acct => $tiers ) {
+			$kids = array();
+
+			if ( ! empty( $tiers['apps'] ) ) {
+				$kids[] = self::tier_node( 'apps', __( 'Applications', 'vulnhub' ), $tiers['apps'] );
+			}
+			if ( ! empty( $tiers['data'] ) ) {
+				$kids[] = self::tier_node( 'data', __( 'Data stores', 'vulnhub' ), $tiers['data'] );
+			}
+
+			if ( ! $kids ) {
+				continue;
+			}
+
+			$n          = count( $tiers['apps'] ?? array() ) + count( $tiers['data'] ?? array() );
+			$svc_total += $n;
+
+			$svc_accounts[] = array(
+				'id'       => 'svc:acct:' . $acct,
+				'kind'     => 'account',
+				'label'    => $name_of( $acct ),
+				'count'    => $n,
+				'countfor' => _n( 'resource', 'resources', $n, 'vulnhub' ),
+				'children' => $kids,
+			);
+		}
+
+		if ( $svc_accounts ) {
+			$branches[] = array(
+				'id'       => 'path:services',
+				'kind'     => 'service',
+				'label'    => __( 'Applications and data — not placed on a network path', 'vulnhub' ),
+				'help'     => __( 'Lambda, ECS, load balancers, RDS, S3 and DynamoDB come from the cloud-posture inventory, which records no VPC for them. They are listed per account rather than under a route they cannot be shown to use. Anything marked exposed is reported publicly reachable by that source.', 'vulnhub' ),
+				'count'    => count( $svc_accounts ),
+				'countfor' => _n( 'account', 'accounts', count( $svc_accounts ), 'vulnhub' ),
+				'meta'     => array( array( 'k' => __( 'Resources', 'vulnhub' ), 'v' => (string) $svc_total ) ),
+				'children' => $svc_accounts,
+			);
+		}
+
+		return array(
+			'generated_at' => vh_now(),
+			'stats'        => array(
+				'accounts'  => count( array_unique( array_merge( array_keys( $by_account ), array_map( static fn( string $k ): string => explode( '|', $k )[0], array_keys( $servers ) ) ) ) ),
+				'vpcs'      => count( $vpc_names ),
+				'instances' => $counts['instances'],
+				'public'    => $counts['public'],
+			),
+			'root'         => array(
+				'id'       => 'internet',
+				'kind'     => 'internet',
+				'label'    => __( 'Internet', 'vulnhub' ),
+				'help'     => __( 'Every way anything in the estate meets the internet, read from the route tables rather than from a resource name. Open a branch to follow it.', 'vulnhub' ),
+				'count'    => count( $branches ),
+				'countfor' => _n( 'path', 'paths', count( $branches ), 'vulnhub' ),
+				'children' => $branches,
+			),
+		);
+	}
+
+	/**
+	 * A tier node, with its leaf list capped and the cap declared.
+	 *
+	 * A truncated list that does not say it is truncated is the one thing a
+	 * map of an estate must not do, so the node carries both the real total
+	 * and how many of them are below it.
+	 *
+	 * @param array<int,array<string,mixed>> $rows Leaf nodes.
+	 * @return array<string,mixed>
+	 */
+	private static function tier_node( string $id, string $label, array $rows ): array {
+		$total = count( $rows );
+		$shown = array_slice( $rows, 0, self::TIER_CAP );
+
+		return array(
+			'id'       => 'tier:' . $id . ':' . wp_generate_uuid4(),
+			'kind'     => 'tier',
+			'label'    => $label,
+			'count'    => $total,
+			'countfor' => _n( 'resource', 'resources', $total, 'vulnhub' ),
+			'capped'   => $total > count( $shown ) ? $total - count( $shown ) : 0,
+			'children' => $shown,
+		);
+	}
+
+	/**
+	 * The estate as a flowchart: bands top to bottom, links between them.
+	 *
+	 * The tree this replaced answered "what is under here" one branch at a
+	 * time. That is the wrong question for a network: nobody wants to know
+	 * what is *inside* the internet, they want to know **which way traffic
+	 * goes and what stands in it**. So the shape is a flowchart -- four bands,
+	 * every node naming the band-above nodes it feeds -- and the renderer only
+	 * has to draw what this returns.
+	 *
+	 * The bands, top to bottom, are destinations, then what stands in the
+	 * path, then the workloads, then the data they reach. Reading upwards from
+	 * a workload gives you its exit; reading down from the internet gives you
+	 * everything that can be reached that way.
+	 *
+	 * @param string $env '' for everything, or VulnHub_AWS_Environment::PROD / NONPROD.
+	 * @return array<string,mixed>
+	 */
+	public static function estate_flow( string $env = '' ): array {
+		global $wpdb;
+
+		$nt = self::nodes_table();
+		$rt = self::routes_table();
+
+		/* ---- names, so a VPC can be placed and labelled ---- */
+		$vpc_name = array();
+		$acct_of  = array();
+
+		foreach ( (array) $wpdb->get_results( "SELECT account_id, resource_id, name FROM {$nt} WHERE node_type = 'vpc'", ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$key              = $r['account_id'] . '|' . $r['resource_id'];
+			$vpc_name[ $key ] = (string) $r['name'];
+			$acct_of[ $key ]  = (string) $r['account_id'];
+		}
+
+		$labels = array();
+		foreach ( (array) $wpdb->get_results( 'SELECT account_id, label FROM ' . $wpdb->prefix . 'vulnhub_aws_accounts', ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			if ( '' !== (string) $r['label'] ) {
+				$labels[ (string) $r['account_id'] ] = (string) $r['label'];
+			}
+		}
+
+		/* ---- servers per VPC ---- */
+		/*
+		 * Counted apart from network devices, because they are different
+		 * things -- but an EC2 instance is a server. The only instance that
+		 * is not is the inline firewall, which is a vendor appliance that
+		 * happens to be shipped as an AMI. See device_class().
+		 */
+		$fw_accounts = self::inspection_stack()['accounts'];
+		$servers     = array();
+		$devices     = array();
+		$public      = array();
+
+		foreach ( (array) $wpdb->get_results( "SELECT account_id, vpc_id, public_ip FROM {$nt} WHERE node_type = 'instance' AND source = 'aws'", ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$key = $r['account_id'] . '|' . $r['vpc_id'];
+
+			if ( 'network' === self::device_class( 'instance', isset( $fw_accounts[ (string) $r['account_id'] ] ) ) ) {
+				$devices[ $key ] = ( $devices[ $key ] ?? 0 ) + 1;
+			} else {
+				$servers[ $key ] = ( $servers[ $key ] ?? 0 ) + 1;
+			}
+
+			if ( '' !== (string) $r['public_ip'] ) {
+				$public[ $key ] = ( $public[ $key ] ?? 0 ) + 1;
+			}
+		}
+
+		/*
+		 * What the internet is allowed to reach, per VPC.
+		 *
+		 * A lane on the diagram is only half an answer without this: "traffic
+		 * leaves through an internet gateway" and "tcp/443 is open to the
+		 * world" are different facts, and the second is the one somebody acts
+		 * on. Security groups carry their VPC, so the rules can be attributed
+		 * without going near an instance.
+		 */
+		$sg_vpc = array();
+		foreach ( (array) $wpdb->get_results( 'SELECT account_id, group_id, vpc_id FROM ' . self::sgs_table(), ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$sg_vpc[ $r['account_id'] . '|' . $r['group_id'] ] = $r['account_id'] . '|' . $r['vpc_id'];
+		}
+
+		$ports = array();
+		foreach ( (array) $wpdb->get_results( "SELECT account_id, group_id, direction, protocol, from_port, to_port FROM " . self::rules_table() . " WHERE source IN ('0.0.0.0/0','::/0')", ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$key = $sg_vpc[ $r['account_id'] . '|' . $r['group_id'] ] ?? '';
+
+			if ( '' === $key ) {
+				continue;
+			}
+
+			$ports[ $key ][ (string) $r['direction'] ][ self::port_label( array(
+				'protocol'  => (string) $r['protocol'],
+				'from_port' => (int) $r['from_port'],
+				'to_port'   => (int) $r['to_port'],
+			) ) ] = true;
+		}
+
+		/*
+		 * The addresses the internet actually arrives on. An instance's own
+		 * public IP, and every interface holding one -- which is how a NAT
+		 * gateway's or a balancer's address is found, since neither is an
+		 * instance.
+		 */
+		/*
+		 * The asset record behind each instance: its hostname and what is open
+		 * on it. This is what turns a public address from a fact into a thing
+		 * somebody can go and fix.
+		 */
+		$posture = array();
+		foreach ( (array) $wpdb->get_results( 'SELECT id, aws_instance_id, hostname, open_critical, open_high FROM ' . $wpdb->prefix . "vulnhub_assets WHERE aws_instance_id <> ''", ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$posture[ (string) $r['aws_instance_id'] ] = $r;
+		}
+
+		/*
+		 * Every instance by its id, so an interface can name the server it is
+		 * plugged into rather than calling itself "interface".
+		 */
+		$inst_by_id = array();
+		foreach ( (array) $wpdb->get_results( "SELECT resource_id, name, private_ip, account_id FROM {$nt} WHERE node_type = 'instance' AND source = 'aws'", ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$inst_by_id[ (string) $r['resource_id'] ] = $r;
+		}
+
+		/*
+		 * A public address is only useful if you can tell whose it is.
+		 *
+		 * "interface" is not an answer to "which server do I go and look at",
+		 * and it was all this list said. AWS writes the owner into the
+		 * interface's own description for the services that have no instance
+		 * -- `Interface for NAT Gateway nat-…`, `ELB net/name/hash` -- and
+		 * hands back the instance id for the ones that do, so each address can
+		 * be resolved to a named thing, and an instance can be followed all
+		 * the way to its asset record, its hostname and its open findings.
+		 */
+		$entries = array();
+		foreach ( (array) $wpdb->get_results( "SELECT vpc_id, account_id, node_type, resource_id, name, public_ip, detail FROM {$nt} WHERE public_ip <> '' AND node_type IN ('instance','eni')", ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$key  = $r['account_id'] . '|' . $r['vpc_id'];
+			$d    = (array) json_decode( (string) $r['detail'], true );
+			$desc = (string) ( $d['desc'] ?? '' );
+			$iid  = '';
+			$what = '';
+			$owner = '';
+
+			$class = 'server';
+
+			if ( 'instance' === (string) $r['node_type'] ) {
+				$iid   = (string) $r['resource_id'];
+				$class = self::device_class( 'instance', isset( $fw_accounts[ (string) $r['account_id'] ] ) );
+				$what  = self::device_label( $class );
+				$owner = (string) $r['name'] ?: $iid;
+			} else {
+				$iid = (string) ( $d['instance'] ?? '' );
+
+				if ( '' !== $iid ) {
+					$class = self::device_class( 'instance', isset( $fw_accounts[ (string) ( $inst_by_id[ $iid ]['account_id'] ?? $r['account_id'] ) ] ) );
+					$what  = self::device_label( $class );
+					$owner = (string) ( $inst_by_id[ $iid ]['name'] ?? $iid );
+				} elseif ( preg_match( '/NAT Gateway (nat-[0-9a-f]+)/i', $desc, $m ) ) {
+					$class = 'network';
+					$what  = __( 'NAT gateway', 'vulnhub' );
+					$owner = $m[1];
+				} elseif ( preg_match( '#ELB (?:app|net)/([^/]+)/#i', $desc, $m ) ) {
+					$class = 'network';
+					$what  = __( 'load balancer', 'vulnhub' );
+					$owner = $m[1];
+				} elseif ( preg_match( '/VPC Endpoint Interface (vpce-[0-9a-f]+)/i', $desc, $m ) ) {
+					$class = 'network';
+					$what  = __( 'VPC endpoint', 'vulnhub' );
+					$owner = $m[1];
+				} elseif ( preg_match( '/Created By Amazon Workspaces/i', $desc ) ) {
+					$class = 'desktop';
+					$what  = __( 'WorkSpaces desktop', 'vulnhub' );
+					$owner = __( 'managed by the WorkSpaces service', 'vulnhub' );
+				} else {
+					/*
+					 * An interface with nothing attached and no description is
+					 * still a port, not a device. It is labelled as one so the
+					 * list never implies a machine that is not there.
+					 */
+					$class = 'network';
+					$what  = __( 'unattached interface', 'vulnhub' );
+					$owner = '' !== $desc ? $desc : __( 'no owner reported', 'vulnhub' );
+				}
+			}
+
+			$entry = array(
+				'ip'    => (string) $r['public_ip'],
+				'what'  => $what,
+				'owner' => $owner,
+				'class' => $class,
+			);
+
+			// A server can be followed: hostname, open findings, and the link
+			// to its asset record, which is where the work actually happens.
+			if ( '' !== $iid && isset( $posture[ $iid ] ) ) {
+				$entry['host']  = (string) $posture[ $iid ]['hostname'];
+				$entry['asset'] = (int) $posture[ $iid ]['id'];
+				$entry['sev']   = array(
+					'c' => (int) $posture[ $iid ]['open_critical'],
+					'h' => (int) $posture[ $iid ]['open_high'],
+				);
+			}
+
+			$entries[ $key ][] = $entry;
+		}
+
+		/* ---- which path each VPC takes ---- */
+		$lanes = array();
+
+		foreach ( (array) $wpdb->get_results( "SELECT account_id, vpc_id, target_type, target_id FROM {$rt} WHERE dest_cidr IN ('0.0.0.0/0','::/0')", ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$lane = self::path_for_route( (string) $r['target_type'], (string) $r['target_id'] );
+
+			if ( '' === $lane || '' === (string) $r['vpc_id'] ) {
+				continue;
+			}
+
+			$lanes[ $lane ][ $r['account_id'] . '|' . $r['vpc_id'] ] = true;
+		}
+
+		/* ---- the appliances that stand in those paths ---- */
+		$inspection = self::inspection_stack();
+		$gwlbs      = $inspection['gwlbs'];
+		$firewalls  = $inspection['firewalls'];
+
+		/* ---- build the bands ---- */
+		$in_env = static function ( string $key ) use ( $env, $vpc_name, $labels, $acct_of ): bool {
+			if ( '' === $env ) {
+				return true;
+			}
+
+			$acct = $acct_of[ $key ] ?? '';
+
+			return $env === VulnHub_AWS_Environment::classify(
+				(string) ( $vpc_name[ $key ] ?? '' ),
+				(string) ( $labels[ $acct ] ?? '' )
+			);
+		};
+
+		$lane_def = array(
+			'inspected' => array(
+				'label' => __( 'Inspected — gateway load balancer', 'vulnhub' ),
+				'kind'  => 'firewall',
+				'up'    => 'dest-internet',
+				'note'  => __( 'The VPC sends everything internet-bound into a gateway load-balancer endpoint, which is how an inline firewall is put in the path. Inbound and outbound both pass through it.', 'vulnhub' ),
+			),
+			'transit'   => array(
+				'label' => __( 'Transit gateway — to on-premises', 'vulnhub' ),
+				'kind'  => 'tgw',
+				'up'    => 'dest-onprem',
+				'note'  => __( 'The default route leaves through the shared transit gateway, which is how these workloads reach the corporate network rather than the internet. The hub is owned by another account, and its outbound security appliances stand in that path.', 'vulnhub' ),
+			),
+			'appliance' => array(
+				'label' => __( 'Inline appliance', 'vulnhub' ),
+				'kind'  => 'firewall',
+				'up'    => 'dest-internet',
+				'note'  => __( 'The default route points at a network interface, so a virtual appliance inside the VPC is in the path.', 'vulnhub' ),
+			),
+			'direct'    => array(
+				'label' => __( 'Internet gateway — nothing in between', 'vulnhub' ),
+				'kind'  => 'igw',
+				'up'    => 'dest-internet',
+				'note'  => __( 'Straight out of an internet gateway. Anything here holding a public address is reachable from the internet with no inspection in the way.', 'vulnhub' ),
+			),
+			'egress'    => array(
+				'label' => __( 'NAT gateway — outbound only', 'vulnhub' ),
+				'kind'  => 'nat',
+				'up'    => 'dest-internet',
+				'note'  => __( 'Outbound connections only. Nothing on the internet can open one inwards.', 'vulnhub' ),
+			),
+		);
+
+		$has_fw   = (bool) ( $gwlbs || $firewalls );
+		$mid      = array();
+		$work     = array();
+		$links    = array();
+		$totals   = array( 'vpcs' => 0, 'servers' => 0, 'devices' => 0, 'public' => 0 );
+		$used_dst = array();
+
+		foreach ( $lane_def as $lane => $def ) {
+			$keys = array_keys( $lanes[ $lane ] ?? array() );
+			$keys = array_values( array_filter( $keys, $in_env ) );
+
+			if ( ! $keys ) {
+				continue;
+			}
+
+			$srv = 0;
+			$dev = 0;
+			$pub = 0;
+			$acc = array();
+			$vp  = array();
+
+			foreach ( $keys as $k ) {
+				$srv += $servers[ $k ] ?? 0;
+				$dev += $devices[ $k ] ?? 0;
+				$pub += $public[ $k ] ?? 0;
+				$acc[ $acct_of[ $k ] ?? '' ] = true;
+				$vp[] = array(
+					'label'   => (string) ( $vpc_name[ $k ] ?: explode( '|', $k )[1] ),
+					'sub'     => explode( '|', $k )[1],
+					'account' => (string) ( $labels[ $acct_of[ $k ] ?? '' ] ?? ( $acct_of[ $k ] ?? '' ) ),
+					'servers' => (int) ( $servers[ $k ] ?? 0 ),
+					'devices' => (int) ( $devices[ $k ] ?? 0 ),
+					'public'  => (int) ( $public[ $k ] ?? 0 ),
+				);
+			}
+
+			usort( $vp, static fn( array $a, array $b ): int => $b['servers'] <=> $a['servers'] ?: strcasecmp( $a['label'], $b['label'] ) );
+
+			$lane_in      = array();
+			$lane_out     = array();
+			$lane_entries = array();
+
+			foreach ( $keys as $k ) {
+				foreach ( array_keys( $ports[ $k ]['in'] ?? array() ) as $pl ) {
+					$lane_in[ $pl ] = true;
+				}
+				foreach ( array_keys( $ports[ $k ]['out'] ?? array() ) as $pl ) {
+					$lane_out[ $pl ] = true;
+				}
+				foreach ( $entries[ $k ] ?? array() as $e ) {
+					$lane_entries[ $e['ip'] ] = $e;
+				}
+			}
+
+			$lane_in  = array_keys( $lane_in );
+			$lane_out = array_keys( $lane_out );
+			sort( $lane_in );
+			sort( $lane_out );
+			$lane_ports   = $lane_in;
+			$lane_entries = array_values( $lane_entries );
+
+			usort( $lane_entries, static fn( array $a, array $b ): int => strcmp( $a['ip'], $b['ip'] ) );
+
+			$totals['vpcs']   += count( $keys );
+			$totals['servers'] = $totals['servers'] + $srv;
+			$totals['devices'] = ( $totals['devices'] ?? 0 ) + $dev;
+			$totals['public']  = $totals['public'] + $pub;
+
+			$mid_id = 'path-' . $lane;
+			$meta   = array();
+
+			$mid[] = array(
+				'id'      => $mid_id,
+				'kind'    => (string) $def['kind'],
+				'label'   => (string) $def['label'],
+				'note'    => (string) $def['note'],
+				'count'   => count( $keys ),
+				'unit'    => _n( 'VPC', 'VPCs', count( $keys ), 'vulnhub' ),
+				'accounts'=> count( $acc ),
+				'meta'    => $meta,
+			);
+
+			$work[] = array(
+				'id'      => 'work-' . $lane,
+				'kind'    => 'vpc',
+				'label'   => sprintf(
+					/* translators: 1: VPC count, 2: account count. */
+					_n( '%1$d VPC in %2$d account', '%1$d VPCs in %2$d accounts', count( $keys ), 'vulnhub' ),
+					count( $keys ),
+					count( $acc )
+				),
+				'servers' => $srv,
+				'devices' => $dev,
+				'public'  => $pub,
+				'vpcs'    => $vp,
+				'ports'   => $lane_in,
+				'ports_out' => $lane_out,
+				'entries' => array_slice( $lane_entries, 0, 60 ),
+				'entries_total' => count( $lane_entries ),
+			);
+
+			/*
+			 * No label between a workload and its lane: the ports are already
+			 * chips on the card directly below the line, and printing them
+			 * twice within an inch of each other is noise, not emphasis.
+			 */
+			$links[] = array( 'from' => 'work-' . $lane, 'to' => $mid_id, 'label' => '' );
+
+			/*
+			 * Upwards, the label carries both directions, because "what can
+			 * reach in" and "what can get out" are different questions and a
+			 * firewall is bought to answer the second as much as the first.
+			 */
+			$both = static function ( array $in, array $out ): string {
+				$fmt = static function ( array $set ): string {
+					if ( ! $set ) {
+						return __( 'none', 'vulnhub' );
+					}
+					if ( in_array( 'all', $set, true ) ) {
+						return __( 'ALL', 'vulnhub' );
+					}
+
+					return implode( ' ', array_slice( $set, 0, 3 ) ) . ( count( $set ) > 3 ? sprintf( ' +%d', count( $set ) - 3 ) : '' );
+				};
+
+				return sprintf(
+					/* translators: 1: inbound ports, 2: outbound ports. */
+					__( 'in %1$s · out %2$s', 'vulnhub' ),
+					$fmt( $in ),
+					$fmt( $out )
+				);
+			};
+
+			$ports_label = $both( $lane_in, $lane_out );
+
+			/*
+			 * A lane that is inspected hands off to the firewall, and the
+			 * firewall is what reaches the destination. Drawing the lane
+			 * straight to the internet would put the appliance beside the
+			 * path it actually stands in.
+			 */
+			if ( $has_fw && in_array( $lane, array( 'inspected', 'transit' ), true ) ) {
+				$links[] = array( 'from' => $mid_id, 'to' => 'fw-stack', 'label' => $ports_label );
+
+				/*
+				 * The hub also carries the corporate network, which does not
+				 * go out to the internet at all. Deliberately a different
+				 * label from the one above it: the same text twice on two
+				 * lines out of one card reads as a rendering fault, and the
+				 * ports are already stated on the edge into the firewall.
+				 */
+				if ( 'transit' === $lane ) {
+					$links[] = array( 'from' => $mid_id, 'to' => 'dest-onprem', 'label' => __( 'to the corporate network', 'vulnhub' ) );
+				}
+			} else {
+				$out_label = match ( $lane ) {
+					'egress' => sprintf(
+						/* translators: %s: outbound port summary. */
+						__( 'outbound only · %s', 'vulnhub' ),
+						$lane_out ? ( in_array( 'all', $lane_out, true ) ? __( 'ALL', 'vulnhub' ) : implode( ' ', array_slice( $lane_out, 0, 3 ) ) ) : __( 'none', 'vulnhub' )
+					),
+					'direct' => $lane_entries
+						? sprintf(
+							/* translators: 1: number of public addresses, 2: port summary. */
+							_n( '%1$d public address · %2$s', '%1$d public addresses · %2$s', count( $lane_entries ), 'vulnhub' ),
+							count( $lane_entries ),
+							$ports_label
+						)
+						: $ports_label,
+					default  => $ports_label,
+				};
+
+				$links[] = array( 'from' => $mid_id, 'to' => (string) $def['up'], 'label' => $out_label );
+			}
+
+			$used_dst[ 'transit' === $lane ? 'dest-onprem' : 'dest-internet' ] = true;
+		}
+
+		/*
+		 * The firewall is a band of its own, above the lanes that feed it.
+		 *
+		 * It was a lane beside them, which put the appliance next to the path
+		 * it actually stands in -- and left the transit gateway looking like a
+		 * peer of the internet gateway when it is one of the things sitting
+		 * behind the firewall. Everything inspected now hands upwards to this,
+		 * and only this reaches the internet.
+		 */
+		$fw = array();
+
+		if ( $has_fw ) {
+			$fw_meta = array();
+
+			if ( $gwlbs ) {
+				$fw_meta[] = array( 'k' => __( 'Load balancer', 'vulnhub' ), 'v' => implode( ', ', array_column( $gwlbs, 'name' ) ) );
+			}
+			if ( $firewalls ) {
+				$fw_meta[] = array(
+					'k' => _n( 'Appliance', 'Appliances', count( $firewalls ), 'vulnhub' ),
+					'v' => implode( ', ', array_map( static fn( array $a ): string => vh_trim( (string) $a['name'], 34 ), $firewalls ) ),
+				);
+			}
+			if ( $stack ) {
+				$fw_meta[] = array( 'k' => __( 'Runs in', 'vulnhub' ), 'v' => sprintf( /* translators: %s: account id. */ __( 'account %s', 'vulnhub' ), implode( ', ', array_keys( $stack ) ) ) );
+			}
+
+			$fw[] = array(
+				'id'    => 'fw-stack',
+				'kind'  => 'firewall',
+				'label' => __( 'Check Point — inline firewall', 'vulnhub' ),
+				'note'  => __( 'Everything on the inspected lanes passes through here, inbound and outbound. The appliances and the load balancer in front of them run in the network account; which appliance serves which attachment is decided by transit-gateway route tables that live in that account, so that mapping is not captured here.', 'vulnhub' ),
+				'meta'  => $fw_meta,
+			);
+
+			$links[]                        = array( 'from' => 'fw-stack', 'to' => 'dest-internet', 'label' => __( 'inspected both ways', 'vulnhub' ) );
+			$used_dst['dest-internet']      = true;
+		}
+
+		$dest = array();
+
+		if ( isset( $used_dst['dest-internet'] ) ) {
+			$dest[] = array( 'id' => 'dest-internet', 'kind' => 'internet', 'label' => __( 'Internet', 'vulnhub' ) );
+		}
+		if ( isset( $used_dst['dest-onprem'] ) ) {
+			$dest[] = array( 'id' => 'dest-onprem', 'kind' => 'onprem', 'label' => __( 'On-premises', 'vulnhub' ) );
+		}
+
+		return array(
+			'env'    => $env,
+			'label'  => VulnHub_AWS_Environment::label( $env ),
+			'totals' => $totals,
+			'bands'  => array(
+				array( 'id' => 'dest', 'label' => __( 'Where it goes', 'vulnhub' ), 'nodes' => $dest ),
+				array( 'id' => 'fw', 'label' => __( 'Inline firewall', 'vulnhub' ), 'nodes' => $fw ),
+				array( 'id' => 'mid', 'label' => __( 'How it leaves the VPC', 'vulnhub' ), 'nodes' => $mid ),
+				array( 'id' => 'work', 'label' => __( 'Workloads', 'vulnhub' ), 'nodes' => $work ),
+			),
+			'links'  => $links,
+		);
+	}
+
+	/** Leaves listed under one tier before the rest are summarised as a count. */
+	private const TIER_CAP = 250;
 
 	/** @return array{accounts:int,instances:int,sgs:int,rules:int} */
 	public static function summary(): array {
