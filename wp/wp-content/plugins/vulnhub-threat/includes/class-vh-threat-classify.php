@@ -572,6 +572,15 @@ final class VulnHub_Threat_Classify {
 	 * @param array<string,mixed> $row Asset row with ipv4 / ipv4s.
 	 */
 	private static function has_public_address( array $row ): bool {
+		return '' !== self::public_address( $row );
+	}
+
+	/**
+	 * The first public IPv4 address an asset answers on, or ''.
+	 *
+	 * @param array<string,mixed> $row Asset with ipv4 / ipv4s.
+	 */
+	public static function public_address( array $row ): string {
 		foreach ( array( (string) ( $row['ipv4'] ?? '' ), (string) ( $row['ipv4s'] ?? '' ) ) as $blob ) {
 			if ( '' === trim( $blob ) ) {
 				continue;
@@ -600,12 +609,12 @@ final class VulnHub_Threat_Classify {
 				}
 
 				if ( filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE ) ) {
-					return true;
+					return $ip;
 				}
 			}
 		}
 
-		return false;
+		return '';
 	}
 
 	/**

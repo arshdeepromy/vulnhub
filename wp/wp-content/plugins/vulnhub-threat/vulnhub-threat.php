@@ -27,6 +27,8 @@ require_once VULNHUB_THREAT_DIR . 'includes/class-vh-threat-install.php';
 require_once VULNHUB_THREAT_DIR . 'includes/class-vh-threat-feeds.php';
 require_once VULNHUB_THREAT_DIR . 'includes/class-vh-threat-ports.php';
 require_once VULNHUB_THREAT_DIR . 'includes/class-vh-threat-classify.php';
+require_once VULNHUB_THREAT_DIR . 'includes/class-vh-threat-services.php';
+require_once VULNHUB_THREAT_DIR . 'includes/class-vh-threat-exposure.php';
 require_once VULNHUB_THREAT_DIR . 'includes/class-vh-threat-repo.php';
 require_once VULNHUB_THREAT_DIR . 'includes/class-vh-threat-widget.php';
 require_once VULNHUB_THREAT_DIR . 'includes/class-vh-threat-admin.php';
@@ -67,6 +69,7 @@ add_action(
 		VulnHub_Threat_Feeds::init();
 		VulnHub_Threat_Repo::init();
 		VulnHub_Threat_Widget::init();
+		add_action( 'admin_post_vulnhub_threat_exposure_csv', array( 'VulnHub_Threat_Exposure', 'csv' ) );
 		VulnHub_Threat_Admin::init();
 	},
 	20

@@ -98,6 +98,49 @@ final class VulnHub_Threat_Repo {
 		return array_map( 'intval', (array) $wpdb->get_col( $sql ) ); // phpcs:ignore
 	}
 
+	/**
+	 * The two sets the edge lane is cut by: finding ids on an open door, and
+	 * the machines that only look published (judged reachable, but with no
+	 * way in the cloud map or a public address can show).
+	 *
+	 * @return array{0:int[],1:int[]}
+	 */
+	public static function door_parts(): array {
+		if ( ! class_exists( 'VulnHub_Threat_Exposure' ) ) {
+			return array( array(), self::internet_asset_ids() );
+		}
+
+		$x = VulnHub_Threat_Exposure::data();
+
+		return array(
+			VulnHub_Threat_Exposure::finding_ids( 'all' ),
+			array_values( array_diff( self::internet_asset_ids(), (array) $x['door_assets'] ) ),
+		);
+	}
+
+	/** @param int[] $ids Finding ids. */
+	private static function in_ids( array $ids ): string {
+		return $ids ? 'f.id IN (' . implode( ',', $ids ) . ')' : '1=0';
+	}
+
+	/** @param int[] $ids Finding ids. */
+	private static function not_in_ids( array $ids ): string {
+		return $ids ? 'f.id NOT IN (' . implode( ',', $ids ) . ')' : '1=1';
+	}
+
+	/**
+	 * Edge-route findings that are neither on an open door nor on a machine
+	 * that looks published: the part the inside lane borrows.
+	 *
+	 * @param int[] $edge_ids     Definition ids.
+	 * @param int[] $door         Finding ids on an open door.
+	 * @param int[] $maybe_assets Machines that look published.
+	 */
+	private static function borrowed_sql( array $edge_ids, array $door, array $maybe_assets ): string {
+		return 'f.vuln_id IN (' . implode( ',', $edge_ids ) . ') AND ' . self::not_in_ids( $door )
+			. ( $maybe_assets ? ' AND f.asset_id NOT IN (' . implode( ',', $maybe_assets ) . ')' : '' );
+	}
+
 	/** Assets the exposure rule says the internet can reach. @return int[] */
 	public static function internet_asset_ids(): array {
 		global $wpdb;
@@ -126,11 +169,25 @@ final class VulnHub_Threat_Repo {
 
 		$open = "f.state IN ('open','reopened') AND f.exception_id = 0";
 
-		// The edge lane, split by whether the machine is actually reachable.
-		// The unreachable half is not discarded -- it moves to the inside
-		// lane, because that is where it can be used.
-		$edge_open   = self::count_findings( $edge_ids, $facing, false );
-		$edge_hidden = self::count_findings( $edge_ids, $facing, true );
+		/*
+		 * The edge lane is findings on a door that is actually open: the
+		 * internet can open the port, and the bug is in what answers on it
+		 * (VulnHub_Threat_Exposure). It used to be every edge-route finding
+		 * on any machine judged reachable, whatever port the bug was on -- a
+		 * kernel or perl bug on a server with 443 open counted as "straight
+		 * from the internet", and the lane read 296 against a true 12.
+		 *
+		 * Machines that only *look* published -- a web or mail service is
+		 * listening, but nothing here can read the firewall in front -- are
+		 * their own number, not folded into either side. Everything else
+		 * moves to the inside lane, where it can be used.
+		 */
+		[ $door, $maybe_assets ] = self::door_parts();
+
+		$edge_open   = self::count_findings( $edge_ids, null, false, array( self::in_ids( $door ) ) );
+		$edge_maybe  = self::count_findings( $edge_ids, $maybe_assets, false, array( self::not_in_ids( $door ) ) );
+		$edge_rest   = self::count_findings( $edge_ids, null, false, array( self::not_in_ids( $door ) ) );
+		$edge_hidden = array( 'findings' => $edge_rest['findings'] - $edge_maybe['findings'] );
 		$user        = self::count_findings( $user_ids, null, false );
 		$inside      = self::count_findings( $inside_ids, null, false );
 
@@ -142,7 +199,10 @@ final class VulnHub_Threat_Repo {
 		);
 
 		return array(
-			'edge'      => $edge_open + array( 'vulns' => count( $edge_ids ) ),
+			'edge'      => $edge_open + array(
+				'vulns' => count( $edge_ids ),
+				'maybe' => $edge_maybe,
+			),
 			'user'      => $user + array(
 				'vulns'    => count( $user_ids ),
 				'delivery' => self::delivery_split( $user_ids ),
@@ -156,7 +216,7 @@ final class VulnHub_Threat_Repo {
 				 * the larger half and loses every machine that appears solely
 				 * in the smaller one.
 				 */
-				'assets'   => self::union_assets( $inside_ids, $edge_ids, $facing ),
+				'assets'   => self::union_assets( $inside_ids, $edge_ids, $door, $maybe_assets ),
 				'vulns'    => count( array_unique( array_merge( $inside_ids, $edge_ids ) ) ),
 				'borrowed' => $edge_hidden['findings'],
 			),
@@ -184,7 +244,7 @@ final class VulnHub_Threat_Repo {
 	 * @param int[] $edge_ids   Edge-route definitions.
 	 * @param int[] $facing     Assets the internet can reach.
 	 */
-	private static function union_assets( array $inside_ids, array $edge_ids, array $facing ): int {
+	private static function union_assets( array $inside_ids, array $edge_ids, array $door, array $maybe_assets ): int {
 		global $wpdb;
 
 		$f    = vh_table( 'findings' );
@@ -196,14 +256,7 @@ final class VulnHub_Threat_Repo {
 		}
 
 		if ( $edge_ids ) {
-			$hidden = 'f.vuln_id IN (' . implode( ',', $edge_ids ) . ')';
-
-			// The unreachable half only. With nothing facing, that is all of it.
-			if ( $facing ) {
-				$hidden .= ' AND f.asset_id NOT IN (' . implode( ',', $facing ) . ')';
-			}
-
-			$or[] = '(' . $hidden . ')';
+			$or[] = '(' . self::borrowed_sql( $edge_ids, $door, $maybe_assets ) . ')';
 		}
 
 		if ( ! $or ) {
@@ -266,7 +319,7 @@ final class VulnHub_Threat_Repo {
 	 * @param bool       $invert    Count the assets NOT in the list instead.
 	 * @return array{findings:int,assets:int}
 	 */
-	private static function count_findings( array $vuln_ids, ?array $asset_ids, bool $invert ): array {
+	private static function count_findings( array $vuln_ids, ?array $asset_ids, bool $invert, array $extra = array() ): array {
 		global $wpdb;
 
 		if ( ! $vuln_ids ) {
@@ -274,7 +327,7 @@ final class VulnHub_Threat_Repo {
 		}
 
 		$f     = vh_table( 'findings' );
-		$where = array( "f.state IN ('open','reopened')", 'f.exception_id = 0', 'f.vuln_id IN (' . implode( ',', $vuln_ids ) . ')' );
+		$where = array_merge( array( "f.state IN ('open','reopened')", 'f.exception_id = 0', 'f.vuln_id IN (' . implode( ',', $vuln_ids ) . ')' ), $extra );
 
 		/*
 		 * null and an empty array are deliberately different. null is "do not
@@ -362,6 +415,17 @@ final class VulnHub_Threat_Repo {
 		$route    = sanitize_key( (string) ( $args['route'] ?? '' ) );
 		$delivery = sanitize_key( (string) ( $args['delivery'] ?? '' ) );
 		$poc      = '' !== (string) ( $args['poc'] ?? '' ) && (bool) $args['poc'];
+		$expo     = sanitize_key( (string) ( $args['expo'] ?? '' ) );
+
+		/*
+		 * Open to the internet and vulnerable on that port: exactly the
+		 * findings the panel counted, by id, so the list and the number cannot
+		 * disagree. Stacks with everything else.
+		 */
+		if ( in_array( $expo, array_merge( VulnHub_Threat_Exposure::TIERS, array( 'all', 'latent' ) ), true ) ) {
+			$ids            = VulnHub_Threat_Exposure::finding_ids( $expo );
+			$ext['where'][] = $ids ? 'f.id IN (' . implode( ',', $ids ) . ')' : '1=0';
+		}
 
 		if ( '' === $route && '' === $delivery && ! $poc ) {
 			return $ext;
@@ -389,6 +453,23 @@ final class VulnHub_Threat_Repo {
 			return $ext;
 		}
 
+		/*
+		 * The machines that only look published: edge-route findings there,
+		 * off any open door. Its own drill-down, because it is its own
+		 * question -- "is the firewall in front publishing this?" -- and
+		 * folding it into either lane would answer that without asking.
+		 */
+		if ( 'maybe' === $route ) {
+			$edge                    = self::vuln_ids( 'edge', $only_poc );
+			[ $door, $maybe_assets ] = self::door_parts();
+
+			$ext['where'][] = $edge && $maybe_assets
+				? 'f.vuln_id IN (' . implode( ',', $edge ) . ') AND f.asset_id IN (' . implode( ',', $maybe_assets ) . ') AND ' . self::not_in_ids( $door )
+				: '1=0';
+
+			return $ext;
+		}
+
 		if ( 'inside' === $route ) {
 			/*
 			 * The inside lane is two populations: things that only work from
@@ -398,15 +479,15 @@ final class VulnHub_Threat_Repo {
 			 */
 			$inside = self::vuln_ids( 'inside', $only_poc );
 			$edge   = self::vuln_ids( 'edge', $only_poc );
-			$facing = self::internet_asset_ids();
 			$parts  = array();
+
+			[ $door, $maybe_assets ] = self::door_parts();
 
 			if ( $inside ) {
 				$parts[] = 'f.vuln_id IN (' . implode( ',', $inside ) . ')';
 			}
 			if ( $edge ) {
-				$parts[] = '( f.vuln_id IN (' . implode( ',', $edge ) . ')'
-					. ( $facing ? ' AND f.asset_id NOT IN (' . implode( ',', $facing ) . ')' : '' ) . ' )';
+				$parts[] = '( ' . self::borrowed_sql( $edge, $door, $maybe_assets ) . ' )';
 			}
 
 			$ext['where'][] = $parts ? '( ' . implode( ' OR ', $parts ) . ' )' : '1=0';
@@ -424,12 +505,36 @@ final class VulnHub_Threat_Repo {
 
 		$ext['where'][] = 'f.vuln_id IN (' . implode( ',', $ids ) . ')';
 
+		// Same cuts as lanes(), so a lane and the list it opens are one set.
 		if ( 'edge' === $route ) {
-			$facing = self::internet_asset_ids();
-			$ext['where'][] = $facing ? 'f.asset_id IN (' . implode( ',', $facing ) . ')' : '1=0';
+			$ext['where'][] = self::in_ids( self::door_parts()[0] );
 		}
 
 		return $ext;
+	}
+
+	/**
+	 * Portal link to the findings behind one exposure tier, optionally on one
+	 * machine.
+	 *
+	 * @param string $which A tier, 'all' or 'latent'.
+	 */
+	public static function expo_url( string $which, int $asset = 0 ): string {
+		if ( ! class_exists( 'VulnHub_Dash_Portal' ) ) {
+			return '';
+		}
+
+		return VulnHub_Dash_Portal::portal_url(
+			'vulnerabilities',
+			array_filter(
+				array(
+					'state'    => 'open_any',
+					'excepted' => 'exclude',
+					'expo'     => $which,
+					'asset'    => $asset ?: null,
+				)
+			)
+		);
 	}
 
 	/** Portal link to the findings behind one lane. */

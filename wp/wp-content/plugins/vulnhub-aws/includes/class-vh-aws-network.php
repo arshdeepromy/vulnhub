@@ -211,6 +211,23 @@ final class VulnHub_AWS_Network {
 							$now
 						)
 					);
+
+					/*
+					 * What the machine is: enough to put an OS, a size and an
+					 * image on the asset record, which is otherwise only an
+					 * instance id when the posture inventory created it.
+					 */
+					foreach ( array(
+						'platform'      => (string) ( $inst->platformDetails ?? $inst->platform ?? '' ), // phpcs:ignore
+						'instance_type' => (string) ( $inst->instanceType ?? '' ), // phpcs:ignore
+						'image_id'      => (string) ( $inst->imageId ?? '' ), // phpcs:ignore
+						'launched'      => (string) ( $inst->launchTime ?? '' ), // phpcs:ignore
+					) as $k => $v ) {
+						if ( '' !== $v ) {
+							self::set_detail( $account, $region, 'instance', $id, $k, $v );
+						}
+					}
+
 					++$n;
 				}
 			}
@@ -239,11 +256,15 @@ final class VulnHub_AWS_Network {
 
 				$wpdb->query( // phpcs:ignore
 					$wpdb->prepare(
-						"INSERT INTO {$t} (account_id, region, node_type, resource_id, name, vpc_id, last_seen)
-						 VALUES (%s,%s,%s,%s,%s,%s,%s)
-						 ON DUPLICATE KEY UPDATE region=VALUES(region), node_type=VALUES(node_type), name=VALUES(name), vpc_id=VALUES(vpc_id), last_seen=VALUES(last_seen)",
+						"INSERT INTO {$t} (account_id, region, node_type, resource_id, name, vpc_id, detail, last_seen)
+						 VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+						 ON DUPLICATE KEY UPDATE region=VALUES(region), node_type=VALUES(node_type), name=VALUES(name), vpc_id=VALUES(vpc_id), detail=VALUES(detail), last_seen=VALUES(last_seen)",
 						$account, $region, $type, $id, self::tag_name( $item ),
 						'subnet' === $type ? (string) ( $item->vpcId ?? '' ) : $id, // phpcs:ignore
+						// The address range: what lets an address seen by a
+						// scanner be placed in a subnet, and so in whatever
+						// the subnet is for (an AppStream fleet, say).
+						(string) wp_json_encode( array( 'cidr' => (string) ( $item->cidrBlock ?? '' ) ) ), // phpcs:ignore
 						$now
 					)
 				);
@@ -504,14 +525,27 @@ final class VulnHub_AWS_Network {
 				$subnets = array();
 				foreach ( $lb->AvailabilityZones->member ?? array() as $z ) { $subnets[] = (string) ( $z->SubnetId ?? '' ); } // phpcs:ignore
 
-				$detail = array(
+				$forwards = array();
+				$detail   = array(
 					'arn'       => $arn,
 					'dns'       => (string) ( $lb->DNSName ?? '' ),
 					'scheme'    => (string) ( $lb->Scheme ?? '' ),
 					'lbtype'    => (string) ( $lb->Type ?? '' ),
 					'subnets'   => array_values( array_filter( $subnets ) ),
-					'listeners' => self::listeners_for( $client, $region, $arn ),
+					'listeners' => self::listeners_for( $client, $region, $arn, $forwards ),
 				);
+
+				/*
+				 * What an internet-facing balancer hands traffic to. Without
+				 * it, a server published only through a load balancer -- the
+				 * usual way to publish one -- has no public address of its
+				 * own and reads as unreachable. Internal balancers are
+				 * skipped: two calls per target group buys nothing there.
+				 */
+				if ( 'internet-facing' === $detail['scheme'] ) {
+					$detail['forwards'] = $forwards;
+					$detail['targets']  = self::targets_for( $client, $region, $arn );
+				}
 
 				$wpdb->query( $wpdb->prepare( "INSERT INTO {$t} (account_id, region, node_type, resource_id, name, vpc_id, subnet_id, state, sg_ids, detail, last_seen) VALUES (%s,%s,'elb',%s,%s,%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE region=VALUES(region), node_type='elb', name=VALUES(name), vpc_id=VALUES(vpc_id), subnet_id=VALUES(subnet_id), state=VALUES(state), sg_ids=VALUES(sg_ids), detail=VALUES(detail), last_seen=VALUES(last_seen)", // phpcs:ignore
 					$account, $region, $rid,
@@ -532,9 +566,16 @@ final class VulnHub_AWS_Network {
 				$nm = (string) ( $lb->LoadBalancerName ?? '' );
 				if ( '' === $nm ) { continue; }
 
-				$ports = array();
+				$ports    = array();
+				$forwards = array();
 				foreach ( $lb->ListenerDescriptions->member ?? array() as $l ) { // phpcs:ignore
-					$ports[] = strtolower( (string) ( $l->Listener->Protocol ?? '' ) ) . '/' . (string) ( $l->Listener->LoadBalancerPort ?? '' );
+					$label      = strtolower( (string) ( $l->Listener->Protocol ?? '' ) ) . '/' . (string) ( $l->Listener->LoadBalancerPort ?? '' );
+					$ports[]    = $label;
+					$forwards[ $label ] = array( 'port:' . (int) ( $l->Listener->InstancePort ?? 0 ) );
+				}
+				$targets = array();
+				foreach ( $lb->Instances->member ?? array() as $i ) { // phpcs:ignore
+					$targets[] = array( 'tg' => '', 'id' => (string) ( $i->InstanceId ?? '' ), 'port' => 0 );
 				}
 				$sgs = array();
 				foreach ( $lb->SecurityGroups->member ?? array() as $g ) { $sgs[] = (string) $g; } // phpcs:ignore
@@ -545,6 +586,13 @@ final class VulnHub_AWS_Network {
 					'lbtype'    => 'classic',
 					'listeners' => array_values( array_unique( array_filter( $ports ) ) ),
 				);
+
+				// A classic balancer lists its instances and each listener's
+				// instance port on the balancer itself: no extra call.
+				if ( 'internet-facing' === $detail['scheme'] ) {
+					$detail['forwards'] = $forwards;
+					$detail['targets']  = array_values( array_filter( $targets, static fn( array $t ): bool => '' !== $t['id'] ) );
+				}
 
 				$wpdb->query( $wpdb->prepare( "INSERT INTO {$t} (account_id, region, node_type, resource_id, name, vpc_id, state, sg_ids, detail, last_seen) VALUES (%s,%s,'elb',%s,%s,%s,'',%s,%s,%s) ON DUPLICATE KEY UPDATE region=VALUES(region), node_type='elb', name=VALUES(name), vpc_id=VALUES(vpc_id), sg_ids=VALUES(sg_ids), detail=VALUES(detail), last_seen=VALUES(last_seen)", // phpcs:ignore
 					$account, $region, 'classic/' . $nm, $nm,
@@ -559,17 +607,78 @@ final class VulnHub_AWS_Network {
 		return $n;
 	}
 
-	/** Listener ports for one v2 balancer. @return string[] */
-	private static function listeners_for( VulnHub_AWS_Client $client, string $region, string $arn ): array {
+	/**
+	 * Listener ports for one v2 balancer.
+	 *
+	 * @param array<string,string[]> $forwards Filled with listener => the
+	 *                                         target groups its default action
+	 *                                         forwards to (ARN tails).
+	 * @return string[]
+	 */
+	private static function listeners_for( VulnHub_AWS_Client $client, string $region, string $arn, array &$forwards = array() ): array {
 		$out = array();
 		$res = $client->query( 'elasticloadbalancing', $region, array( 'Action' => 'DescribeListeners', 'Version' => '2015-12-01', 'LoadBalancerArn' => $arn ) );
 		if ( empty( $res['ok'] ) ) { return $out; }
 
 		foreach ( $res['xml']->DescribeListenersResult->Listeners->member ?? array() as $l ) { // phpcs:ignore
-			$out[] = strtolower( (string) ( $l->Protocol ?? '' ) ) . '/' . (string) ( $l->Port ?? '' );
+			$label = strtolower( (string) ( $l->Protocol ?? '' ) ) . '/' . (string) ( $l->Port ?? '' );
+			$out[] = $label;
+
+			foreach ( $l->DefaultActions->member ?? array() as $a ) { // phpcs:ignore
+				$tgs = array( (string) ( $a->TargetGroupArn ?? '' ) );
+
+				foreach ( $a->ForwardConfig->TargetGroups->member ?? array() as $tg ) { // phpcs:ignore
+					$tgs[] = (string) ( $tg->TargetGroupArn ?? '' );
+				}
+
+				foreach ( array_filter( $tgs ) as $tg ) {
+					$forwards[ $label ][] = self::arn_tail( $tg );
+				}
+			}
 		}
 
 		return array_values( array_unique( array_filter( $out, static fn( $x ) => '/' !== $x ) ) );
+	}
+
+	/**
+	 * The instances behind one v2 balancer, with the port each is sent
+	 * traffic on. IP targets are kept too: an address in the VPC resolves to
+	 * an instance through its interface.
+	 *
+	 * @return array<int,array{tg:string,id:string,port:int}>
+	 */
+	private static function targets_for( VulnHub_AWS_Client $client, string $region, string $arn ): array {
+		$out = array();
+		$res = $client->query( 'elasticloadbalancing', $region, array( 'Action' => 'DescribeTargetGroups', 'Version' => '2015-12-01', 'LoadBalancerArn' => $arn ) );
+		if ( empty( $res['ok'] ) ) { return $out; }
+
+		foreach ( $res['xml']->DescribeTargetGroupsResult->TargetGroups->member ?? array() as $tg ) { // phpcs:ignore
+			$tg_arn = (string) ( $tg->TargetGroupArn ?? '' );
+			if ( '' === $tg_arn ) { continue; }
+
+			$health = $client->query( 'elasticloadbalancing', $region, array( 'Action' => 'DescribeTargetHealth', 'Version' => '2015-12-01', 'TargetGroupArn' => $tg_arn ) );
+			if ( empty( $health['ok'] ) ) { continue; }
+
+			foreach ( $health['xml']->DescribeTargetHealthResult->TargetHealthDescriptions->member ?? array() as $d ) { // phpcs:ignore
+				$id = (string) ( $d->Target->Id ?? '' );
+				if ( '' === $id ) { continue; }
+
+				$out[] = array(
+					'tg'   => self::arn_tail( $tg_arn ),
+					'id'   => $id,
+					'port' => (int) ( $d->Target->Port ?? $tg->Port ?? 0 ),
+				);
+			}
+		}
+
+		return $out;
+	}
+
+	/** The name/hash end of an ARN, which is unique and fits a column. */
+	private static function arn_tail( string $arn ): string {
+		$at = strpos( $arn, ':targetgroup/' );
+
+		return false !== $at ? substr( $arn, $at + 13 ) : substr( $arn, -120 );
 	}
 
 	/** Route tables: where each 0.0.0.0/0 (and other) route points -- IGW, NAT, TGW, peering. */
@@ -669,9 +778,54 @@ final class VulnHub_AWS_Network {
 				$wpdb->query( $wpdb->prepare( "INSERT INTO {$rt} (account_id, region, vpc_id, route_table_id, dest_cidr, target_type, target_id, last_seen) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)", $account, $region, $vpc, $rtid, $dst, $ttype, $tid, $now ) ); // phpcs:ignore
 				++$n;
 			}
+
+			/*
+			 * Which subnets use this table. "The VPC routes to an internet
+			 * gateway" is a property of one subnet's table, not of the VPC:
+			 * a machine with a public address in a private subnet has no
+			 * way in. Recorded on the subnet (and the main table on the
+			 * VPC, for subnets with no association of their own) so the
+			 * exposure check can ask the right table.
+			 */
+			foreach ( $r->associationSet->item ?? array() as $assoc ) { // phpcs:ignore
+				$subnet = (string) ( $assoc->subnetId ?? '' );
+
+				$gateway = (string) ( $assoc->gatewayId ?? '' );
+
+				if ( '' !== $subnet ) {
+					self::set_detail( $account, $region, 'subnet', $subnet, 'route_table', $rtid );
+				} elseif ( str_starts_with( $gateway, 'igw-' ) && '' !== $vpc ) {
+					// An edge association: the table the internet gateway
+					// applies to traffic *arriving*. It is the only way inbound
+					// traffic to a public address passes an inline firewall.
+					self::set_detail( $account, $region, 'vpc', $vpc, 'edge_route_table', $rtid );
+				} elseif ( 'true' === strtolower( (string) ( $assoc->main ?? '' ) ) && '' !== $vpc ) {
+					self::set_detail( $account, $region, 'vpc', $vpc, 'main_route_table', $rtid );
+				}
+			}
 		}
 
 		return $n;
+	}
+
+	/**
+	 * Set one key in a captured node's detail, leaving the rest alone.
+	 */
+	private static function set_detail( string $account, string $region, string $type, string $id, string $key, string $value ): void {
+		global $wpdb;
+
+		$wpdb->query( // phpcs:ignore
+			$wpdb->prepare(
+				'UPDATE ' . self::nodes_table() . " SET detail = JSON_SET(IF(detail IS NULL OR detail = '' OR JSON_VALID(detail) = 0, '{}', detail), %s, %s)
+				 WHERE account_id = %s AND region = %s AND node_type = %s AND resource_id = %s AND source = 'aws'",
+				'$.' . $key,
+				$value,
+				$account,
+				$region,
+				$type,
+				$id
+			)
+		);
 	}
 
 	/** Plerion resource types that are hops, and the node type each becomes. */
@@ -1290,6 +1444,17 @@ final class VulnHub_AWS_Network {
 	 *
 	 * @return array{gwlbs:array<int,array<string,string>>,firewalls:array<int,array<string,string>>,accounts:array<string,bool>}
 	 */
+	/**
+	 * Accounts that hold the inline inspection appliances -- the account that
+	 * owns the gateway load balancer, never a name. Their instances are vendor
+	 * appliances: nothing takes an agent there.
+	 *
+	 * @return string[]
+	 */
+	public static function appliance_accounts(): array {
+		return array_map( 'strval', array_keys( self::inspection_stack()['accounts'] ) );
+	}
+
 	private static function inspection_stack(): array {
 		static $cache = null;
 

@@ -146,6 +146,155 @@ lanes.
 
 ---
 
+## Open to the internet, and vulnerable on that port
+
+The lanes say which findings *could* be used from outside. The list at the top
+of the widget says which ones *can*, today, on which machine and port — the
+work to do first. A finding is on it only when three things line up:
+
+| | Where it comes from |
+|---|---|
+| **A way in** — the internet can open that port on that machine | `VulnHub_AWS_Exposure`, from the captured network map: a security group on the interface holding a public address admits an outside source, and the subnet's route table sends 0.0.0.0/0 to an internet gateway; or an internet-facing load balancer's listener admits outside traffic and forwards to the machine. Off the cloud map: the machine answers on a public address and the scanner saw a remote listener (`observed`, weaker, never outranks a rule). |
+| **The service** — the vulnerable component is the thing on that port | `VulnHub_Threat_Services`: the normalised product (`openssh`, `apache-tomcat`, `oracle-weblogic*`, `apache-log4j` → a web application, `windows-microsoft-updates` → Windows' own network services), or the distro package (`RHEL 9 : openssh`, or `  - openssh-server` in an unpatched-CVE check's output). Server packages only: `openssh-clients`, `libssh`, `bind-utils` serve nothing. |
+| **The finding** | open, not risk-accepted |
+
+### Why the service matters more than the CVSS vector
+
+Most "network, no credentials, no click" findings on servers are in the
+kernel, perl, rsync or a container runtime. Nothing listens for them, so an
+open port 22 does not make a perl bug reachable — and counting them is what
+made the edge lane read 261 findings when the true answer for the doors that
+are actually open was 12.
+
+### The scanner's port is where it logged in, not where the bug is
+
+Every open finding on this estate that carries a port is on 445, and none of
+them is a remote check: they are Log4j jars, 7-Zip installs, .NET runtimes and
+Windows updates found over a credentialed SMB login. Taking the port at its
+word would call each one an SMB exposure. So the port is used last, and only
+for a remote check (a network family, or "uncredentialed check" in the title).
+
+### Outside means two things
+
+`anyone` (0.0.0.0/0, ::/0) and `listed` (specific public ranges — a partner, a
+vendor, an office). Private ranges are never outside. The difference is the
+triage, so it is the first thing each row says, and it sets the tier:
+
+| Tier | When |
+|---|---|
+| **Mitigate now** | open to anyone and exploitable today; or on CISA's exploited list and open to listed addresses |
+| **Next** | open to anyone and critical or high; or open to listed addresses (or observed) and exploitable today |
+| **Review** | every other vulnerable service with a way in |
+
+Each row also says whether it is **already raised**: the tickets its findings
+are on, each linking to its ticket page with its status ("SD-… · To Do"),
+"N of M raised" when only some are, and *Not raised* otherwise. The CSV carries
+the same as *On a ticket* and *Tickets*.
+
+Each row reads the way the attack does — who, which port, which machine,
+using what — and ends with one line of advice. Remote administration open to
+anyone (SSH, RDP, SMB, WinRM, databases) gets "close it or restrict it, then
+patch": closing a door is faster than patching behind it. A published web
+service gets "patch — the patch is the mitigation".
+
+### Is anything answering, and is there a firewall in front?
+
+Two tags on every row, because both change what the row means:
+
+- **Listening.** Where Tenable read the host's listening table (`asset_ports`),
+  the row says *seen listening* or *not listening*; elsewhere *listening:
+  inferred* — the service is known only from the installed package. A
+  service can answer on several ports (DNS on udp/53 and tcp/53), so the port
+  chosen is the one seen listening when there is one — "the first port that
+  fits" once called a live resolver "not listening". *Not listening* rows
+  drop to Review and sort last.
+- **Inline firewall** (`firewall` on each way in, from `VulnHub_AWS_Exposure`):
+  *through the inline firewall* when the VPC's internet gateway has an ingress
+  route table sending arriving traffic to a Gateway Load Balancer endpoint;
+  *no firewall in front* when nothing in the VPC routes to one, or the
+  capture read the gateway associations and found no ingress table; *not
+  known yet* for a VPC that uses the firewall for something but was captured
+  before gateway associations were recorded. Outbound inspection says nothing
+  about inbound: traffic to a public address arrives straight through the
+  gateway unless that ingress table redirects it.
+
+### Never scanned is not clean
+
+A server with a door open from outside and no scanner result — no findings
+ever, no Tenable scan date — is its own red block, not folded into "nothing
+vulnerable behind it". "No findings" there means nobody has looked. On the
+first run, five of the eleven servers with a way in were in this state,
+including the only one open to anyone.
+
+### Beside the list
+
+- **One change from exposed (`latent`).** A rule opens the port to anyone but
+  nothing routes in from outside today. Not exposure — but a route or address
+  change makes it real, so narrow the rule first.
+- **A way in, scanned, nothing vulnerable behind it.** Less surface is still
+  less surface, and "22 open to anyone" wants a reason.
+- **Load-balancer listeners with nothing in the inventory behind them**:
+  targets no asset stands for -- an instance no scanner knows, a container
+  address -- are named, because a published service nobody scans is a
+  finding; an AWS-managed service (Transfer Family SFTP) is labelled as
+  AWS's to patch; listeners whose targets were never captured say so.
+
+### Numbers, links and exports
+
+- Each tier chip and each row links to the Vulnerabilities list with
+  `expo=now|next|review|all|latent` (and `asset=` for a row), filtered by
+  finding id in `VulnHub_Threat_Repo::findings_query()`, so the list and the
+  number are the same set. `expo` is carried through Apply and reaches both
+  findings export allow-lists.
+- `admin-post.php?action=vulnhub_threat_exposure_csv` (nonce, `vulnhub_view`,
+  audited as `export.internet_exposure`) is one row per exposed service, then
+  the latent ones: priority, host, team, port, service, open to, sources, how,
+  front door, security group, findings, worst severity, exploited, exploit,
+  EPSS, CVE, worst vulnerability, do first.
+- The exposure verdict now takes its reason from the same map: an AWS server
+  is *reachable* because "tcp/22 open to anyone on its public address (AWS
+  security group)", not because something listens.
+
+### The lanes follow the same doors
+
+The *Straight from the internet* lane used to be every edge-route finding with
+an exploit on any machine judged reachable, whatever port the bug was on — so
+a kernel or perl bug on a server with 443 open counted, and a machine counted
+as reachable because a web service was listening, firewall unread. It read
+296 findings on 21 machines against 0 on an actually open door.
+
+Now (`VulnHub_Threat_Repo::lanes()`, `door_parts()`):
+
+| Lane | Findings |
+|---|---|
+| Straight from the internet (`route=edge`) | edge-route, exploitable today, and on an open door |
+| Looks published (`route=maybe`, its own line under the cards) | edge-route on machines judged reachable only because a service listens — the firewall in front is not readable |
+| Once inside (`route=inside`) | inside-route, plus every other edge-route finding |
+
+Each drill-down uses the same cuts, so lane, list and export agree. The
+reachability strip splits *Open from outside* (a rule and route, or a public
+address) from *Looks published*.
+
+### After a sync
+
+Nothing needs running by hand. Every sync fires `vulnhub_sync_complete`:
+the exposure verdicts are rebuilt after Tenable (which also rebuilds the
+listening table), AWS and Plerion syncs (`VulnHub_Threat_Ports::on_sync`), and
+the widget cache is busted after that. The list is cached against the widget
+epoch and the network map's capture time, so a sync or a capture moves it.
+All-protocol rules are read whether the capture wrote them `-1` or `any` (it
+writes `any`; an earlier reading of "any" as a protocol matched nothing).
+
+### What it cannot see
+
+Network ACLs, and firewalls in front of AWS or on-premises. Both can only
+close a door this reports as open, never open one it missed: the error is
+always "check this one", never "you missed that one". The map is as fresh as
+the last network capture, which the panel states.
+
+Checked on the live estate: tier counts, the list they open and the findings
+CSV agree (review 12 / 12 / 12, latent 14 / 14 / 14).
+
 ## Tables
 
 | Table | Rows | Holds |

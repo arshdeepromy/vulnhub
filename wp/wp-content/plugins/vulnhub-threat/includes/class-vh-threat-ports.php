@@ -135,11 +135,18 @@ final class VulnHub_Threat_Ports {
 	 * @param string $connector Connector id that just finished.
 	 */
 	public static function on_sync( string $connector = '' ): void {
-		if ( '' !== $connector && ! in_array( $connector, self::SOURCES, true ) ) {
+		$scan = '' === $connector || in_array( $connector, self::SOURCES, true );
+
+		// The verdict also moves when the cloud map or the posture inventory
+		// does: an AWS capture is what proves a port open. Without this an
+		// exposure stayed as the last Tenable sync left it.
+		if ( ! $scan && ! in_array( $connector, self::EXPOSURE_SOURCES, true ) ) {
 			return;
 		}
 
-		self::rebuild();
+		if ( $scan ) {
+			self::rebuild();
+		}
 
 		if ( class_exists( 'VulnHub_Threat_Classify' ) ) {
 			VulnHub_Threat_Classify::rebuild_exposure();
@@ -148,6 +155,9 @@ final class VulnHub_Threat_Ports {
 
 	/** Connectors whose sync can change what a host reports listening. */
 	private const SOURCES = array( 'tenable' );
+
+	/** Connectors that move reachability without moving the port inventory. */
+	private const EXPOSURE_SOURCES = array( 'aws', 'plerion' );
 
 	/** Table name. */
 	public static function table(): string {
@@ -353,6 +363,20 @@ final class VulnHub_Threat_Ports {
 		return array_map(
 			'intval',
 			(array) $wpdb->get_col( 'SELECT DISTINCT asset_id FROM ' . self::table() . " WHERE kind IN ({$kinds})" ) // phpcs:ignore
+		);
+	}
+
+	/**
+	 * What one machine listens on that another machine could connect to.
+	 *
+	 * @return array<int,array{port:int,protocol:string,service:string}>
+	 */
+	public static function remote_ports( int $asset_id ): array {
+		global $wpdb;
+
+		return array_map(
+			static fn( array $r ): array => array( 'port' => (int) $r['port'], 'protocol' => (string) ( $r['protocol'] ?: 'tcp' ), 'service' => (string) $r['service'] ),
+			(array) $wpdb->get_results( $wpdb->prepare( 'SELECT port, protocol, service FROM ' . self::table() . ' WHERE asset_id = %d AND remote = 1', $asset_id ), ARRAY_A ) // phpcs:ignore
 		);
 	}
 

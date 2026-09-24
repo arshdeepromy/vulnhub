@@ -81,6 +81,33 @@ columns carry a small JSON `detail` blob.
 service (`Interface for NAT Gateway nat-…`, `VPC Endpoint Interface vpce-…`,
 `ELB net/name/hash`) — and that is how an open port finally gets an owner.
 
+### Address ranges
+
+VPC and subnet nodes carry their `cidr` in `detail`. It is what lets an
+address a scanner reports be placed in a subnet -- and so in whatever the
+subnet is for, such as an AppStream fleet (`docs/APPSTREAM.md`).
+
+### Which subnet uses which table, and what a balancer forwards to
+
+Two more facts, both for `VulnHub_AWS_Exposure` (see `docs/ATTACK-PATHS.md`,
+*Open to the internet, and vulnerable on that port*):
+
+- **Route-table associations.** "Routes to an internet gateway" belongs to one
+  subnet's table, not to the VPC: a public address in a private subnet has no
+  way in. `capture_routes()` now records each association on the subnet node
+  (`detail.route_table`) and the main table on the VPC node
+  (`detail.main_route_table`), for subnets with no association of their own.
+  A capture from before this falls back to "the VPC has an internet-gateway
+  route somewhere", and the exposure list labels those rows `route: VPC-level`.
+- **Load-balancer targets**, internet-facing balancers only.
+  `detail.forwards` is listener → target groups (from the listener's default
+  action), `detail.targets` is every registered target with the port it is
+  sent traffic on (`DescribeTargetGroups` + `DescribeTargetHealth`; a classic
+  balancer lists its instances and instance ports on itself). Without it a
+  server published only through a balancer — the usual way — has no public
+  address of its own and reads as unreachable. Until a capture has run with
+  this, those listeners are reported as *not traced yet*.
+
 ## `arch_graph( $account, $vpc )`
 
 Builds the tiered picture the screen draws. Resources come from the Plerion
@@ -535,7 +562,7 @@ Every reader is one signed Query-API call through `VulnHub_AWS_Client::query()`:
 | `capture_routes()` | ec2 | `DescribeRouteTables` |
 | `capture_enis()` | ec2 | `DescribeNetworkInterfaces` |
 | `capture_addresses()` | ec2 | `DescribeAddresses` |
-| `capture_load_balancers()` | elasticloadbalancing | `DescribeLoadBalancers` (2015-12-01 and 2012-06-01), `DescribeListeners` |
+| `capture_load_balancers()` | elasticloadbalancing | `DescribeLoadBalancers` (2015-12-01 and 2012-06-01), `DescribeListeners`; for internet-facing balancers also `DescribeTargetGroups` and `DescribeTargetHealth` |
 | `capture_vpc_endpoints()` | ec2 | `DescribeVpcEndpoints` — Gateway Load Balancer endpoints only, for the `serviceName` that names the appliance |
 
 `ReadOnlyAccess` covers all of them, and the SSO sync prefers that role

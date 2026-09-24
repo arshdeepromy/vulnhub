@@ -162,6 +162,7 @@ final class VulnHub_Threat_Widget {
 
 		echo '<div class="vh-flow">';
 
+		self::render_open_doors();
 		self::render_svg( $d, $peak );
 		self::render_exposure( $d );
 		self::render_cards( $d );
@@ -171,7 +172,7 @@ final class VulnHub_Threat_Widget {
 			esc_html(
 				sprintf(
 					/* translators: 1: total open findings, 2: internet-facing asset count, 3: EPSS threshold as a percentage, 4: findings with no CVSS vector. */
-					__( 'Counted from %1$s open findings. %2$s assets are treated as reachable from the internet, on observed evidence — a listening web or mail service, or a public address — and everything else is placed where it can actually be used, once somebody is already inside. Reachability is observed, not proven: nothing here can read a firewall rule. "Exploitable today" means the CVE is on CISA\'s exploited list, has a published exploit referenced by NVD, or FIRST puts it at %3$s or more likely to be exploited in the next 30 days. %4$s open findings carry no CVSS v3 vector and are not placed on any lane.', 'vulnhub' ),
+					__( 'Counted from %1$s open findings. %2$s assets are treated as reachable from the internet, on observed evidence — a listening web or mail service, or a public address — and everything else is placed where it can actually be used, once somebody is already inside. In AWS, reachability is read from the security groups, routes and load balancers themselves (the list at the top); elsewhere it is observed, not proven. "Exploitable today" means the CVE is on CISA\'s exploited list, has a published exploit referenced by NVD, or FIRST puts it at %3$s or more likely to be exploited in the next 30 days. %4$s open findings carry no CVSS v3 vector and are not placed on any lane.', 'vulnhub' ),
 					number_format_i18n( (int) $d['totals']['open'] ),
 					number_format_i18n( (int) $d['totals']['facing'] ),
 					number_format_i18n( (float) $d['threshold'] * 100 ) . '%',
@@ -181,6 +182,392 @@ final class VulnHub_Threat_Widget {
 		);
 
 		echo '</div>';
+	}
+
+	/**
+	 * Open to the internet, and vulnerable on that port -- the list to work
+	 * first, above the lanes. See VulnHub_Threat_Exposure.
+	 *
+	 * Every row reads left to right as the attack does: from where, through
+	 * which door, to which machine, using what. An empty list is said out
+	 * loud, with what was checked, because "nothing" and "nothing looked"
+	 * must never look alike.
+	 */
+	private static function render_open_doors(): void {
+		if ( ! class_exists( 'VulnHub_Threat_Exposure' ) ) {
+			return;
+		}
+
+		$x = VulnHub_Threat_Exposure::data();
+		$c = $x['counts'];
+
+		if ( ! $x['has_map'] && ! $x['items'] ) {
+			return;
+		}
+
+		$tiers = array(
+			'now'    => __( 'Mitigate now', 'vulnhub' ),
+			'next'   => __( 'Next', 'vulnhub' ),
+			'review' => __( 'Review', 'vulnhub' ),
+		);
+		$csv   = wp_nonce_url( admin_url( 'admin-post.php?action=vulnhub_threat_exposure_csv' ), 'vulnhub_threat_exposure_csv' );
+		$shown = array_slice( $x['items'], 0, 8 );
+
+		echo '<section class="vh-doors" aria-labelledby="vh-doors-h">';
+		echo '<header class="vh-doors__head"><div>';
+		printf( '<h4 class="vh-doors__h" id="vh-doors-h">%s</h4>', esc_html__( 'Open to the internet — and vulnerable on that port', 'vulnhub' ) );
+		printf( '<p class="vh-doors__sub">%s</p>', esc_html__( 'A way in from outside, the vulnerable service answering on it, and whether anyone has an exploit. Everything else on these machines needs a foothold first. Work this list first.', 'vulnhub' ) );
+		echo '</div><div class="vh-doors__tally">';
+
+		foreach ( $tiers as $tier => $label ) {
+			$n = (int) $c[ $tier ];
+			printf(
+				'<a class="vh-doors__chip vh-doors__chip--%1$s%2$s" href="%3$s"><b>%4$s</b> %5$s</a>',
+				esc_attr( $tier ),
+				0 === $n ? ' is-zero' : '',
+				esc_url( VulnHub_Threat_Repo::expo_url( $tier ) ),
+				esc_html( number_format_i18n( $n ) ),
+				esc_html( $label )
+			);
+		}
+
+		printf( '<a class="vh-doors__csv" href="%s">%s</a>', esc_url( $csv ), esc_html__( 'CSV', 'vulnhub' ) );
+		echo '</div></header>';
+
+		if ( ! $shown ) {
+			printf(
+				'<p class="vh-doors__none"><b>%1$s</b> %2$s</p>',
+				esc_html__( 'Nothing scanned and open to the internet is vulnerable on the port it is open on.', 'vulnhub' ),
+				esc_html(
+					sprintf(
+						/* translators: 1: scanned servers with a way in, 2: never-scanned ones. */
+						__( 'Checked %1$s scanned servers with a way in from outside; %2$s more have never been scanned (below).', 'vulnhub' ),
+						number_format_i18n( (int) $c['quiet'] ),
+						number_format_i18n( (int) $c['blind'] )
+					)
+				)
+			);
+		} else {
+			echo '<ol class="vh-doors__list">';
+
+			foreach ( $shown as $i ) {
+				self::render_door( $i, $tiers[ $i['tier'] ] );
+			}
+
+			echo '</ol>';
+
+			if ( count( $x['items'] ) > count( $shown ) ) {
+				printf(
+					'<p class="vh-doors__more"><a href="%1$s">%2$s</a></p>',
+					esc_url( VulnHub_Threat_Repo::expo_url( 'all' ) ),
+					esc_html(
+						sprintf(
+							/* translators: %s: number of further services. */
+							_n( '%s more exposed service — every finding behind this list', '%s more exposed services — every finding behind this list', count( $x['items'] ) - count( $shown ), 'vulnhub' ),
+							number_format_i18n( count( $x['items'] ) - count( $shown ) )
+						)
+					)
+				);
+			}
+		}
+
+		self::render_blind( (array) $x['blind'] );
+		self::render_door_notes( $x );
+
+		echo '</section>';
+	}
+
+	/**
+	 * One exposed service, as the path an attacker would take.
+	 *
+	 * @param array<string,mixed> $i    Item.
+	 * @param string              $tier Tier label.
+	 */
+	private static function render_door( array $i, string $tier ): void {
+		$from = 'anyone' === $i['reach']
+			? __( 'Anyone', 'vulnhub' )
+			: ( 'listed' === $i['reach']
+				/* translators: %s: number of outside address ranges. */
+				? sprintf( _n( '%s listed address', '%s listed addresses', max( 1, (int) $i['sources'] ), 'vulnhub' ), number_format_i18n( max( 1, (int) $i['sources'] ) ) )
+				: __( 'Public address', 'vulnhub' ) );
+		$via  = match ( $i['via'] ) {
+			'lb'       => sprintf( /* translators: %s: load balancer and listener. */ __( 'via load balancer %s', 'vulnhub' ), $i['front'] ),
+			'observed' => sprintf( /* translators: %s: address. */ __( 'answers on %s; firewall not read', 'vulnhub' ), $i['front'] ),
+			default    => sprintf( /* translators: %s: address. */ __( 'on %s', 'vulnhub' ), $i['front'] ),
+		};
+		$top  = (array) ( $i['vulns'][0] ?? array() );
+		$host = '' !== $i['host'] ? $i['host'] : '#' . $i['asset_id'];
+
+		printf( '<li class="vh-door vh-door--%1$s vh-door--%2$s">', esc_attr( $i['tier'] ), esc_attr( $i['reach'] ) );
+		printf( '<span class="vh-door__tier">%s</span>', esc_html( $tier ) );
+
+		// The path: outside -> port -> machine.
+		echo '<span class="vh-door__path">';
+		printf( '<span class="vh-door__from" title="%1$s">%2$s</span>', esc_attr( $via ), esc_html( $from ) );
+		echo '<span class="vh-door__wire" aria-hidden="true"></span>';
+		printf( '<span class="vh-door__port" title="%1$s">%2$s</span>', esc_attr( $i['service'] ), esc_html( $i['port'] ) );
+		echo '<span class="vh-door__wire" aria-hidden="true"></span>';
+		printf(
+			'<a class="vh-door__host" href="%1$s">%2$s</a>',
+			esc_url( class_exists( 'VulnHub_Dash_Portal' ) ? VulnHub_Dash_Portal::portal_url( 'assets', array( 'asset' => (int) $i['asset_id'] ) ) : '' ),
+			esc_html( $host )
+		);
+		echo '</span>';
+
+		echo '<span class="vh-door__what">';
+		printf( '<span class="vh-door__svc">%1$s <span class="vh-door__via">%2$s</span></span>', esc_html( $i['service'] ), esc_html( $via ) );
+		printf( '<span class="vh-door__vuln">%s</span>', esc_html( vh_trim( (string) ( $top['title'] ?? '' ), 90 ) ) );
+		echo '<span class="vh-door__tags">';
+		if ( $i['kev'] > 0 ) {
+			printf( '<span class="vh-door__tag vh-door__tag--kev">%s</span>', esc_html__( 'exploited in the wild', 'vulnhub' ) );
+		} elseif ( $i['poc'] > 0 ) {
+			printf( '<span class="vh-door__tag vh-door__tag--poc">%s</span>', esc_html__( 'public exploit', 'vulnhub' ) );
+		}
+		printf( '<span class="vh-door__tag vh-door__tag--sev vh-door__tag--%1$s">%1$s</span>', esc_html( $i['severity'] ) );
+		if ( $i['epss'] >= 0.01 ) {
+			/* translators: %s: EPSS percentage. */
+			printf( '<span class="vh-door__tag">%s</span>', esc_html( sprintf( __( 'EPSS %s', 'vulnhub' ), number_format_i18n( 100 * $i['epss'], 1 ) . '%' ) ) );
+		}
+		echo self::firewall_tag( (string) $i['firewall'] ); // phpcs:ignore WordPress.Security.EscapeOutput -- built escaped.
+		if ( 'yes' === ( $i['listening'] ?? '' ) ) {
+			printf( '<span class="vh-door__tag vh-door__tag--listen" title="%1$s">%2$s</span>', esc_attr__( 'The scanner read the host\'s listening table and this port is in it.', 'vulnhub' ), esc_html__( 'seen listening', 'vulnhub' ) );
+		} elseif ( 'no' === ( $i['listening'] ?? '' ) ) {
+			printf( '<span class="vh-door__tag vh-door__tag--soft" title="%1$s">%2$s</span>', esc_attr__( 'The scanner read the host\'s listening table and this port is not in it: the package is vulnerable, but nothing answers on the open port today.', 'vulnhub' ), esc_html__( 'not listening', 'vulnhub' ) );
+		} else {
+			printf( '<span class="vh-door__tag vh-door__tag--soft" title="%1$s">%2$s</span>', esc_attr__( 'No listening table for this host: the service is inferred from the installed package. Confirm it answers on this port.', 'vulnhub' ), esc_html__( 'listening: inferred', 'vulnhub' ) );
+		}
+		if ( 'vpc' === $i['route'] ) {
+			printf( '<span class="vh-door__tag vh-door__tag--soft" title="%1$s">%2$s</span>', esc_attr__( 'The route was read for the VPC, not this subnet. The next network capture reads the subnet\'s own table.', 'vulnhub' ), esc_html__( 'route: VPC-level', 'vulnhub' ) );
+		}
+		echo '</span></span>';
+
+		echo '<span class="vh-door__do">';
+		echo self::ticket_line( $i ); // phpcs:ignore WordPress.Security.EscapeOutput -- built escaped.
+		printf( '<span>%s</span>', esc_html( $i['do'] ) );
+		printf(
+			'<a href="%1$s">%2$s</a>',
+			esc_url( VulnHub_Threat_Repo::expo_url( 'all', (int) $i['asset_id'] ) ),
+			esc_html(
+				sprintf(
+					/* translators: %s: number of findings. */
+					_n( '%s finding →', '%s findings →', count( $i['findings'] ), 'vulnhub' ),
+					number_format_i18n( count( $i['findings'] ) )
+				)
+			)
+		);
+		echo '</span></li>';
+	}
+
+	/**
+	 * Is this already raised? The tickets the row's findings are on, each a
+	 * link to its ticket page with its status; "2 of 7 raised" when only some
+	 * are; "Not raised" when none are.
+	 *
+	 * @param array<string,mixed> $i Item.
+	 */
+	private static function ticket_line( array $i ): string {
+		$tickets = (array) ( $i['tickets'] ?? array() );
+		$total   = count( (array) $i['findings'] );
+		$on      = (int) ( $i['ticketed'] ?? 0 );
+
+		if ( ! $tickets ) {
+			return '<span class="vh-door__ticket vh-door__ticket--none">' . esc_html__( 'Not raised', 'vulnhub' ) . '</span>';
+		}
+
+		$links = array_map(
+			static fn( array $t ): string => sprintf(
+				'<a class="vh-door__ticket%1$s" href="%2$s">%3$s%4$s</a>',
+				$t['done'] ? ' vh-door__ticket--done' : '',
+				esc_url( class_exists( 'VulnHub_Dash_Portal' ) ? VulnHub_Dash_Portal::portal_url( 'tickets', array( 'ticket' => $t['id'] ) ) : '' ),
+				esc_html( '' !== $t['key'] ? $t['key'] : '#' . $t['id'] ),
+				'' !== $t['status'] ? ' · ' . esc_html( $t['status'] ) : ''
+			),
+			$tickets
+		);
+
+		$partial = $on < $total
+			? ' <span class="vh-door__ticket-part">' . esc_html( sprintf( /* translators: 1: findings on a ticket, 2: all findings. */ __( '%1$s of %2$s raised', 'vulnhub' ), number_format_i18n( $on ), number_format_i18n( $total ) ) ) . '</span>'
+			: '';
+
+		return '<span class="vh-door__tickets">' . implode( ' ', $links ) . $partial . '</span>';
+	}
+
+	/**
+	 * Whether an inline firewall stands in front of a door.
+	 */
+	private static function firewall_tag( string $fw ): string {
+		[ $label, $tip ] = match ( $fw ) {
+			'none'      => array( __( 'no firewall in front', 'vulnhub' ), __( 'Nothing in this VPC sends inbound traffic through the inline firewall: the security group is the only control.', 'vulnhub' ) ),
+			'inspected' => array( __( 'through the inline firewall', 'vulnhub' ), __( 'The internet gateway sends arriving traffic to the inline firewall before it reaches the machine.', 'vulnhub' ) ),
+			default     => array( __( 'firewall: not known yet', 'vulnhub' ), __( 'The VPC uses the inline firewall for something, but the capture has not read whether it inspects inbound traffic. The next network capture reads it.', 'vulnhub' ) ),
+		};
+
+		return sprintf( '<span class="vh-door__tag vh-door__tag--fw-%1$s" title="%2$s">%3$s</span>', esc_attr( $fw ), esc_attr( $tip ), esc_html( $label ) );
+	}
+
+	/**
+	 * Servers with a door open from outside that no scanner has ever looked
+	 * at. "No findings" on those is not an all-clear, and it must not read
+	 * like one -- so they get a block of their own, above the quieter notes.
+	 *
+	 * @param array<int,array<string,mixed>> $blind Rows.
+	 */
+	private static function render_blind( array $blind ): void {
+		if ( ! $blind ) {
+			return;
+		}
+
+		$anyone = count( array_filter( $blind, static fn( array $b ): bool => 'anyone' === $b['reach'] ) );
+
+		echo '<div class="vh-doors__blind">';
+		printf(
+			'<p class="vh-doors__blind-h"><b>%1$s</b> %2$s</p>',
+			esc_html(
+				sprintf(
+					/* translators: 1: servers, 2: of which open to anyone. */
+					_n( '%1$s server is open from outside and has never been scanned (%2$s open to anyone).', '%1$s servers are open from outside and have never been scanned (%2$s open to anyone).', count( $blind ), 'vulnhub' ),
+					number_format_i18n( count( $blind ) ),
+					number_format_i18n( $anyone )
+				)
+			),
+			esc_html__( 'Nothing is known about what answers behind these doors, so "no findings" here means nobody has looked. Put a scanner on them, or close the doors.', 'vulnhub' )
+		);
+		echo '<ul class="vh-doors__blind-list">';
+
+		foreach ( $blind as $b ) {
+			printf(
+				'<li class="vh-door--%1$s"><a href="%2$s">%3$s</a> <span class="vh-door__from">%4$s</span> %5$s %6$s</li>',
+				esc_attr( $b['reach'] ),
+				esc_url( class_exists( 'VulnHub_Dash_Portal' ) ? VulnHub_Dash_Portal::portal_url( 'assets', array( 'asset' => (int) $b['asset_id'] ) ) : '' ),
+				esc_html( '' !== $b['host'] ? $b['host'] : '#' . $b['asset_id'] ),
+				esc_html( 'anyone' === $b['reach'] ? __( 'anyone', 'vulnhub' ) : __( 'listed addresses', 'vulnhub' ) ),
+				implode( ' ', array_map( static fn( string $p ): string => '<span class="vh-door__port">' . esc_html( $p ) . '</span>', array_slice( (array) $b['ports'], 0, 5 ) ) ), // phpcs:ignore
+				self::firewall_tag( (string) $b['firewall'] ) // phpcs:ignore
+			);
+		}
+
+		echo '</ul></div>';
+	}
+
+	/**
+	 * What sits beside the list: doors open with nothing known behind them,
+	 * doors one change from open, and doors not traced yet.
+	 *
+	 * @param array<string,mixed> $x Exposure data.
+	 */
+	private static function render_door_notes( array $x ): void {
+		$notes = array();
+		$late  = $x['latent'];
+
+		if ( $late ) {
+			$worst = array_filter( $late, static fn( array $i ): bool => $i['kev'] > 0 || $i['poc'] > 0 );
+			$list  = implode( ', ', array_map( static fn( array $i ): string => ( '' !== $i['host'] ? $i['host'] : '#' . $i['asset_id'] ) . ' ' . $i['port'], array_slice( $late, 0, 6 ) ) );
+
+			$notes[] = array(
+				'latent',
+				sprintf(
+					/* translators: 1: number of services, 2: of which exploitable, 3: examples. */
+					_n( '%1$s vulnerable service is one change from exposed: a rule opens it to anyone, but nothing routes in from outside today (%2$s exploitable). Narrow the rule before a route or address change makes it real: %3$s.', '%1$s vulnerable services are one change from exposed: a rule opens them to anyone, but nothing routes in from outside today (%2$s exploitable). Narrow the rules before a route or address change makes them real: %3$s.', count( $late ), 'vulnhub' ),
+					number_format_i18n( count( $late ) ),
+					number_format_i18n( count( $worst ) ),
+					$list
+				),
+				VulnHub_Threat_Repo::expo_url( 'latent' ),
+			);
+		}
+
+		if ( $x['quiet'] ) {
+			$anyone = array_filter( $x['quiet'], static fn( array $q ): bool => 'anyone' === $q['reach'] );
+			$list   = implode( '; ', array_map( static fn( array $q ): string => ( '' !== $q['host'] ? $q['host'] : '#' . $q['asset_id'] ) . ' ' . implode( ', ', array_slice( $q['ports'], 0, 4 ) ), array_slice( $anyone ?: $x['quiet'], 0, 5 ) ) );
+
+			$notes[] = array(
+				'quiet',
+				sprintf(
+					/* translators: 1: servers, 2: open to anyone, 3: examples. */
+					_n( '%1$s more server has a way in, was scanned, and shows nothing vulnerable behind its open ports (%2$s open to anyone). Less surface is still less surface: %3$s.', '%1$s more servers have a way in, were scanned, and show nothing vulnerable behind their open ports (%2$s open to anyone). Less surface is still less surface: %3$s.', count( $x['quiet'] ), 'vulnhub' ),
+					number_format_i18n( count( $x['quiet'] ) ),
+					number_format_i18n( count( $anyone ) ),
+					$list
+				),
+				'',
+			);
+		}
+
+		// Published through a balancer to something nobody scans.
+		$unscanned = array_values( array_filter( (array) $x['doors'], static fn( array $d ): bool => ! empty( $d['targets'] ) && empty( $d['managed'] ) ) );
+		$managed   = array_values( array_filter( (array) $x['doors'], static fn( array $d ): bool => ! empty( $d['managed'] ) ) );
+
+		if ( $unscanned ) {
+			$notes[] = array(
+				'unscanned',
+				sprintf(
+					/* translators: 1: listeners, 2: examples. */
+					_n( '%1$s internet-facing load balancer listener publishes something no scanner covers — an instance with no asset record, or a container: %2$s. Nothing here can say what is vulnerable behind it.', '%1$s internet-facing load balancer listeners publish something no scanner covers — instances with no asset record, or containers: %2$s. Nothing here can say what is vulnerable behind them.', count( $unscanned ), 'vulnhub' ),
+					number_format_i18n( count( $unscanned ) ),
+					implode( '; ', array_map( static fn( array $d ): string => $d['name'] . ' ' . $d['listener'] . ' → ' . implode( ', ', array_slice( (array) $d['targets'], 0, 3 ) ), array_slice( $unscanned, 0, 5 ) ) )
+				),
+				'',
+			);
+		}
+
+		if ( $managed ) {
+			$notes[] = array(
+				'managed',
+				sprintf(
+					/* translators: %s: listeners. */
+					_n( '%s listener publishes an AWS-managed service (Transfer Family SFTP): AWS patches it, and the only control on our side is who its rules admit.', '%s listeners publish an AWS-managed service (Transfer Family SFTP): AWS patches it, and the only control on our side is who its rules admit.', count( $managed ), 'vulnhub' ),
+					number_format_i18n( count( $managed ) )
+				),
+				'',
+			);
+		}
+
+		$untraced = array_values( array_filter( (array) $x['doors'], static fn( array $d ): bool => ! isset( $d['targets'] ) ) );
+
+		if ( $untraced ) {
+			$x['doors'] = $untraced;
+			$ports      = array_count_values( array_map( static fn( array $d ): string => (string) $d['listener'], $x['doors'] ) );
+			arsort( $ports );
+
+			$notes[] = array(
+				'doors',
+				sprintf(
+					/* translators: 1: listeners, 2: ports. */
+					_n( '%1$s internet-facing load balancer listener admits outside traffic (%2$s), and the servers behind it are not traced yet. Sign in to AWS and capture the network again to name them.', '%1$s internet-facing load balancer listeners admit outside traffic (%2$s), and the servers behind them are not traced yet. Sign in to AWS and capture the network again to name them.', count( $x['doors'] ), 'vulnhub' ),
+					number_format_i18n( count( $x['doors'] ) ),
+					implode( ', ', array_map( static fn( string $p, int $n ): string => $n > 1 ? $p . ' ×' . $n : $p, array_keys( $ports ), $ports ) )
+				),
+				'',
+			);
+		}
+
+		if ( $notes ) {
+			echo '<ul class="vh-doors__notes">';
+
+			foreach ( $notes as [ $kind, $text, $url ] ) {
+				printf(
+					'<li class="vh-doors__note vh-doors__note--%1$s">%2$s%3$s</li>',
+					esc_attr( $kind ),
+					esc_html( $text ),
+					'' !== $url ? ' <a href="' . esc_url( $url ) . '">' . esc_html__( 'See the findings →', 'vulnhub' ) . '</a>' : ''
+				);
+			}
+
+			echo '</ul>';
+		}
+
+		if ( '' !== $x['captured_at'] ) {
+			printf(
+				'<p class="vh-doors__when">%s</p>',
+				esc_html(
+					sprintf(
+						/* translators: %s: time ago. */
+						__( 'Network map read %s. Firewall rules in front of AWS and on-premises are not read; a door here can only be closed by them, never opened.', 'vulnhub' ),
+						vh_ago( $x['captured_at'] )
+					)
+				)
+			);
+		}
 	}
 
 	/**
@@ -286,7 +673,7 @@ final class VulnHub_Threat_Widget {
 				$edge,
 				(int) $d['edge']['assets'],
 				__( 'Reached straight from the internet', 'vulnhub' ),
-				__( 'no account, no user, no click — a listening service', 'vulnhub' ),
+				__( 'the internet can open the port, and the bug is in what answers', 'vulnhub' ),
 				414
 			);
 
@@ -497,12 +884,22 @@ final class VulnHub_Threat_Widget {
 			return;
 		}
 
+		// Proven: a cloud rule and route, or a public address, show a way in.
+		// The rest of the confirmed are a listening service and no more.
+		$proven = class_exists( 'VulnHub_Threat_Exposure' ) ? count( (array) VulnHub_Threat_Exposure::data()['door_assets'] ) : 0;
+
 		$states = array(
 			array(
 				'key'   => 'confirmed',
-				'n'     => $confirmed,
-				'label' => __( 'Reachable', 'vulnhub' ),
-				'note'  => __( 'a published service is listening, or it answers on a public address', 'vulnhub' ),
+				'n'     => $proven,
+				'label' => __( 'Open from outside', 'vulnhub' ),
+				'note'  => __( 'a cloud firewall rule and route let the internet open a port on it, or it answers on a public address', 'vulnhub' ),
+			),
+			array(
+				'key'   => 'published',
+				'n'     => max( 0, $confirmed - $proven ),
+				'label' => __( 'Looks published', 'vulnhub' ),
+				'note'  => __( 'a web or mail service is listening; the firewall in front is not readable, so whether the internet reaches it is unproven', 'vulnhub' ),
 			),
 			array(
 				'key'   => 'unknown',
@@ -578,10 +975,9 @@ final class VulnHub_Threat_Widget {
 				'assets' => (int) $d['edge']['assets'],
 				'label'  => __( 'Straight from the internet', 'vulnhub' ),
 				'note'   => sprintf(
-					/* translators: 1: assets carrying these findings, 2: assets confirmed reachable. */
-					__( '%1$s of the %2$s assets confirmed reachable from outside carry one of these. Nobody has to click.', 'vulnhub' ),
-					number_format_i18n( (int) $d['edge']['assets'] ),
-					number_format_i18n( (int) $d['totals']['facing'] )
+					/* translators: 1: assets carrying these findings. */
+					_n( 'On %1$s machine, the internet can open the port the bug is on. Nobody has to click.', 'On %1$s machines, the internet can open the port the bug is on. Nobody has to click.', (int) $d['edge']['assets'], 'vulnhub' ),
+					number_format_i18n( (int) $d['edge']['assets'] )
 				),
 			),
 			array(
@@ -604,7 +1000,7 @@ final class VulnHub_Threat_Widget {
 				'label'  => __( 'Waiting once they are in', 'vulnhub' ),
 				'note'   => sprintf(
 					/* translators: %s: findings that are network-exploitable but on unreachable assets. */
-					__( 'Includes %s that a stranger could use directly if the machine were reachable from the internet — it is not, so they wait for somebody to get inside first.', 'vulnhub' ),
+					__( 'Includes %s that a stranger could use over the network, on machines where nothing shows the internet can open the port they are on — so they wait for somebody to get inside first.', 'vulnhub' ),
 					number_format_i18n( (int) $d['inside']['borrowed'] )
 				),
 			),
@@ -640,6 +1036,25 @@ final class VulnHub_Threat_Widget {
 		}
 
 		echo '</ul>';
+
+		// The machines that only look published: their own question.
+		$maybe = (array) ( $d['edge']['maybe'] ?? array() );
+
+		if ( (int) ( $maybe['findings'] ?? 0 ) > 0 ) {
+			printf(
+				'<p class="vh-flow__maybe">%1$s <a href="%2$s">%3$s</a></p>',
+				esc_html(
+					sprintf(
+						/* translators: 1: findings, 2: machines. */
+						_n( 'Not counted above: %1$s finding a stranger could use over the network, on %2$s machine that looks published — a web or mail service is listening, but nothing here can read the firewall in front of it to say whether the internet reaches it.', 'Not counted above: %1$s findings a stranger could use over the network, on %2$s machines that look published — a web or mail service is listening, but nothing here can read the firewall in front of them to say whether the internet reaches them.', (int) $maybe['findings'], 'vulnhub' ),
+						number_format_i18n( (int) $maybe['findings'] ),
+						number_format_i18n( (int) $maybe['assets'] )
+					)
+				),
+				esc_url( VulnHub_Threat_Repo::lane_url( 'maybe' ) ),
+				esc_html__( 'Check them against the firewall →', 'vulnhub' )
+			);
+		}
 
 		printf(
 			'<p class="vh-flow__evidence">%s</p>',

@@ -349,3 +349,258 @@ a.vh-flow__door:focus { outline: none; }
   color: var(--vh-muted);
   letter-spacing: .02em;
 }
+
+/* ---------------------------------------------------------------------
+   Open to the internet -- and vulnerable on that port.
+   VulnHub_Threat_Widget::render_open_doors(). Each row reads left to
+   right the way the attack does: from where, through which port, to
+   which machine, using what. The door's width sets the colour: anyone
+   is red, listed outside addresses amber, observed-only grey.
+   --------------------------------------------------------------------- */
+
+.vh-doors {
+  --vh-door-c: var(--vh-sev-critical);
+  margin: 0 0 22px;
+  padding: 16px 18px 14px;
+  border: 1px solid var(--vh-line);
+  border-radius: 12px;
+  background: var(--vh-surface);
+}
+
+.vh-doors__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px 18px;
+  margin-bottom: 12px;
+}
+
+.vh-doors__h {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--vh-ink);
+}
+
+.vh-doors__sub {
+  margin: 0;
+  max-width: 70ch;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--vh-muted);
+}
+
+.vh-doors__tally { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+.vh-doors__chip,
+.vh-doors__csv {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1px solid var(--vh-line);
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--vh-ink);
+  text-decoration: none;
+}
+
+.vh-doors__chip b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.vh-doors__chip--now    { border-color: color-mix(in srgb, var(--vh-sev-critical) 55%, transparent); }
+.vh-doors__chip--now b  { color: var(--vh-sev-critical); }
+.vh-doors__chip--next   { border-color: color-mix(in srgb, var(--vh-sev-high) 55%, transparent); }
+.vh-doors__chip--next b { color: var(--vh-sev-high); }
+.vh-doors__chip.is-zero { opacity: .55; }
+.vh-doors__chip:hover,
+.vh-doors__csv:hover { background: color-mix(in srgb, var(--vh-ink) 6%, transparent); }
+.vh-doors__csv { color: var(--vh-link); }
+
+.vh-doors__none {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--vh-ink-2, var(--vh-muted));
+  background: color-mix(in srgb, var(--vh-ink) 4%, transparent);
+}
+
+.vh-doors__none b { color: var(--vh-ink); }
+
+.vh-doors__list { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+
+.vh-door {
+  display: grid;
+  grid-template-columns: 96px minmax(250px, 1.1fr) minmax(220px, 1.3fr) minmax(200px, 1fr);
+  align-items: center;
+  gap: 12px 16px;
+  padding: 11px 14px;
+  border: 1px solid var(--vh-line);
+  border-left: 3px solid var(--vh-door-c);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--vh-door-c) 5%, transparent);
+}
+
+.vh-door--anyone   { --vh-door-c: var(--vh-sev-critical); }
+.vh-door--listed   { --vh-door-c: var(--vh-sev-high); }
+.vh-door--observed { --vh-door-c: var(--vh-muted); }
+
+.vh-door__tier {
+  justify-self: start;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: var(--vh-muted);
+  background: color-mix(in srgb, var(--vh-ink) 7%, transparent);
+}
+
+.vh-door--now .vh-door__tier  { color: #fff; background: var(--vh-sev-critical); }
+.vh-door--next .vh-door__tier { color: var(--vh-sev-high); background: color-mix(in srgb, var(--vh-sev-high) 16%, transparent); }
+
+/* outside --- port --- machine */
+.vh-door__path { display: flex; align-items: center; min-width: 0; }
+
+.vh-door__from,
+.vh-door__port,
+.vh-door__host {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: 7px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.vh-door__from { color: var(--vh-door-c); border: 1px solid color-mix(in srgb, var(--vh-door-c) 50%, transparent); font-weight: 600; }
+.vh-door__port { font-family: var(--vh-font-mono, ui-monospace, monospace); font-weight: 700; color: #fff; background: var(--vh-door-c); }
+.vh-door__host {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--vh-link);
+  border: 1px solid var(--vh-line);
+  text-decoration: none;
+}
+
+.vh-door__wire {
+  flex: 1 1 14px;
+  min-width: 10px;
+  max-width: 34px;
+  height: 2px;
+  background: repeating-linear-gradient(90deg, var(--vh-door-c) 0 5px, transparent 5px 9px);
+  background-size: 18px 2px;
+  animation: vh-door-flow 1.1s linear infinite;
+}
+
+@keyframes vh-door-flow { to { background-position: 18px 0; } }
+
+.vh-door__what { display: grid; gap: 3px; min-width: 0; }
+.vh-door__svc  { font-size: 12.5px; font-weight: 600; color: var(--vh-ink); }
+.vh-door__via  { font-weight: 400; color: var(--vh-muted); }
+.vh-door__vuln { font-size: 12px; color: var(--vh-ink-2, var(--vh-muted)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vh-door__tags { display: flex; flex-wrap: wrap; gap: 4px; }
+
+.vh-door__tag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--vh-muted);
+  border: 1px solid var(--vh-line);
+}
+
+.vh-door__tag--kev { color: #fff; background: var(--vh-sev-critical); border-color: transparent; }
+.vh-door__tag--poc { color: var(--vh-sev-high); border-color: color-mix(in srgb, var(--vh-sev-high) 50%, transparent); }
+.vh-door__tag--critical { color: var(--vh-sev-critical); }
+.vh-door__tag--high { color: var(--vh-sev-high); }
+.vh-door__tag--soft { border-style: dashed; cursor: help; }
+
+.vh-door__do { display: grid; gap: 4px; font-size: 12px; line-height: 1.45; color: var(--vh-ink-2, var(--vh-muted)); }
+.vh-door__do a { font-weight: 600; color: var(--vh-link); text-decoration: none; }
+
+.vh-doors__more { margin: 10px 0 0; font-size: 12.5px; }
+.vh-doors__more a { color: var(--vh-link); }
+
+.vh-doors__notes { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+
+.vh-doors__note {
+  padding: 8px 12px;
+  border-left: 3px solid var(--vh-line);
+  border-radius: 0 8px 8px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--vh-ink-2, var(--vh-muted));
+  background: color-mix(in srgb, var(--vh-ink) 3%, transparent);
+}
+
+.vh-doors__note a { color: var(--vh-link); font-weight: 600; }
+.vh-doors__note--latent { border-left-color: var(--vh-sev-medium, #e0a33e); }
+.vh-doors__note--doors  { border-left-color: var(--vh-series-1, var(--vh-link)); }
+
+.vh-doors__when { margin: 10px 0 0; font-size: 11.5px; color: var(--vh-muted); }
+
+@media (max-width: 1100px) {
+  .vh-door { grid-template-columns: 1fr; gap: 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vh-door__wire { animation: none; }
+}
+
+/* Inline firewall in front of a door, and the never-scanned block. */
+.vh-door__tag--fw-none      { color: var(--vh-sev-critical); border-color: color-mix(in srgb, var(--vh-sev-critical) 45%, transparent); }
+.vh-door__tag--fw-inspected { color: var(--vh-good, #3aa86b); border-color: color-mix(in srgb, var(--vh-good, #3aa86b) 45%, transparent); }
+.vh-door__tag--fw-unknown   { border-style: dashed; cursor: help; }
+
+.vh-doors__blind {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--vh-sev-critical) 40%, transparent);
+  border-left: 3px solid var(--vh-sev-critical);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--vh-sev-critical) 6%, transparent);
+}
+
+.vh-doors__blind-h { margin: 0 0 8px; font-size: 12.5px; line-height: 1.5; color: var(--vh-ink-2, var(--vh-muted)); }
+.vh-doors__blind-h b { color: var(--vh-ink); }
+.vh-doors__blind-list { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 8px; }
+.vh-doors__blind-list li {
+  --vh-door-c: var(--vh-sev-high);
+  display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px;
+  padding: 5px 9px; border: 1px solid var(--vh-line); border-radius: 8px; font-size: 12px;
+  background: var(--vh-surface);
+}
+.vh-doors__blind-list li.vh-door--anyone { --vh-door-c: var(--vh-sev-critical); }
+.vh-doors__blind-list a { font-weight: 600; color: var(--vh-link); text-decoration: none; }
+.vh-doors__blind-list .vh-door__port { padding: 1px 6px; }
+
+.vh-flow__state--published { border-left-color: var(--vh-sev-high); }
+.vh-flow__state--published .vh-flow__state-n { color: var(--vh-sev-high); }
+
+.vh-flow__maybe {
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  border-left: 3px solid var(--vh-sev-high);
+  border-radius: 0 8px 8px 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--vh-ink-2, var(--vh-muted));
+  background: color-mix(in srgb, var(--vh-sev-high) 6%, transparent);
+}
+.vh-flow__maybe a { color: var(--vh-link); font-weight: 600; }
+.vh-door__tag--listen { color: var(--vh-sev-critical); border-color: color-mix(in srgb, var(--vh-sev-critical) 45%, transparent); }
+.vh-doors__note--unscanned { border-left-color: var(--vh-sev-high); }
+
+/* Already raised? */
+.vh-door__tickets { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.vh-door__ticket {
+  display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  color: var(--vh-link); border: 1px solid color-mix(in srgb, var(--vh-link) 40%, transparent); text-decoration: none;
+}
+.vh-door__ticket--done { color: var(--vh-good, #3aa86b); border-color: color-mix(in srgb, var(--vh-good, #3aa86b) 45%, transparent); }
+.vh-door__ticket--none { color: var(--vh-sev-high); border-color: color-mix(in srgb, var(--vh-sev-high) 45%, transparent); justify-self: start; }
+.vh-door__ticket-part { font-size: 11px; color: var(--vh-muted); }
