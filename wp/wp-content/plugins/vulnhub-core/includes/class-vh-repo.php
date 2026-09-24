@@ -770,6 +770,15 @@ final class Repo {
 			return null;
 		}
 
+		// Nor does a bare instance id, which is what the posture inventory
+		// sends for an instance with no Name tag. Once an instance is linked
+		// to its machine's record (VulnHub_AWS_Coverage::link_twins()), the
+		// next posture sync would otherwise rename `ad01` to `i-0…`.
+		if ( 1 === preg_match( '/^i-[0-9a-f]{8,17}$/', $incoming )
+			&& 1 !== preg_match( '/^i-[0-9a-f]{8,17}$/', $stored ) ) {
+			return null;
+		}
+
 		return $incoming;
 	}
 
@@ -791,7 +800,36 @@ final class Repo {
 		 */
 		$data = self::normalise_names( $data );
 
-		$existing = self::match_asset( $data );
+		/*
+		 * Before anything is matched, ask whether this record belongs to
+		 * something that is not one machine per row -- a pooled fleet, where
+		 * every session is a new record in every feed (see Fleets). `ignore`
+		 * drops it; `fold` writes it onto a named record instead of matching.
+		 * Asked first because matching is exactly what goes wrong: an Intune
+		 * enrolment would re-match, and un-retire, a folded session row.
+		 */
+		$route = apply_filters( 'vulnhub_asset_route', null, $data );
+
+		if ( is_array( $route ) && 'ignore' === ( $route['action'] ?? '' ) ) {
+			return array(
+				'id'      => 0,
+				'created' => false,
+				'matched' => false,
+				'ignored' => true,
+			);
+		}
+
+		$existing = null;
+
+		if ( is_array( $route ) && 'fold' === ( $route['action'] ?? '' ) && (int) ( $route['asset_id'] ?? 0 ) > 0 ) {
+			$data     = self::normalise_names( (array) $route['data'] );
+			$existing = $wpdb->get_row(
+				$wpdb->prepare( "SELECT id, sources_json, primary_source, cmdb_id, tenable_uuid, intune_id, defender_id, hostname, fqdn, ipv4 FROM {$table} WHERE id = %d", (int) $route['asset_id'] ), // phpcs:ignore WordPress.DB.PreparedSQL
+				ARRAY_A
+			);
+		}
+
+		$existing = $existing ?: self::match_asset( $data );
 
 		/*
 		 * A CMDB record that has not shown two of an address, a qualified
@@ -2011,11 +2049,13 @@ final class Repo {
 				(array) $wpdb->get_results(
 					$wpdb->prepare(
 						// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+						// Never a fleet record: it carries the newest session's
+						// id, and sessions are terminated as a matter of course.
 						"SELECT id, lifecycle_status, primary_source, intune_id, defender_id,
 						        azure_ad_device_id, azure_vm_id, aws_instance_id, gcp_instance_id,
 						        cmdb_id, cmdb_key
 						   FROM {$a}
-						  WHERE tenable_uuid IN ({$holes})",
+						  WHERE tenable_uuid IN ({$holes}) AND primary_source <> 'fleet'",
 						$batch
 					),
 					ARRAY_A
@@ -2420,6 +2460,9 @@ final class Repo {
 			if ( 'gap' === $state ) {
 				$gap     = Coverage::gap_states();
 				$where[] = "coverage_state IN ('" . implode( "','", array_map( 'esc_sql', $gap ) ) . "')";
+			} elseif ( 'ok' === $state ) {
+				// Tenable holds it: the opposite of a gap, from the same class.
+				$where[] = "coverage_state IN ('" . implode( "','", array_map( 'esc_sql', Coverage::in_tenable_states() ) ) . "')";
 			} elseif ( isset( Coverage::states()[ $state ] ) ) {
 				$where[]  = 'coverage_state = %s';
 				$params[] = $state;
@@ -2439,6 +2482,9 @@ final class Repo {
 			if ( 'gap' === $dstate ) {
 				$dgap    = Defender_Coverage::gap_states();
 				$where[] = "defender_coverage_state IN ('" . implode( "','", array_map( 'esc_sql', $dgap ) ) . "')";
+			} elseif ( 'ok' === $dstate ) {
+				// Defender holds it (onboarded, or onboarded and quiet).
+				$where[] = 'defender_coverage_state IN (' . Defender_Coverage::covered_sql() . ')';
 			} elseif ( isset( Defender_Coverage::states()[ $dstate ] ) ) {
 				$where[]  = 'defender_coverage_state = %s';
 				$params[] = $dstate;
@@ -2536,6 +2582,18 @@ final class Repo {
 
 		if ( ! empty( $args['in_service_only'] ) ) {
 			$where[] = 'lifecycle_status IN (' . vh_in_service_sql() . ')';
+		}
+
+		/*
+		 * A row merged into another -- retired and pointing at the survivor,
+		 * like every AppStream session folded into its fleet record -- is not
+		 * a machine of its own any more, so a list does not show it twice.
+		 * Asking for retired assets still shows them. A row the duplicate
+		 * scan has only *flagged* is still live and still listed: that one is
+		 * waiting on a person.
+		 */
+		if ( 'retired' !== (string) ( $args['lifecycle_status'] ?? '' ) && empty( $args['include_merged'] ) ) {
+			$where[] = "NOT ( duplicate_of IS NOT NULL AND duplicate_of > 0 AND lifecycle_status = 'retired' )";
 		}
 
 		/*
@@ -3474,7 +3532,7 @@ final class Repo {
 
 		// Same asset, vuln, port and protocol as last time.
 		$row = $wpdb->get_row(
-			$wpdb->prepare( "SELECT id, state, severity, risk_score FROM {$table} WHERE fingerprint = %s", $fingerprint ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$wpdb->prepare( "SELECT id, state, severity, risk_score, last_found, last_fixed FROM {$table} WHERE fingerprint = %s", $fingerprint ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			ARRAY_A
 		);
 		if ( $row ) {
@@ -3482,7 +3540,7 @@ final class Repo {
 		}
 
 		$candidates = $wpdb->get_results(
-			$wpdb->prepare( "SELECT id, state, severity, risk_score, port FROM {$table} WHERE asset_id = %d AND vuln_id = %d ORDER BY id", $asset_id, $vuln_id ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$wpdb->prepare( "SELECT id, state, severity, risk_score, port, last_found, last_fixed FROM {$table} WHERE asset_id = %d AND vuln_id = %d ORDER BY id", $asset_id, $vuln_id ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			ARRAY_A
 		);
 		if ( ! $candidates ) {
@@ -3530,6 +3588,26 @@ final class Repo {
 		$fingerprint = vh_fingerprint( (string) $asset_id, (string) $vuln_id, (string) $port, $protocol );
 
 		$existing = self::resolve_finding( $asset_id, $vuln_id, $port, $protocol, $fingerprint );
+
+		/*
+		 * `newer_only`: several records feed one finding (the sessions of a
+		 * pooled fleet), and they arrive in no particular order. One older
+		 * than what is already held says nothing new and must not wind the
+		 * state or the dates back.
+		 */
+		if ( $existing && ! empty( $data['newer_only'] ) ) {
+			$held = max( (string) ( $existing['last_found'] ?? '' ), (string) ( $existing['last_fixed'] ?? '' ) );
+			$mine = max( (string) ( vh_to_mysql( $data['last_found'] ?? '' ) ?? '' ), (string) ( vh_to_mysql( $data['last_fixed'] ?? '' ) ?? '' ) );
+
+			if ( '' !== $held && $mine < $held ) {
+				return array(
+					'id'        => (int) $existing['id'],
+					'created'   => false,
+					'reopened'  => false,
+					'unchanged' => true,
+				);
+			}
+		}
 
 		$severity = (string) ( $data['severity'] ?? 'info' );
 		$state    = (string) ( $data['state'] ?? 'open' );

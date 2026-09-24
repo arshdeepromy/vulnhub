@@ -1701,6 +1701,23 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 				continue;
 			}
 
+			// A member of a pooled fleet (an AppStream session): the fleet has
+			// one record, and the CMDB's copy of a session is deliberately not
+			// written. Skipped, not failed. See VulnHub\Core\Fleets.
+			if ( ! $result['id'] && ! empty( $result['ignored'] ) ) {
+				++$this->counts['skipped'];
+				$this->bump( 'skipped' );
+				$outcomes[] = array(
+					'row'      => (int) $index + 1,
+					'hostname' => (string) $record['hostname'],
+					'action'   => 'skipped',
+					'reason'   => 'fleet',
+					'detail'   => __( 'Part of an AppStream fleet, which is kept as one asset record fed by the scanner; the CMDB copy of a session is not written.', 'vulnhub' ),
+					'changes'  => array(),
+				);
+				continue;
+			}
+
 			if ( ! $result['id'] ) {
 				++$this->counts['invalid'];
 				$this->bump( 'failed' );

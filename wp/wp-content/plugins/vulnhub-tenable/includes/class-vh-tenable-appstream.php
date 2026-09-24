@@ -69,7 +69,10 @@ final class VulnHub_Tenable_AppStream {
 				 FROM {$t}
 				 WHERE hostname REGEXP %s
 				   AND netbios_name = ''
-				   AND ( duplicate_of IS NULL OR duplicate_of = 0 )
+				   AND ( duplicate_of IS NULL OR duplicate_of = 0
+				         -- Folded into a fleet record (VulnHub\\Core\\Fleets): one row
+				         -- here, but Tenable still holds the session's asset.
+				         OR duplicate_of IN ( SELECT id FROM {$t} WHERE primary_source = 'fleet' ) )
 				   AND tenable_dropped_at IS NULL
 				 ORDER BY ( last_seen IS NULL ), last_seen DESC, id DESC",
 				self::regex()

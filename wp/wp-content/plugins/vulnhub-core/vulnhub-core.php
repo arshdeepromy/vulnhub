@@ -20,7 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 define( 'VULNHUB_VERSION', '1.0.0' );
-define( 'VULNHUB_DB_VERSION', '33' );
+define( 'VULNHUB_DB_VERSION', '34' );
 define( 'VULNHUB_FILE', __FILE__ );
 define( 'VULNHUB_DIR', plugin_dir_path( __FILE__ ) );
 define( 'VULNHUB_URL', plugin_dir_url( __FILE__ ) );
@@ -53,6 +53,13 @@ require_once VULNHUB_DIR . 'includes/functions.php';
 require_once VULNHUB_DIR . 'includes/class-vh-action.php';
 require_once VULNHUB_DIR . 'includes/class-vh-product.php';
 require_once VULNHUB_DIR . 'includes/class-vh-vendor.php';
+
+/*
+ * Pooled fleets (AppStream): one asset record per fleet, whatever the feeds
+ * send. Hooked before any connector runs, because it answers the question
+ * Repo::upsert_asset() asks before matching. See VulnHub\Core\Fleets.
+ */
+\VulnHub\Core\Fleets::init();
 
 /*
  * Endpoint coverage is recomputed with scanning coverage, never apart from it.

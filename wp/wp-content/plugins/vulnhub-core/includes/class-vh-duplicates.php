@@ -317,6 +317,74 @@ final class Duplicates {
 		$fill['sources_json'] = (string) wp_json_encode( $mine );
 
 		// 3. Findings.
+		self::move_findings( $loser_id, $survivor_id, $dry_run, $out );
+
+		if ( $dry_run ) {
+			$out['ok'] = true;
+			return $out;
+		}
+
+		// 4. The online history belongs to the machine, not the record.
+		$wpdb->update( vh_table( 'agent_status' ), array( 'asset_id' => $survivor_id ), array( 'asset_id' => $loser_id ) );
+
+		$fill['updated_at'] = vh_now();
+		$wpdb->update( $a, $fill, array( 'id' => $survivor_id ) );
+
+		// 5. Retire the losing record, still pointing at where it went.
+		$retire = array(
+			'lifecycle_status' => 'retired',
+			'duplicate_of'     => $survivor_id,
+			'updated_at'       => vh_now(),
+		);
+
+		// Whatever moved to the survivor must not stay here as well.
+		if ( isset( $fill['cmdb_id'] ) ) {
+			$retire['cmdb_id']  = '';
+			$retire['cmdb_key'] = '';
+		}
+
+		$wpdb->update( $a, $retire, array( 'id' => $loser_id ) );
+
+		self::recount( $survivor_id );
+		self::recount( $loser_id );
+
+		vulnhub()->logger->audit(
+			'asset.merge',
+			sprintf( 'Merged %s into %s', (string) $loser['hostname'], (string) $survivor['hostname'] ),
+			'asset',
+			$survivor_id,
+			array( 'loser' => $loser_id, 'findings_moved' => $out['findings_moved'], 'findings_superseded' => $out['findings_newer'] )
+		);
+
+		if ( class_exists( 'VulnHub_Dash_Widgets' ) ) {
+			\VulnHub_Dash_Widgets::bust();
+		}
+
+		$out['ok'] = true;
+
+		return $out;
+	}
+
+	/**
+	 * Move one row's findings onto another: a finding the survivor lacks is
+	 * re-keyed onto it; one both hold keeps whichever was seen later, and the
+	 * loser's copy is archived, never deleted.
+	 *
+	 * Public for callers that fold records without copying identifiers onto
+	 * the survivor -- a pooled fleet record must not take on one session's
+	 * instance id (see Fleets).
+	 *
+	 * @param array<string,mixed> $out Counters: findings_moved, findings_newer, findings_kept.
+	 */
+	public static function move_findings( int $loser_id, int $survivor_id, bool $dry_run, array &$out ): void {
+		global $wpdb;
+
+		$f = vh_table( 'findings' );
+
+		foreach ( array( 'findings_moved', 'findings_newer', 'findings_kept' ) as $k ) {
+			$out[ $k ] = (int) ( $out[ $k ] ?? 0 );
+		}
+
 		$theirs_rows = (array) $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$f} WHERE asset_id = %d", $loser_id ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 
 		foreach ( $theirs_rows as $row ) {
@@ -381,55 +449,10 @@ final class Duplicates {
 				array( 'id' => (int) $row['id'] )
 			);
 		}
-
-		if ( $dry_run ) {
-			$out['ok'] = true;
-			return $out;
-		}
-
-		// 4. The online history belongs to the machine, not the record.
-		$wpdb->update( vh_table( 'agent_status' ), array( 'asset_id' => $survivor_id ), array( 'asset_id' => $loser_id ) );
-
-		$fill['updated_at'] = vh_now();
-		$wpdb->update( $a, $fill, array( 'id' => $survivor_id ) );
-
-		// 5. Retire the losing record, still pointing at where it went.
-		$retire = array(
-			'lifecycle_status' => 'retired',
-			'duplicate_of'     => $survivor_id,
-			'updated_at'       => vh_now(),
-		);
-
-		// Whatever moved to the survivor must not stay here as well.
-		if ( isset( $fill['cmdb_id'] ) ) {
-			$retire['cmdb_id']  = '';
-			$retire['cmdb_key'] = '';
-		}
-
-		$wpdb->update( $a, $retire, array( 'id' => $loser_id ) );
-
-		self::recount( $survivor_id );
-		self::recount( $loser_id );
-
-		vulnhub()->logger->audit(
-			'asset.merge',
-			sprintf( 'Merged %s into %s', (string) $loser['hostname'], (string) $survivor['hostname'] ),
-			'asset',
-			$survivor_id,
-			array( 'loser' => $loser_id, 'findings_moved' => $out['findings_moved'], 'findings_superseded' => $out['findings_newer'] )
-		);
-
-		if ( class_exists( 'VulnHub_Dash_Widgets' ) ) {
-			\VulnHub_Dash_Widgets::bust();
-		}
-
-		$out['ok'] = true;
-
-		return $out;
 	}
 
 	/** Recompute one asset's open-finding rollups after a merge. */
-	private static function recount( int $asset_id ): void {
+	public static function recount( int $asset_id ): void {
 		global $wpdb;
 
 		$f = vh_table( 'findings' );

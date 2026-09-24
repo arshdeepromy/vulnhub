@@ -639,6 +639,23 @@ final class Install {
 			KEY released_at (released_at)
 		) {$charset};";
 
+		/*
+		 * Other names one asset is known by. A pooled fleet (an AppStream
+		 * fleet) is one record, but every streaming session registers a new
+		 * scanner asset with its own id; each of those ids is kept here so the
+		 * session's findings land on the fleet record. See VulnHub\Core\Fleets.
+		 */
+		$sql[] = "CREATE TABLE {$p}asset_aliases (
+			source varchar(32) NOT NULL DEFAULT '',
+			external_id varchar(191) NOT NULL DEFAULT '',
+			asset_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			hostname varchar(191) NOT NULL DEFAULT '',
+			first_seen datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
+			last_seen datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
+			PRIMARY KEY  (source,external_id),
+			KEY asset_id (asset_id)
+		) {$charset};";
+
 		foreach ( $sql as $statement ) {
 			dbDelta( $statement );
 		}

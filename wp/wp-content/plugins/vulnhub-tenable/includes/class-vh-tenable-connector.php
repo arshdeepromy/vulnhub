@@ -2273,6 +2273,8 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 				'risk_score'  => vh_risk_score( $severity, (string) $asset['criticality'], $exploit, $vpr ),
 				'first_found' => $first,
 				'last_found'  => (string) ( $record['last_found'] ?? '' ),
+				// Many sessions feed a fleet's findings; only a newer one counts.
+				'newer_only'  => class_exists( '\\VulnHub\\Core\\Fleets' ) && \VulnHub\Core\Fleets::is_record( (int) $asset['id'] ),
 				'last_fixed'  => (string) ( $record['last_fixed'] ?? '' ),
 				'due_at'      => $due,
 				'scan_uuid'   => (string) ( $record['scan']['uuid'] ?? '' ),
@@ -2404,6 +2406,19 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 			),
 			ARRAY_A
 		);
+
+		// A pooled-fleet session: its own row was folded into the fleet
+		// record, and its id kept as an alias of that record.
+		if ( ! $row && class_exists( '\\VulnHub\\Core\\Fleets' ) ) {
+			$fleet = \VulnHub\Core\Fleets::aliased( 'tenable', $uuid );
+
+			if ( $fleet ) {
+				$row = $wpdb->get_row(
+					$wpdb->prepare( 'SELECT id, criticality, team_id, hostname, asset_type FROM ' . vh_table( 'assets' ) . ' WHERE id = %d', $fleet ),
+					ARRAY_A
+				);
+			}
+		}
 
 		if ( ! $row ) {
 			$this->log(
