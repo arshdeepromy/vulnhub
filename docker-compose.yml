@@ -137,6 +137,11 @@ services:
       db:
         condition: service_healthy
     user: "33:33"
+    # init: tini as PID 1. A bare `tail -f` as PID 1 gets no default
+    # SIGTERM handler, so `docker stop` waited out the full 10s and SIGKILLed
+    # it -- and WSL's own poweroff deadline is also 10s, so every clean WSL
+    # shutdown ran out of time and was cut off with the stack still stopping.
+    init: true
     entrypoint: ["tail", "-f", "/dev/null"]
     environment:
       WORDPRESS_DB_HOST: db:3306
@@ -173,6 +178,11 @@ services:
     # tail -n 20, not `head -20`: head closes the pipe after 20 lines, and the
     # next line the worker writes gets SIGPIPE -- a long run that emits >20
     # lines was being killed mid-flight. tail drains the whole stream first.
+    # init: tini as PID 1. A bare `sh -c loop` as PID 1 gets no default
+    # SIGTERM handler, so `docker stop` waited out the full 10s and SIGKILLed
+    # it -- and WSL's own poweroff deadline is also 10s, so every clean WSL
+    # shutdown ran out of time and was cut off with the stack still stopping.
+    init: true
     entrypoint: >
       sh -c "while true; do
         flock -n /tmp/vh-cron.lock wp cron event run --due-now --path=/var/www/html --quiet 2>&1 | tail -n 20;
