@@ -128,6 +128,105 @@ final class Coverage {
 		return (string) ( $states[ $state ]['tone'] ?? 'muted' );
 	}
 
+	/**
+	 * Network vendors, by the name Defender reports for a device's network
+	 * card maker. Matched as lowercase substrings.
+	 */
+	private const NETWORK_VENDORS = array(
+		'mellanox', 'tp-link', 'cisco', 'juniper', 'aruba', 'arista', 'ubiquiti', 'netgear', 'meraki',
+		'extreme networks', 'brocade', 'mikrotik', 'fortinet', 'palo alto', 'check point', 'sonicwall',
+		'zyxel', 'd-link', 'huawei', 'ruckus', 'riverbed', 'f5 networks', 'barracuda', 'watchguard',
+	);
+
+	/**
+	 * Server-hardware vendors. On a device discovered on the network with no
+	 * operating system anybody could name, this vendor's card is almost
+	 * always the out-of-band management controller -- iLO, iDRAC, XClarity,
+	 * a BMC -- not the server's own OS.
+	 */
+	private const BMC_VENDORS = array(
+		'hewlett packard', 'hpe', 'dell', 'supermicro', 'super micro', 'lenovo', 'fujitsu', 'quanta',
+		'american megatrends', 'aspeed', 'inspur', 'cisco systems ucs',
+	);
+
+	/**
+	 * Give a type to devices Defender found on the network and could not
+	 * identify.
+	 *
+	 * Defender's device discovery reports machines it has no sensor on. When
+	 * it cannot tell what one is -- onboarding status "insufficient info" or
+	 * "unsupported", no name, no OS version -- its export still files many of
+	 * them as servers, and they were counted as servers needing a Tenable
+	 * agent: management interfaces of switches and storage, VMware appliances
+	 * (vCenter, NSX edges, ESXi management), out-of-band controllers. Pure
+	 * noise on the agent-coverage list, and none of them can take an agent.
+	 *
+	 * Only rows nothing else vouches for are touched: known to Defender alone
+	 * (no Tenable, Intune or CMDB record), still typed server or unknown, and
+	 * with no real name (empty, or Defender's 40-hex device id). The type then
+	 * follows the network card's maker:
+	 *
+	 *   network vendor              -> network device
+	 *   server-hardware vendor      -> appliance (a management controller)
+	 *   VMware, no OS version       -> appliance (a VMware virtual appliance)
+	 *   anything, no OS version     -> unknown   (not a server we can name)
+	 *
+	 * A VMware machine that does report an OS version (Ubuntu 20, say) is
+	 * left a server: that may be a real Linux VM nobody scans, which is a gap,
+	 * not noise.
+	 *
+	 * @return int Rows retyped.
+	 */
+	public static function type_discovered_devices(): int {
+		global $wpdb;
+
+		$a    = vh_table( 'assets' );
+		$rows = (array) $wpdb->get_results( // phpcs:ignore
+			"SELECT id, manufacturer, operating_system, os_version FROM {$a}
+			 WHERE defender_onboarding IN ('insufficient_info','unsupported')
+			   AND ( tenable_uuid = '' OR tenable_uuid IS NULL )
+			   AND ( intune_id = '' OR intune_id IS NULL )
+			   AND ( cmdb_id = '' OR cmdb_id IS NULL )
+			   AND asset_type IN ('server','unknown','')
+			   AND ( hostname = '' OR hostname REGEXP '^[0-9a-f]{40}$' )",
+			ARRAY_A
+		);
+		$n    = 0;
+
+		foreach ( $rows as $r ) {
+			$maker   = strtolower( (string) $r['manufacturer'] );
+			$version = strtolower( trim( (string) $r['os_version'] ) );
+			$no_os   = '' === $version || 'other' === $version || 'unknown' === $version;
+			$type    = '';
+
+			foreach ( self::NETWORK_VENDORS as $v ) {
+				if ( str_contains( $maker, $v ) ) {
+					$type = 'network';
+					break;
+				}
+			}
+
+			if ( '' === $type && $no_os ) {
+				foreach ( self::BMC_VENDORS as $v ) {
+					if ( str_contains( $maker, $v ) ) {
+						$type = 'appliance';
+						break;
+					}
+				}
+			}
+
+			if ( '' === $type && $no_os ) {
+				$type = str_contains( $maker, 'vmware' ) ? 'appliance' : 'unknown';
+			}
+
+			if ( '' !== $type ) {
+				$n += (int) $wpdb->query( $wpdb->prepare( "UPDATE {$a} SET asset_type = %s, updated_at = %s WHERE id = %d AND asset_type <> %s", $type, vh_now(), (int) $r['id'], $type ) ); // phpcs:ignore
+			}
+		}
+
+		return $n;
+	}
+
 	/** States that count as a gap somebody has to close. */
 	public static function gap_states(): array {
 		return array_keys( array_filter( self::states(), static fn( array $s ): bool => $s['gap'] ) );
@@ -233,6 +332,9 @@ final class Coverage {
 
 		$a = vh_table( 'assets' );
 		$f = vh_table( 'findings' );
+
+		// Type first: every coverage answer below depends on it.
+		self::type_discovered_devices();
 
 		// 1. When did Tenable last actually see this asset? The freshest
 		//    finding it reported is the only evidence we have of a scan.

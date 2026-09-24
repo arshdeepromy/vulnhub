@@ -241,6 +241,122 @@ nobody can send an engineer to. **297 in-service assets** are in that state.
 
 ---
 
+## Devices Defender found but could not identify are not servers
+
+Defender's device discovery reports machines it has no sensor on. When it
+cannot tell what one is — onboarding status *insufficient info* or
+*unsupported*, a 40-hex device id for a name, "Linux, release unknown" — its
+export still files many of them as servers, and they sat on the
+servers-needing-an-agent list: switch and storage management interfaces,
+VMware appliances (vCenter, NSX edges, ESXi management), out-of-band
+controllers.
+
+`Coverage::type_discovered_devices()` runs first in every `recalculate()`.
+It only touches rows nothing else vouches for — Defender alone, still typed
+server or unknown, no real name — and types them by the maker of the network
+card Defender reports:
+
+| Maker | Type |
+|---|---|
+| a network vendor (Mellanox, Cisco, Check Point, TP-Link, …) | network device |
+| a server-hardware vendor, and no OS version | appliance — a management controller (iLO, iDRAC, a BMC) |
+| VMware, and no OS version | appliance — a VMware virtual appliance |
+| anything else with no OS version | unknown |
+
+A VMware machine that reports a real OS version is left a server: it may be a
+Linux VM nobody scans, which is a gap, not noise. On the live estate 53 rows
+were retyped, and servers not in Tenable needing an agent went from 127 to 74.
+
+---
+
+## AWS: what Tenable and Defender can cover, and whether they do
+
+The **AWS servers: Tenable and Defender coverage** widget
+(`VulnHub_AWS_Coverage`, vulnhub-aws).
+
+### What is in scope
+
+Tenable Vulnerability Management reaches a machine through an agent or a
+network scan, and both need an operating system that we run. In AWS that is an
+**EC2 instance** and nothing else:
+
+| In AWS | Tenable / Defender? | Why |
+|---|---|---|
+| EC2 instances (Windows, Linux, Elastic Beanstalk and EKS/ECS container hosts included) | **yes** — agent or scan | a VM with our OS on it |
+| AppStream sessions | through the fleet's image | the hosts are AWS's; the image is ours and carries the agent (`docs/APPSTREAM.md`) |
+| Lambda, Fargate/ECS tasks, RDS, DynamoDB, S3, load balancers, Transfer Family | **no** | no OS of ours; a network scan of a managed endpoint tests AWS's patching. Their risk is configuration, which the posture scan covers |
+| The inline firewall's instances | set aside | vendor appliances: nothing takes an agent there |
+
+So coverage is measured on EC2 instances, and the rest is listed under *In
+AWS, and not Tenable's to scan* with a count per kind.
+
+### Where the instances come from
+
+The network capture (every instance with its state, Name tag and private
+address, in the accounts the sign-in reaches) plus the posture inventory's EC2
+list for accounts it cannot read. Running instances are counted; stopped ones
+are shown apart (an agent reports when the machine is on). Instances in the
+inline firewall's account — the account that owns the gateway load balancer,
+never a name — are set aside as appliances.
+
+### Every running instance is an asset
+
+After every capture, `register_missing()` gives a running instance with no
+record one of its own, so its gap is a row in a list and not only a number:
+named by instance id, because a Name tag is not unique (an Elastic Beanstalk
+environment names every instance the same, and a shared name would fold two
+machines into one row). The tag goes to `business_service`. `retire_gone()`
+retires those records when their instance disappears — only in accounts the
+capture read, so a partial read retires nothing.
+
+### What the capture tells each record
+
+`enrich()`, after every capture. A record the posture inventory made is often
+an instance id and nothing else; the capture holds the Name tag, private
+address, region, platform (`platformDetails`, captured with instance type,
+AMI and launch time) and state. The tag becomes the hostname when it is unique
+among instances and no other asset already uses the name (else the id stays
+and the list shows the tag beneath it, from `business_service`). A **stopped**
+instance is `spare` — out of the reporting scope and the agent-gap lists — and
+`in_service` again once it runs; only on records AWS or the posture inventory
+made. Instances in the inline firewall's account become appliances. Address,
+region and OS fill in where empty and never overwrite. AWS reports many Linux
+instances only as "Linux/UNIX", too coarse for the agent support table, so
+they read *Agent — OS unknown*; the distribution would need the AMI's details.
+
+### Twins
+
+The posture inventory names an instance with no Name tag by its id. A domain
+controller Intune and Defender already knew as `ad01` came in a second time as
+`i-0…`: one row said "Defender, not in AWS", the other "in AWS, no Defender",
+and the machine read as a gap it is not. `link_twins()` joins them when the
+instance's **private address matches exactly and** the Name tag is the
+hostname, or the hostname followed by `-`, `_` or `.` (`appsrv01-p1aa`), and
+exactly one row qualifies. The id-named row is merged into the twin
+(`Duplicates::merge()` carries the instance id and cloud fields across) and
+loses its instance id, so the next posture sync matches the twin, not the
+retired row. Core's hostname rule never lets a bare instance id rename a
+record a person named — the same rule it already had for `ip-10-…` names.
+
+### Numbers, filters, export
+
+- **`aws=ec2`** (running) and **`aws=ec2_stopped`** on Assets & owners, as an
+  *AWS* control, through `vulnhub_assets_query`; in the asset CSV export.
+- **`coverage=ok`** (Tenable holds it: `Coverage::in_tenable_states()`) and
+  **`defender=ok`** (`Defender_Coverage::covered_states()`) beside the
+  existing `gap` values, so the widget's two-by-two — Tenable yes/no against
+  Defender yes/no — links every cell to exactly its rows.
+- Every number on the widget is a `Repo::assets()` count with the arguments
+  of the list it opens.
+- A gap row that the internet can reach carries *open from outside*
+  (`docs/ATTACK-PATHS.md`).
+
+Checked on the live estate after linking and registering: 81 running, 12
+stopped, 1 appliance set aside; both 49, Tenable only 12, Defender only 2,
+neither 17 — each equal to its list.
+
+---
+
 ## Checking it
 
 ```bash

@@ -1420,7 +1420,7 @@ final class VulnHub_Dash_App {
 		$vh_tab_carry = self::current_filters( array(
 			'search', 'patch_available', 'ticketed', 'os_eol', 'support', 'severity', 'asset_type', 'team_id', 'department',
 			'age', 'overdue', 'life', 'product', 'pkind', 'zone', 'platform', 'sev_not', 'route',
-			'delivery', 'poc', 'hosting', 'asset', 'state', 'orderby', 'order', 'location_id',
+			'delivery', 'poc', 'expo', 'hosting', 'asset', 'state', 'orderby', 'order', 'location_id',
 		) );
 		$vh_find_url  = self::page_url( 'vulnerabilities', $vh_tab_carry );
 		$vh_prod_url  = self::page_url( 'vulnerabilities', array_merge( $vh_tab_carry, array( 'tab' => 'products' ) ) );
@@ -1845,7 +1845,7 @@ final class VulnHub_Dash_App {
 				$vh_pcar = self::current_filters( array(
 					'search', 'patch_available', 'ticketed', 'os_eol', 'severity', 'asset_type', 'team_id', 'department',
 					'age', 'overdue', 'life', 'zone', 'platform', 'sev_not', 'route', 'delivery',
-					'poc', 'hosting', 'asset', 'state',
+					'poc', 'expo', 'hosting', 'asset', 'state',
 				) );
 				?>
 				<ul class="vh-prodlist vh-prodlist--exp">
@@ -2069,6 +2069,8 @@ final class VulnHub_Dash_App {
 	 * @return array<string,mixed>
 	 */
 	public static function assets_base_args( array $vh_scope, array $vh_source, string $orderby, string $order ): array {
+		$vh_merged = self::merged_asset_query();
+
 		return array(
 			'lifecycle_status'    => $vh_scope['lifecycle_status'],
 			'in_service_only'     => $vh_scope['in_service_only'],
@@ -2082,11 +2084,13 @@ final class VulnHub_Dash_App {
 			'asset_type'       => self::q( 'asset_type' ),
 			'team_id'          => self::qi( 'team_id' ),
 			'needs_user'       => self::q( 'needs_user' ),
-			'coverage'         => self::q( 'coverage' ),
-			'agent'            => self::q( 'agent' ),
-			'agent_dark'       => self::qi( 'agent_dark' ),
-			'tenable_dropped'  => self::qi( 'dropped' ),
+			'coverage'         => $vh_merged['coverage'],
+			'agent'            => $vh_merged['agent'],
+			'agent_dark'       => $vh_merged['agent_dark'],
+			'tenable_dropped'  => $vh_merged['dropped'],
 			'defender'         => self::q( 'defender' ),
+			// EC2 instances in AWS (vulnhub-aws, through `vulnhub_assets_query`).
+			'aws'              => $vh_merged['aws'],
 			'location_id'      => self::q( 'location_id' ),
 			'primary_source'   => self::q( 'primary_source' ),
 			'operating_system' => self::q( 'operating_system' ),
@@ -2096,7 +2100,7 @@ final class VulnHub_Dash_App {
 			 * Answered by vulnhub-hosting through `vulnhub_assets_query`; core
 			 * neither knows nor needs to know what a hosting environment is.
 			 */
-			'hosting'          => self::q( 'hosting' ),
+			'hosting'          => $vh_merged['hosting'],
 			/*
 			 * Inventory comparison, as the source-gap screen links it:
 			 * `has=tenable&missing=cmdb` is "Tenable scans it, the register has
@@ -2210,6 +2214,13 @@ final class VulnHub_Dash_App {
 					?><a class="vh-mono" href="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $a['id'] ) ) ); ?>"><strong><?php echo esc_html( (string) $a['hostname'] ); ?></strong></a>
 						<?php if ( ! $vh_in_svc ) : ?>
 							<span class="vh-chip vh-chip--warn"><?php echo esc_html( (string) ( vh_lifecycle_statuses()[ (string) $a['lifecycle_status'] ]['label'] ?? $a['lifecycle_status'] ) ); ?></span>
+						<?php endif; ?>
+						<?php
+						// An EC2 record named by its instance id (the Name tag is shared
+						// with another instance): say what it is under the id.
+						if ( preg_match( '/^i-[0-9a-f]{8,17}$/', (string) $a['hostname'] ) && '' !== (string) ( $a['business_service'] ?? '' ) && (string) $a['business_service'] !== (string) $a['hostname'] ) :
+							?>
+							<span class="vh-meta"><?php echo esc_html( (string) $a['business_service'] ); ?></span>
 						<?php endif; ?>
 						<span class="vh-meta"><?php echo esc_html( (string) $a['ipv4'] ); ?></span></td>
 					<td data-th="<?php esc_attr_e( 'Scan coverage', 'vulnhub' ); ?>">
@@ -2689,6 +2700,8 @@ final class VulnHub_Dash_App {
 			'route'      => self::q( 'route' ),
 			'delivery'   => self::q( 'delivery' ),
 			'poc'        => self::q( 'poc' ),
+			// Open to the internet and vulnerable on that port (vulnhub-threat).
+			'expo'       => self::q( 'expo' ),
 			'asset_type' => self::q( 'asset_type' ),
 			'team_id'    => self::qi( 'team_id' ),
 			'asset_id'   => self::qi( 'asset' ),
@@ -2772,7 +2785,7 @@ final class VulnHub_Dash_App {
 	 * the other would put the cells out of step with the header on scroll.
 	 */
 	public static function show_reach(): bool {
-		return 'edge' === self::q( 'route' ) && class_exists( 'VulnHub_Threat_Ports' );
+		return ( 'edge' === self::q( 'route' ) || '' !== self::q( 'expo' ) ) && class_exists( 'VulnHub_Threat_Ports' );
 	}
 
 	/**
@@ -3866,6 +3879,7 @@ final class VulnHub_Dash_App {
 			</div>
 		<?php endif; ?>
 
+		<?php $vh_merged = self::merged_asset_query(); ?>
 		<form class="vh-filters" method="get">
 			<?php
 			self::hidden_filters(
@@ -3876,7 +3890,7 @@ final class VulnHub_Dash_App {
 				 * comparison screen, and must survive Apply -- which is exactly
 				 * what being left out of this list does for them.
 				 */
-				array( 'search', 'asset_type', 'team_id', 'coverage', 'agent', 'agent_dark', 'dropped', 'defender', 'known', 'life', 'needs_user', 'location_id', 'hosting' )
+				array( 'search', 'asset_type', 'team_id', 'coverage', 'agent', 'agent_dark', 'dropped', 'defender', 'known', 'life', 'needs_user', 'location_id', 'hosting', 'aws' )
 			);
 			?>
 			<label><?php esc_html_e( 'Search', 'vulnhub' ); ?>
@@ -3925,6 +3939,8 @@ final class VulnHub_Dash_App {
 				<select name="coverage">
 					<option value=""><?php esc_html_e( 'Any coverage', 'vulnhub' ); ?></option>
 					<option value="gap" <?php selected( self::q( 'coverage' ), 'gap' ); ?>><?php esc_html_e( 'Any coverage gap', 'vulnhub' ); ?></option>
+					<option value="ok" <?php selected( self::q( 'coverage' ), 'ok' ); ?>><?php esc_html_e( 'Known to Tenable', 'vulnhub' ); ?></option>
+					<option value="dropped" <?php selected( 1 === $vh_merged['dropped'] ); ?> title="<?php esc_attr_e( 'Tenable has been asked directly and no longer holds these assets, while the CMDB still reports them in service.', 'vulnhub' ); ?>"><?php esc_html_e( 'Dropped by Tenable', 'vulnhub' ); ?></option>
 					<?php foreach ( Coverage::states() as $vh_cov_state => $vh_cov_def ) : ?>
 						<option value="<?php echo esc_attr( (string) $vh_cov_state ); ?>" <?php selected( self::q( 'coverage' ), (string) $vh_cov_state ); ?>>
 							<?php echo esc_html( (string) $vh_cov_def['label'] ); ?>
@@ -3943,23 +3959,19 @@ final class VulnHub_Dash_App {
 							<?php echo esc_html( (string) $vh_ag_def['label'] ); ?>
 						</option>
 					<?php endforeach; ?>
-				</select>
-			</label>
-			<label>
-				<span><?php esc_html_e( 'Agent dark for', 'vulnhub' ); ?></span>
-				<select name="agent_dark">
-					<option value=""><?php esc_html_e( 'Any', 'vulnhub' ); ?></option>
-					<?php foreach ( array( 1, 7, 14, 30, 90 ) as $vh_dark ) : ?>
-						<option value="<?php echo esc_attr( (string) $vh_dark ); ?>" <?php selected( self::qi( 'agent_dark' ), $vh_dark ); ?>>
-							<?php
-							printf(
-								/* translators: %d: number of days. */
-								esc_html( _n( 'Over %d day', 'Over %d days', $vh_dark, 'vulnhub' ) ),
-								(int) $vh_dark
-							);
-							?>
-						</option>
-					<?php endforeach; ?>
+					<optgroup label="<?php esc_attr_e( 'Agent offline', 'vulnhub' ); ?>">
+						<?php foreach ( array( 1, 7, 14, 30, 90 ) as $vh_dark ) : ?>
+							<option value="dark_<?php echo esc_attr( (string) $vh_dark ); ?>" <?php selected( $vh_merged['agent_dark'], $vh_dark ); ?>>
+								<?php
+								printf(
+									/* translators: %d: number of days. */
+									esc_html( _n( 'Offline for over %d day', 'Offline for over %d days', $vh_dark, 'vulnhub' ) ),
+									(int) $vh_dark
+								);
+								?>
+							</option>
+						<?php endforeach; ?>
+					</optgroup>
 				</select>
 			</label>
 			<label>
@@ -3967,6 +3979,7 @@ final class VulnHub_Dash_App {
 				<select name="defender">
 					<option value=""><?php esc_html_e( 'Any endpoint state', 'vulnhub' ); ?></option>
 					<option value="gap" <?php selected( self::q( 'defender' ), 'gap' ); ?>><?php esc_html_e( 'No Defender sensor', 'vulnhub' ); ?></option>
+					<option value="ok" <?php selected( self::q( 'defender' ), 'ok' ); ?>><?php esc_html_e( 'Defender sensor', 'vulnhub' ); ?></option>
 					<?php foreach ( Defender_Coverage::states() as $vh_dcov_state => $vh_dcov_def ) : ?>
 						<option value="<?php echo esc_attr( (string) $vh_dcov_state ); ?>" <?php selected( self::q( 'defender' ), (string) $vh_dcov_state ); ?>>
 							<?php echo esc_html( (string) $vh_dcov_def['label'] ); ?>
@@ -4017,10 +4030,16 @@ final class VulnHub_Dash_App {
 					<select name="hosting">
 						<option value=""><?php esc_html_e( 'Anywhere', 'vulnhub' ); ?></option>
 						<?php foreach ( VulnHub_Hosting::environment_labels() as $vh_env => $vh_env_label ) : ?>
-							<option value="<?php echo esc_attr( (string) $vh_env ); ?>" <?php selected( self::q( 'hosting' ), (string) $vh_env ); ?>>
+							<option value="<?php echo esc_attr( (string) $vh_env ); ?>" <?php selected( $vh_merged['hosting'], (string) $vh_env ); ?>>
 								<?php echo esc_html( $vh_env_label ); ?>
 							</option>
 						<?php endforeach; ?>
+						<?php if ( class_exists( 'VulnHub_AWS_Coverage' ) ) : ?>
+							<optgroup label="<?php esc_attr_e( 'AWS EC2 instances', 'vulnhub' ); ?>">
+								<option value="aws_ec2" <?php selected( $vh_merged['aws'], 'ec2' ); ?>><?php esc_html_e( 'AWS EC2, running', 'vulnhub' ); ?></option>
+								<option value="aws_ec2_stopped" <?php selected( $vh_merged['aws'], 'ec2_stopped' ); ?>><?php esc_html_e( 'AWS EC2, stopped', 'vulnhub' ); ?></option>
+							</optgroup>
+						<?php endif; ?>
 					</select>
 				</label>
 			<?php endif; ?>
@@ -4036,10 +4055,6 @@ final class VulnHub_Dash_App {
 						<option value="<?php echo esc_attr( $vh_ls ); ?>" <?php selected( self::q( 'life' ), $vh_ls ); ?>><?php echo esc_html( (string) $vh_lm['label'] ); ?></option>
 					<?php endforeach; ?>
 				</select>
-			</label>
-			<label class="vh-check" title="<?php esc_attr_e( 'Tenable has been asked directly and no longer holds these assets, while the CMDB still reports them in service.', 'vulnhub' ); ?>">
-				<input type="checkbox" name="dropped" value="1" <?php checked( self::qi( 'dropped' ), 1 ); ?>>
-				<?php esc_html_e( 'Dropped by Tenable', 'vulnhub' ); ?>
 			</label>
 			<label class="vh-check">
 				<input type="checkbox" name="needs_user" value="1" <?php checked( self::q( 'needs_user' ), '1' ); ?>>
@@ -4706,6 +4721,61 @@ final class VulnHub_Dash_App {
 			if ( isset( $get[ $key ] ) && ! is_array( $get[ $key ] ) && '' !== $get[ $key ] ) {
 				$out[ $key ] = sanitize_text_field( (string) $get[ $key ] );
 			}
+		}
+
+		return $out;
+	}
+
+	/**
+	 * The asset filters that share one control.
+	 *
+	 * Three questions used to have two controls each: *where does it run*
+	 * (Hosting, and AWS), *is the Tenable agent there* (Tenable agent, and
+	 * Agent dark for) and *does Tenable know it* (Scan coverage, and a Dropped
+	 * by Tenable checkbox). Each pair is now one select whose extra options
+	 * carry the second parameter's value -- `hosting=aws_ec2`,
+	 * `agent=dark_7`, `coverage=dropped` -- and this is the one place that
+	 * reads them back. The old parameters (`aws`, `agent_dark`, `dropped`)
+	 * still work, so every link a widget or a bookmark already holds does.
+	 *
+	 * @param array<string,string> $get Raw query values.
+	 * @return array{hosting:string,aws:string,agent:string,agent_dark:int,coverage:string,dropped:int}
+	 */
+	/** merged_asset_filters() over this request's query string. */
+	public static function merged_asset_query(): array {
+		return self::merged_asset_filters(
+			array(
+				'hosting'    => self::q( 'hosting' ),
+				'aws'        => self::q( 'aws' ),
+				'agent'      => self::q( 'agent' ),
+				'agent_dark' => (string) self::qi( 'agent_dark' ),
+				'coverage'   => self::q( 'coverage' ),
+				'dropped'    => (string) self::qi( 'dropped' ),
+			)
+		);
+	}
+
+	public static function merged_asset_filters( array $get ): array {
+		$out = array(
+			'hosting'    => (string) ( $get['hosting'] ?? '' ),
+			'aws'        => (string) ( $get['aws'] ?? '' ),
+			'agent'      => (string) ( $get['agent'] ?? '' ),
+			'agent_dark' => (int) ( $get['agent_dark'] ?? 0 ),
+			'coverage'   => (string) ( $get['coverage'] ?? '' ),
+			'dropped'    => (int) ( $get['dropped'] ?? 0 ),
+		);
+
+		if ( in_array( $out['hosting'], array( 'aws_ec2', 'aws_ec2_stopped' ), true ) ) {
+			$out['aws']     = 'aws_ec2' === $out['hosting'] ? 'ec2' : 'ec2_stopped';
+			$out['hosting'] = '';
+		}
+		if ( preg_match( '/^dark_(\d+)$/', $out['agent'], $m ) ) {
+			$out['agent_dark'] = (int) $m[1];
+			$out['agent']      = '';
+		}
+		if ( 'dropped' === $out['coverage'] ) {
+			$out['dropped']  = 1;
+			$out['coverage'] = '';
 		}
 
 		return $out;

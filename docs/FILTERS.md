@@ -272,6 +272,29 @@ counted against the number printed on it.
 
 ---
 
+## 9. Coverage filters could say "gap" but not "covered"
+
+`coverage=` and `defender=` on Assets & owners took a state or `gap`, and
+nothing for the opposite. A two-by-two of Tenable against Defender needs all
+four corners, and "not a gap" is not "covered" (out-of-scope rows are
+neither). So both now take **`ok`**, from each class's own list of covered
+states, and the AWS widget's cells are `coverage=ok|gap` × `defender=ok|gap`
+under **`aws=ec2`** — each count equal to its list. `aws` is on the asset
+export allow-list. See `docs/COVERAGE.md`, *AWS*.
+
+## 10. Three questions, six controls
+
+Assets & owners asked three questions twice each: *where does it run*
+(Hosting, and an AWS control), *is the Tenable agent there* (Tenable agent,
+and Agent dark for) and *does Tenable know it* (Scan coverage, and a Dropped
+by Tenable checkbox). Each pair is now one select; the second parameter's
+values are extra options — `hosting=aws_ec2|aws_ec2_stopped`,
+`agent=dark_1|7|14|30|90`, `coverage=dropped` — read back in one place,
+`VulnHub_Dash_App::merged_asset_filters()`, which the list and the CSV export
+both call. The old parameters (`aws`, `agent_dark`, `dropped`) still work, so
+every link a widget or a bookmark holds does. Checked: each old and new form
+returns the same count, and a merged value survives Apply.
+
 ## What was checked and found sound
 
 Worth recording, so the next audit does not re-tread it:

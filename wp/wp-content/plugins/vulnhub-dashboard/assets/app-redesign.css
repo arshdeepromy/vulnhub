@@ -3087,3 +3087,51 @@ dialog.vh-ask::backdrop { background: rgba(4, 8, 18, .6); }
 	.vh-table tbody tr.vh-trow--chase > td { animation: none; background: color-mix(in srgb, var(--vh-bad) 13%, transparent); }
 	.vh-tbell svg, .vh-foryou.has-yours .vh-foryou__bell svg { animation: none; }
 }
+
+/* ---------------------------------------------------------------------
+ * AWS servers: Tenable and Defender coverage (VulnHub_AWS_Coverage).
+ * The two-by-two reads as a question: across the top "has Defender",
+ * down the side "has Tenable"; the bottom-right cell is nobody looking.
+ * ------------------------------------------------------------------- */
+.vh-awscov { display: grid; gap: 16px; }
+.vh-awscov__grid {
+	display: grid; grid-template-columns: auto 1fr 1fr; grid-template-rows: auto auto 1fr 1fr;
+	gap: 6px; max-width: 560px; align-items: stretch;
+}
+.vh-awscov__axis { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--vh-muted); }
+.vh-awscov__axis--top { grid-column: 2 / 4; text-align: center; }
+.vh-awscov__axis--side { grid-row: 1 / 3; align-self: end; }
+.vh-awscov__h { font-size: 12px; color: var(--vh-muted); text-align: center; }
+.vh-awscov__r { font-size: 12px; color: var(--vh-muted); align-self: center; padding-right: 6px; }
+.vh-awscov__cell {
+	--c: var(--vh-muted);
+	display: grid; gap: 2px; padding: 12px 14px; border-radius: 10px; text-decoration: none; color: var(--vh-ink);
+	border: 1px solid color-mix(in srgb, var(--c) 40%, transparent);
+	background: color-mix(in srgb, var(--c) 10%, transparent);
+}
+.vh-awscov__cell b { font-size: 26px; line-height: 1; color: var(--c); font-variant-numeric: tabular-nums; }
+.vh-awscov__cell span { font-size: 12.5px; font-weight: 600; }
+.vh-awscov__cell i { font-style: normal; font-size: 11.5px; color: var(--vh-muted); }
+.vh-awscov__cell:hover { background: color-mix(in srgb, var(--c) 18%, transparent); }
+.vh-awscov__cell--good { --c: var(--vh-good); }
+.vh-awscov__cell--warn { --c: var(--vh-warn); }
+.vh-awscov__cell--bad  { --c: var(--vh-bad); }
+.vh-awscov__h4 { margin: 4px 0 6px; font-size: 13px; font-weight: 650; color: var(--vh-ink); }
+.vh-awscov__list { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.vh-awscov__list li {
+	display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; padding: 7px 10px;
+	border: 1px solid var(--vh-line); border-radius: 8px; font-size: 12.5px;
+}
+.vh-awscov__list a { font-weight: 600; color: var(--vh-link); text-decoration: none; }
+.vh-awscov__id, .vh-awscov__os, .vh-awscov__acct { color: var(--vh-muted); font-size: 12px; }
+.vh-awscov__id { font-family: var(--vh-font-mono, ui-monospace, monospace); font-size: 11px; }
+.vh-awscov__chip { padding: 1px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 600; border: 1px solid var(--vh-line); }
+.vh-awscov__chip--ok   { color: var(--vh-good); border-color: color-mix(in srgb, var(--vh-good) 45%, transparent); }
+.vh-awscov__chip--bad  { color: var(--vh-bad); border-color: color-mix(in srgb, var(--vh-bad) 45%, transparent); }
+.vh-awscov__chip--open { color: #fff; background: var(--vh-bad); border-color: transparent; }
+.vh-awscov__missing { margin: 0; padding: 8px 12px; border-left: 3px solid var(--vh-warn); border-radius: 0 8px 8px 0; font-size: 12.5px; background: color-mix(in srgb, var(--vh-warn) 7%, transparent); }
+.vh-awscov__svclist { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px; }
+.vh-awscov__svclist li { padding: 4px 10px; border: 1px dashed var(--vh-line-strong, var(--vh-line)); border-radius: 999px; font-size: 12px; color: var(--vh-muted); cursor: help; }
+.vh-awscov__svclist b { color: var(--vh-ink); }
+.vh-awscov__when, .vh-awscov__other { margin: 0; }
+@media (max-width: 700px) { .vh-awscov__grid { max-width: none; } }

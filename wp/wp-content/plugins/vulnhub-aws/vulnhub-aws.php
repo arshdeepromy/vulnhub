@@ -79,11 +79,28 @@ add_action(
 add_filter(
 	'vulnhub_cloud_reachable_assets',
 	static function ( array $assets ): array {
+		// The network map first: it is read from the captured rules and
+		// needs no live session. The older live-API walk fills in behind it.
+		if ( class_exists( 'VulnHub_AWS_Exposure' ) ) {
+			$assets = $assets + VulnHub_AWS_Exposure::reachable_assets();
+		}
+
 		if ( ! class_exists( 'VulnHub_AWS_Reachability' ) ) {
 			return $assets;
 		}
 
 		return $assets + VulnHub_AWS_Reachability::reachable_assets();
+	}
+);
+
+/**
+ * Hand the threat context every way in, port by port: which servers the
+ * internet can open which ports on, and how. See VulnHub_AWS_Exposure::all().
+ */
+add_filter(
+	'vulnhub_internet_paths',
+	static function ( array $paths ): array {
+		return class_exists( 'VulnHub_AWS_Exposure' ) ? VulnHub_AWS_Exposure::all() : $paths;
 	}
 );
 
@@ -163,5 +180,8 @@ add_action(
  */
 require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-environment.php';
 require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-network.php';
+require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-exposure.php';
+require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-coverage.php';
+VulnHub_AWS_Coverage::init();
 require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-network-page.php';
 VulnHub_AWS_Network_Page::init();

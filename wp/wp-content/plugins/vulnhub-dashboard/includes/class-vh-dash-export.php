@@ -956,16 +956,27 @@ final class VulnHub_Dash_Export {
 	 * @param array<string,array<string,mixed>> $cols Chosen columns.
 	 */
 	private static function assets( $out, array $cols ): void {
-		$base = array_filter(
+		// The same reading of the merged controls the screen uses.
+		$merged = VulnHub_Dash_App::merged_asset_filters(
+			array(
+				'hosting'    => self::get( 'hosting' ),
+				'aws'        => self::get( 'aws' ),
+				'agent'      => self::get( 'agent' ),
+				'agent_dark' => self::get( 'agent_dark' ),
+				'coverage'   => self::get( 'coverage' ),
+				'dropped'    => self::get( 'dropped' ),
+			)
+		);
+		$base   = array_filter(
 			array(
 				'search'              => self::get( 'search' ),
 				'asset_type'          => self::get( 'asset_type' ),
 				'team_id'             => self::get_int( 'team_id' ),
 				'location_id'         => self::get( 'location_id' ),
-				'coverage'            => self::get( 'coverage' ),
-				'agent'               => self::get( 'agent' ),
-				'agent_dark'          => (int) self::get( 'agent_dark' ),
-				'tenable_dropped'     => (int) self::get( 'dropped' ),
+				'coverage'            => $merged['coverage'],
+				'agent'               => $merged['agent'],
+				'agent_dark'          => (int) $merged['agent_dark'],
+				'tenable_dropped'     => (int) $merged['dropped'],
 				/*
 				 * Carried explicitly. The assets view resolves `known` into
 				 * source/without_source/sole_source before the button sees
@@ -974,6 +985,8 @@ final class VulnHub_Dash_Export {
 				 * quietly returned the whole estate.
 				 */
 				'defender'            => self::get( 'defender' ),
+				// EC2 scope (vulnhub-aws): the export holds what the screen does.
+				'aws'                 => $merged['aws'],
 				'needs_user'          => self::get( 'needs_user' ),
 				'primary_source'      => self::get( 'primary_source' ),
 				'operating_system'    => self::get( 'operating_system' ),
@@ -988,7 +1001,7 @@ final class VulnHub_Dash_Export {
 				 * `defender` above is -- a file that quietly holds the whole
 				 * estate when the screen showed 210 rows is worse than no file.
 				 */
-				'hosting'             => self::get( 'hosting' ),
+				'hosting'             => $merged['hosting'],
 				'has'                 => self::get( 'has' ),
 				'missing'             => self::get( 'missing' ),
 				'eol'                 => self::get( 'eol' ),
@@ -1061,6 +1074,7 @@ final class VulnHub_Dash_Export {
 				'route'           => self::get( 'route' ),
 				'delivery'        => self::get( 'delivery' ),
 				'poc'             => self::get( 'poc' ),
+				'expo'            => self::get( 'expo' ),
 				'vuln_id'         => self::get_int( 'vuln' ),
 				'asset_id'        => self::get_int( 'asset' ),
 				/*
@@ -1318,6 +1332,7 @@ final class VulnHub_Dash_Export {
 				'product_kind'    => self::get( 'product_kind' ),
 				'route'           => self::get( 'route' ),
 				'poc'             => self::get( 'poc' ),
+				'expo'            => self::get( 'expo' ),
 				'patch_available' => self::get( 'patch_available' ),
 				// On a ticket or not, from the "raised vs not raised" report.
 				'has_ticket'      => self::get( 'has_ticket' ),
