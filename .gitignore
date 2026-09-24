@@ -28,3 +28,7 @@ docs/AWS-EXPOSURE-WIP.md
 # Pick-up-here notes. Names real accounts and appliances by design; the
 # sanitised version of everything in it is already in docs/. Never commit.
 WORKLOG.md
+
+# Session-start briefing: where prod/dev lives and how to work on it. Names
+# real hosts and paths. Never commit.
+SESSION-START.md
