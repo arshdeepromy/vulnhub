@@ -82,7 +82,7 @@ add_action(
  * throws away the Tenable widgets. An unknown connector still invalidates
  * everything, because an unmapped blast radius is an unbounded one.
  */
-add_action( 'vulnhub_sync_complete', array( 'VulnHub_Dash_Widgets', 'bust_for_connector' ), 99, 1 );
+add_action( 'vulnhub_sync_complete', array( 'VulnHub_Dash_Widgets', 'bust_for_connector' ), 99, 3 );
 
 /*
  * These two mean "anything may have moved". Registered with no arguments on

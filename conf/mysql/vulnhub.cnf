@@ -43,3 +43,11 @@ slow_query_log      = 1
 slow_query_log_file = /var/lib/mysql/slow.log
 long_query_time     = 1
 
+
+# In-memory temporary tables for GROUP BY / DISTINCT over findings. At the
+# 16M default, about a third of all temp tables spilled to disk. Both must
+# be raised together (the smaller wins). Allocated per query only when a
+# temp table actually grows, so 64M is a ceiling, not a reservation -- kept
+# modest because this host is shared with other stacks.
+tmp_table_size      = 64M
+max_heap_table_size = 64M

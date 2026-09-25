@@ -3089,6 +3089,33 @@ final class Repo {
 	public static function patch_sql( string $alias = 'v' ): string {
 		$a = $alias ? $alias . '.' : '';
 
+		/*
+		 * Read from the column when it exists. vh_patchable is a STORED
+		 * generated column built from patch_test_sql() below, so MariaDB
+		 * evaluates the test once when a vulnerability is written instead of
+		 * re-running two LOCATE()s over `solution` for every joined finding on
+		 * every read -- which is most of what the classification queries were
+		 * spending. Same test, same answer; see derived_ready().
+		 */
+		if ( self::derived_ready() ) {
+			return "( {$a}vh_patchable = 1 )";
+		}
+
+		return self::patch_test_sql( $alias );
+	}
+
+	/**
+	 * The patch-availability test itself, written against the raw columns.
+	 *
+	 * The one definition: patch_sql() uses it until the generated column
+	 * exists, and Install builds vh_patchable from it (with an empty alias),
+	 * so the column can never disagree with the test.
+	 *
+	 * @param string $alias Table alias, or '' for an unaliased expression.
+	 */
+	public static function patch_test_sql( string $alias = 'v' ): string {
+		$a = $alias ? $alias . '.' : '';
+
 		// The date guard is not paranoia: an import that could not parse a
 		// date once wrote the epoch rather than NULL, and "patched on 1
 		// January 1970" would have counted every one of those as fixed.
@@ -3098,6 +3125,50 @@ final class Repo {
 			. " AND {$a}patch_publication_date > '1970-01-02' )"
 			. " OR ( {$a}solution IS NOT NULL AND {$a}solution <> ''"
 			. " AND LOCATE( 'There is no known solution', {$a}solution ) <> 1 ) )";
+	}
+
+	/** Memo for derived_ready(), per request. */
+	private static ?bool $derived = null;
+
+	/**
+	 * Are the generated columns on vulns there to read?
+	 *
+	 * Asked of the table rather than trusted from an option, because the
+	 * answer can change underneath the code: restoring a backup taken before
+	 * the columns existed puts back a vulns table without them, and a query
+	 * naming a missing column fails outright rather than getting slower. The
+	 * restore flushes the object cache, so the next request asks again and
+	 * falls back to the raw tests until Install adds the columns back.
+	 *
+	 * One SHOW COLUMNS, cached for ten minutes -- nothing on the read path.
+	 */
+	public static function derived_ready(): bool {
+		if ( null !== self::$derived ) {
+			return self::$derived;
+		}
+
+		$hit = wp_cache_get( 'derived_cols', 'vulnhub' );
+
+		if ( false !== $hit ) {
+			self::$derived = ( 'yes' === $hit );
+			return self::$derived;
+		}
+
+		global $wpdb;
+
+		$table = vh_table( 'vulns' );
+		$cols  = (array) $wpdb->get_col( "SHOW COLUMNS FROM {$table} WHERE Field IN ( 'vh_patchable', 'vh_fix_action' )" ); // phpcs:ignore WordPress.DB
+
+		self::$derived = 2 === count( $cols );
+		wp_cache_set( 'derived_cols', self::$derived ? 'yes' : 'no', 'vulnhub', 10 * MINUTE_IN_SECONDS );
+
+		return self::$derived;
+	}
+
+	/** Forget the answer, after Install has added (or failed to add) the columns. */
+	public static function derived_forget(): void {
+		self::$derived = null;
+		wp_cache_delete( 'derived_cols', 'vulnhub' );
 	}
 
 	/* -----------------------------------------------------------------

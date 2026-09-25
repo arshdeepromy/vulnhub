@@ -684,6 +684,9 @@ final class Install {
 			dbDelta( $statement );
 		}
 
+		// v38: after dbDelta, which cannot express a generated column.
+		self::derived_columns();
+
 		// v14 added coverage columns; they mean nothing until they are filled.
 		if ( class_exists( '\\VulnHub\\Core\\Coverage' ) ) {
 			Coverage::recalculate();
@@ -692,6 +695,57 @@ final class Install {
 		update_option( 'vulnhub_db_version', VULNHUB_DB_VERSION, false );
 
 		self::seed_defaults();
+	}
+
+	/**
+	 * v38: the vulnerability-level fix tests, stored as generated columns.
+	 *
+	 * Both answers belong to the vulnerability and only change when its
+	 * solution or patch date does, yet every classification query was
+	 * re-deriving them with LOCATE() over the longtext `solution` for every
+	 * joined finding. STORED generated columns make MariaDB compute them on
+	 * write, so they cannot go stale and need no sync hook or trigger to keep
+	 * them right -- whichever path writes a vulnerability, the column follows.
+	 *
+	 * Built from the very methods the queries used (Repo::patch_test_sql(),
+	 * VH_Action::fix_action_sql()), so the column and the fallback can never
+	 * disagree. Not in the CREATE TABLE above because dbDelta does not
+	 * understand generated columns; dbDelta also never drops a column it was
+	 * not told about, so the two coexist.
+	 *
+	 * Backups: the backup runner dumps SELECT * and restores through wpdb,
+	 * whose session is non-strict, so a value written into a generated column
+	 * on restore is ignored with a warning and recomputed. A backup from
+	 * before v38 restores a vulns table without these columns;
+	 * Repo::derived_ready() notices and the raw tests run until this adds
+	 * them back on the next upgrade check.
+	 */
+	private static function derived_columns(): void {
+		global $wpdb;
+
+		if ( ! class_exists( '\\VH_Action' ) ) {
+			require_once VULNHUB_DIR . 'includes/class-vh-action.php';
+		}
+		if ( ! class_exists( '\\VulnHub\\Core\\Repo' ) ) {
+			require_once VULNHUB_DIR . 'includes/class-vh-repo.php';
+		}
+
+		$vulns = $wpdb->prefix . 'vulnhub_vulns';
+
+		$want = array(
+			'vh_patchable'  => 'tinyint(1) AS ( IF( ' . Repo::patch_test_sql( '' ) . ', 1, 0 ) ) STORED',
+			'vh_fix_action' => 'varchar(12) AS ( ' . \VH_Action::fix_action_sql() . ' ) STORED',
+		);
+
+		foreach ( $want as $column => $definition ) {
+			$has = $wpdb->get_var( "SHOW COLUMNS FROM {$vulns} WHERE Field = '{$column}'" ); // phpcs:ignore WordPress.DB
+
+			if ( ! $has ) {
+				$wpdb->query( "ALTER TABLE {$vulns} ADD COLUMN {$column} {$definition}" ); // phpcs:ignore WordPress.DB
+			}
+		}
+
+		Repo::derived_forget();
 	}
 
 	/**

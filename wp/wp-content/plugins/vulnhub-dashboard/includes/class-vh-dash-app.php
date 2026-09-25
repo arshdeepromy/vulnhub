@@ -2439,7 +2439,11 @@ final class VulnHub_Dash_App {
 	 * @return array<string,mixed>
 	 */
 	private static function cached_group( array $args ): array {
-		$ttl = (int) apply_filters( 'vulnhub_group_cache_ttl', 10 * MINUTE_IN_SECONDS, $args );
+		/*
+		 * An hour: rule 2 below is what keeps this honest, not the TTL, which
+		 * only bounds how long a clock-relative filter (age, overdue) can lag.
+		 */
+		$ttl = (int) apply_filters( 'vulnhub_group_cache_ttl', HOUR_IN_SECONDS, $args );
 
 		if ( $ttl < 1 || ! class_exists( 'VulnHub_Dash_Widgets' ) ) {
 			return Repo::findings( $args );
@@ -2447,7 +2451,16 @@ final class VulnHub_Dash_App {
 
 		ksort( $args );
 
-		$key = 'vh_grp_' . md5( VulnHub_Dash_Widgets::epoch() . '|' . wp_json_encode( $args ) );
+		/*
+		 * Keyed on the finding-data stamp, not the global one. The global
+		 * stamp also moves for syncs that cannot change a finding row -- a
+		 * cloud-posture run every hour, and (until no-op syncs stopped
+		 * busting) every half-hourly Jira check -- and each move meant the
+		 * next person to open a grouped page waited for the full aggregate
+		 * again. data_epoch() still moves on every source a finding query can
+		 * read and on every bust of unknown reach, so rule 2 holds.
+		 */
+		$key = 'vh_grp_' . md5( VulnHub_Dash_Widgets::data_epoch() . '|' . wp_json_encode( $args ) );
 		$hit = get_transient( $key );
 
 		if ( is_array( $hit ) ) {

@@ -763,9 +763,44 @@ final class VulnHub_Dash_Widgets {
 				'jira'     => array( 'tickets' ),
 				'threat'   => array( 'threat', 'findings' ),
 				'alerts'   => array( 'threat' ),
+				/*
+				 * Cloud posture. Both run hourly and were missing from this
+				 * map, and an unmapped connector busts everything -- so every
+				 * Plerion run threw away every widget and rebuilt the whole
+				 * board, although Plerion writes only its own findings and
+				 * cloud-resource tables. 'cloud' is a source no widget
+				 * declares yet, so it reaches exactly the widgets that declare
+				 * nothing (they read the global stamp, which every bust
+				 * moves). AWS also places instances on assets, hence the rest.
+				 */
+				'plerion'  => array( 'cloud' ),
+				'aws'      => array( 'cloud', 'assets', 'coverage' ),
 			)
 		);
 	}
+
+	/**
+	 * Connectors whose sync counters are exact about what they changed.
+	 *
+	 * For these, a successful run that created, updated and failed nothing
+	 * moved nothing, so it busts nothing. Jira is the case that matters: it
+	 * checks every open ticket every half hour and nearly always reports
+	 * "0 changed", and each of those used to tick the global stamp -- which
+	 * invalidated every widget that declares no sources, and every cached
+	 * findings page (VulnHub_Dash_App::cached_group()) with them.
+	 *
+	 * Opt-in on purpose. A connector whose counters undercount (Plerion
+	 * reports zeroes while writing thousands of rows) must not be here, or
+	 * its changes would never reach the screen.
+	 *
+	 * @return array<int,string>
+	 */
+	public static function exact_count_connectors(): array {
+		return (array) apply_filters( 'vulnhub_widget_exact_count_connectors', array( 'jira' ) );
+	}
+
+	/** Set when the last sync bust was skipped as a no-op, for queue_warm(). */
+	private static bool $noop_sync = false;
 
 	/**
 	 * One source's stamp.
@@ -817,6 +852,27 @@ final class VulnHub_Dash_Widgets {
 		return (string) get_option( 'vulnhub_widget_floor', '0' );
 	}
 
+	/**
+	 * A stamp for the finding data itself: the floor and every data source.
+	 *
+	 * For caches that answer questions about findings rather than render a
+	 * widget (VulnHub_Dash_App::cached_group()). The global epoch() would do
+	 * the same job but also moves on sources that cannot change a finding
+	 * row -- a cloud-posture sync ticks it every hour -- and each tick threw
+	 * those caches away. Every source a finding query can read is in
+	 * sources(), and anything of unknown reach moves the floor, so nothing
+	 * that could change the answer is missed.
+	 */
+	public static function data_epoch(): string {
+		$parts = array( self::epoch_floor() );
+
+		foreach ( self::sources() as $source ) {
+			$parts[] = $source . ':' . self::source_epoch( (string) $source );
+		}
+
+		return md5( implode( '|', $parts ) );
+	}
+
 	/** Bump a counter option and return the new value. */
 	private static function tick( string $option ): string {
 		$next = (string) ( (int) get_option( $option, '0' ) + 1 );
@@ -850,7 +906,25 @@ final class VulnHub_Dash_Widgets {
 	 *
 	 * @param string $connector Connector id.
 	 */
-	public static function bust_for_connector( string $connector = '' ): void {
+	public static function bust_for_connector( string $connector = '', string $status = '', $stats = array() ): void {
+		self::$noop_sync = false;
+
+		/*
+		 * A run that moved nothing busts nothing -- but only for connectors
+		 * whose counters are trusted to say so (exact_count_connectors()).
+		 * $status and $stats arrive from vulnhub_sync_complete; the REST
+		 * webhook path calls this with the connector alone and always busts.
+		 */
+		if ( 'success' === $status && is_array( $stats ) && $stats
+			&& in_array( $connector, self::exact_count_connectors(), true ) ) {
+			$moved = (int) ( $stats['created'] ?? 0 ) + (int) ( $stats['updated'] ?? 0 ) + (int) ( $stats['failed'] ?? 0 );
+
+			if ( 0 === $moved ) {
+				self::$noop_sync = true;
+				return;
+			}
+		}
+
 		$map = self::connector_sources();
 
 		// An unknown connector could have moved anything.
@@ -873,7 +947,15 @@ final class VulnHub_Dash_Widgets {
 	 * about 1.7 s cold, and nothing about that is worth paying twice.
 	 */
 	public static function ttl(): int {
-		return (int) apply_filters( 'vulnhub_widget_cache_ttl', 15 * MINUTE_IN_SECONDS );
+		/*
+		 * 55 minutes, not 15. The epoch already invalidates a widget the
+		 * moment its data moves, so this only has to cover numbers that age
+		 * with the clock (age buckets, overdue, expiring exceptions) -- and
+		 * the hourly warm re-renders anything past it. At 15 minutes, every
+		 * reader after a quiet quarter-hour queued a re-render of every
+		 * widget on the board for data that had not changed.
+		 */
+		return (int) apply_filters( 'vulnhub_widget_cache_ttl', 55 * MINUTE_IN_SECONDS );
 	}
 
 	/**
@@ -887,7 +969,14 @@ final class VulnHub_Dash_Widgets {
 	 * once.
 	 */
 	public static function stale_ttl(): int {
-		return (int) apply_filters( 'vulnhub_widget_stale_ttl', 6 * HOUR_IN_SECONDS );
+		/*
+		 * A week. After six hours nobody had looked, the entry expired
+		 * outright and the next reader rendered the whole board in front of
+		 * themselves -- the Monday-morning wait. Stale markup is always
+		 * replaced within the minute by the refresh it queues, so keeping it
+		 * longer costs a few kilobytes of Redis and nothing in correctness.
+		 */
+		return (int) apply_filters( 'vulnhub_widget_stale_ttl', 7 * DAY_IN_SECONDS );
 	}
 
 	/** Hook that renders one widget in the background. */
@@ -932,6 +1021,12 @@ final class VulnHub_Dash_Widgets {
 	 * means they do not get stale numbers for long either.
 	 */
 	public static function queue_warm(): void {
+		// The sync that just finished moved nothing (bust_for_connector()).
+		if ( self::$noop_sync ) {
+			self::$noop_sync = false;
+			return;
+		}
+
 		if ( false !== get_transient( 'vh_warm_lock' ) ) {
 			return;
 		}
@@ -987,12 +1082,26 @@ final class VulnHub_Dash_Widgets {
 			}
 		}
 
-		$done = 0;
-		foreach ( $hosts as $host ) {
-			foreach ( $ids as $id ) {
-				self::refresh( (string) $id, (string) $host );
-				++$done;
+		/*
+		 * Each widget is rendered once, for every host at the same time
+		 * (refresh_hosts()), and only if its data or its clock has moved.
+		 *
+		 * This loop used to render every widget once per host, whatever had
+		 * changed: three hosts made it 108 renders and ~230 seconds of heavy
+		 * aggregates on every sync, several dozen times a day, for markup
+		 * that differed only in its origin. A widget whose copies are all on
+		 * the current epoch and fresh is now skipped outright.
+		 */
+		$done    = 0;
+		$skipped = 0;
+		foreach ( $ids as $id ) {
+			if ( self::current_for( (string) $id, $hosts ) ) {
+				++$skipped;
+				continue;
 			}
+
+			self::refresh_hosts( (string) $id, $hosts );
+			++$done;
 		}
 
 		update_option(
@@ -1000,6 +1109,7 @@ final class VulnHub_Dash_Widgets {
 			array(
 				'at'      => time(),
 				'widgets' => $done,
+				'skipped' => $skipped,
 				'hosts'   => count( $hosts ),
 				'seconds' => round( microtime( true ) - $started, 2 ),
 				'epoch'   => self::epoch(),
@@ -1096,37 +1206,138 @@ final class VulnHub_Dash_Widgets {
 	 * queue_refresh().
 	 */
 	public static function refresh( string $id, string $host = '' ): void {
+		/*
+		 * One stale read on one host refreshes every host's copy: the render
+		 * is the expensive part and the copies differ only in their origin
+		 * (refresh_hosts()), so the next reader on another host does not
+		 * queue the same aggregates a second time.
+		 */
+		$first = '' !== $host ? $host : home_url();
+		$hosts = array_map( 'strval', (array) get_option( self::HOSTS_KEY, array() ) );
+
+		self::refresh_hosts( $id, array_values( array_unique( array_merge( array( $first ), $hosts ) ) ) );
+	}
+
+	/**
+	 * Render one widget once and store a copy for each host.
+	 *
+	 * The markup is rendered under the first host (see refresh()'s history
+	 * for why the host has to be put back in a cron process), and each other
+	 * host's copy is the same markup with the origin swapped. Verified
+	 * against three hosts' independently rendered copies of the whole board:
+	 * identical apart from the auto-numbered element ids, which are a
+	 * per-process counter and were already different between hosts.
+	 *
+	 * @param array<int,string> $hosts Hosts, first one rendered for.
+	 */
+	private static function refresh_hosts( string $id, array $hosts ): void {
 		$all = self::all();
 
-		if ( ! isset( $all[ $id ] ) || ! is_callable( $all[ $id ]['render'] ) ) {
+		if ( ! isset( $all[ $id ] ) || ! is_callable( $all[ $id ]['render'] ) || ! $hosts ) {
 			return;
+		}
+
+		$first = (string) reset( $hosts );
+		$html  = (string) self::with_host(
+			$first,
+			static function () use ( $all, $id, $first ): string {
+				ob_start();
+				call_user_func( $all[ $id ]['render'] );
+
+				return self::rehost( (string) ob_get_clean(), $first );
+			}
+		);
+
+		foreach ( $hosts as $host ) {
+			$host = (string) $host;
+			$copy = $host === $first ? $html : self::swap_host( $html, $first, $host );
+
+			/*
+			 * Stored with the host's filters still on: store() builds the key
+			 * from home_url(), so storing outside them writes the entry under
+			 * the rendering process's own host instead of the one it is for
+			 * -- which looks exactly like the warm doing nothing.
+			 */
+			self::with_host(
+				$host,
+				static function () use ( $id, $copy ): void {
+					self::store( $id, $copy );
+				}
+			);
+
+			delete_transient( 'vh_wref_' . md5( $id . '|' . ( '' !== $host ? $host : home_url() ) ) );
+		}
+	}
+
+	/**
+	 * Are all hosts' copies of a widget on its current epoch and fresh?
+	 *
+	 * Fresh with a few minutes to spare, so a warm that runs just before an
+	 * entry would lapse renews it rather than leaving it to the next reader.
+	 *
+	 * @param array<int,string> $hosts Hosts.
+	 */
+	private static function current_for( string $id, array $hosts ): bool {
+		$epoch = self::widget_epoch( $id );
+		$until = time() + 5 * MINUTE_IN_SECONDS;
+
+		foreach ( $hosts as $host ) {
+			$entry = self::with_host(
+				(string) $host,
+				static fn() => get_transient( self::cache_key( $id ) )
+			);
+
+			if ( ! is_array( $entry ) || (string) ( $entry['epoch'] ?? '' ) !== $epoch || (int) ( $entry['fresh_until'] ?? 0 ) < $until ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Run $fn with home_url() and site_url() answering as $host.
+	 *
+	 * @return mixed Whatever $fn returns.
+	 */
+	private static function with_host( string $host, callable $fn ) {
+		if ( '' === $host ) {
+			return $fn();
 		}
 
 		$filter = static fn(): string => $host;
 
-		if ( '' !== $host ) {
-			add_filter( 'pre_option_home', $filter );
-			add_filter( 'pre_option_siteurl', $filter );
-		}
+		add_filter( 'pre_option_home', $filter );
+		add_filter( 'pre_option_siteurl', $filter );
 
-		ob_start();
-		call_user_func( $all[ $id ]['render'] );
-		$html = (string) ob_get_clean();
-
-		/*
-		 * Stored while the filters are still on: store() builds the key from
-		 * home_url(), so dropping them first writes the entry under the
-		 * rendering process's own host instead of the one it was rendered
-		 * for -- which looks exactly like the warm doing nothing.
-		 */
-		self::store( $id, self::rehost( $html, $host ) );
-
-		if ( '' !== $host ) {
+		try {
+			return $fn();
+		} finally {
 			remove_filter( 'pre_option_home', $filter );
 			remove_filter( 'pre_option_siteurl', $filter );
 		}
+	}
 
-		delete_transient( 'vh_wref_' . md5( $id . '|' . ( '' !== $host ? $host : home_url() ) ) );
+	/**
+	 * Markup rendered for one host, re-pointed at another.
+	 *
+	 * The plain origin, its JSON-escaped form (data attributes) and its
+	 * URL-encoded form (return-to parameters) -- the three ways an origin
+	 * appears in widget markup.
+	 */
+	private static function swap_host( string $html, string $from, string $to ): string {
+		$f = untrailingslashit( $from );
+		$t = untrailingslashit( $to );
+
+		if ( '' === $f || $f === $t ) {
+			return $html;
+		}
+
+		return str_replace(
+			array( $f, str_replace( '/', '\/', $f ), rawurlencode( $f ) ),
+			array( $t, str_replace( '/', '\/', $t ), rawurlencode( $t ) ),
+			$html
+		);
 	}
 
 	/**
