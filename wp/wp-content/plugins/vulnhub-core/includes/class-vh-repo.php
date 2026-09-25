@@ -4743,7 +4743,42 @@ final class Repo {
 	 *
 	 * @return array<string,int|float>
 	 */
-	public static function summary(): array {
+	public static function summary( bool $refresh = false ): array {
+		/*
+		 * Cached against the finding-data stamp. Around twenty counts, two of
+		 * them over every open finding (~0.7s and ~0.5s on 440k), and the page
+		 * shell of Assets, Tickets, Exceptions and the admin portal asked for
+		 * all of them on every view -- about 1.2s of each of those pages.
+		 *
+		 * data_epoch() moves on every sync, import and bust that can change
+		 * any table read here, so a changed number is never served from
+		 * before the change. What can lag is the clock: `overdue` and
+		 * `fixed_30d` are relative to now, and are recomputed within the hour
+		 * -- by the hourly dashboard warm, which calls this with $refresh.
+		 */
+		if ( ! class_exists( '\\VulnHub_Dash_Widgets' ) ) {
+			return self::summary_live();
+		}
+
+		$key = 'vh_summary_' . md5( \VulnHub_Dash_Widgets::data_epoch() . '|' . vh_reportable_sql() );
+		$hit = $refresh ? false : get_transient( $key );
+
+		if ( is_array( $hit ) ) {
+			return $hit;
+		}
+
+		$out = self::summary_live();
+		set_transient( $key, $out, HOUR_IN_SECONDS );
+
+		return $out;
+	}
+
+	/**
+	 * The counts behind summary(), computed now.
+	 *
+	 * @return array<string,int|float>
+	 */
+	private static function summary_live(): array {
 		global $wpdb;
 
 		$f = vh_table( 'findings' );

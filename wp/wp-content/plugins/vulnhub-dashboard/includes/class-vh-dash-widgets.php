@@ -1069,6 +1069,20 @@ final class VulnHub_Dash_Widgets {
 			$summary = self::rebuild_product_summary();
 		}
 
+		/*
+		 * The headline counts and the vendor product aggregate, which page
+		 * shells outside the dashboard read on every view: computed here, on
+		 * cron, so the first reader after a sync finds them cached. Refreshed
+		 * outright rather than read-through, because this is also the hourly
+		 * pass that keeps their clock-relative counts (overdue) current.
+		 */
+		if ( class_exists( '\\VulnHub\\Core\\Repo' ) ) {
+			\VulnHub\Core\Repo::summary( true );
+		}
+		if ( class_exists( '\\VH_Vendor' ) ) {
+			\VH_Vendor::vendors();
+		}
+
 		$ids = array_column( self::default_layout(), 'id' );
 
 		/*

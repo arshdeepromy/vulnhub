@@ -95,6 +95,24 @@ final class Exceptions {
 	 * @param array<string,mixed> $data Fields.
 	 * @return array{ok:bool,id:int,message:string}
 	 */
+	/**
+	 * An exception was created, decided or revoked.
+	 *
+	 * Every one of those can change which findings count as open -- that is
+	 * what `exception_id = 0` in every headline count means -- and none of
+	 * them told the caches: the dashboard kept showing the finding as open
+	 * until some unrelated sync happened to move the stamp. Busting
+	 * 'findings' moves the global stamp too, so the exception widgets and
+	 * the cached summary and grouped pages all follow; the warm then
+	 * re-renders on cron instead of in front of the next reader.
+	 */
+	private static function changed(): void {
+		if ( class_exists( '\\VulnHub_Dash_Widgets' ) ) {
+			\VulnHub_Dash_Widgets::bust( 'findings' );
+			\VulnHub_Dash_Widgets::queue_warm();
+		}
+	}
+
 	public static function create( array $data ): array {
 		global $wpdb;
 
@@ -201,6 +219,8 @@ final class Exceptions {
 			)
 		);
 
+		self::changed();
+
 		return array(
 			'ok'      => true,
 			'id'      => $id,
@@ -272,6 +292,8 @@ final class Exceptions {
 			'approved' === $decision ? 'warning' : 'info'
 		);
 
+		self::changed();
+
 		return array(
 			'ok'      => true,
 			'message' => 'approved' === $decision
@@ -330,6 +352,8 @@ final class Exceptions {
 			array( 'note' => $note ),
 			'warning'
 		);
+
+		self::changed();
 
 		return array(
 			'ok'      => true,
