@@ -1421,6 +1421,7 @@ final class VulnHub_Dash_App {
 			'search', 'patch_available', 'ticketed', 'os_eol', 'support', 'severity', 'asset_type', 'team_id', 'department',
 			'age', 'overdue', 'life', 'product', 'pkind', 'zone', 'platform', 'sev_not', 'route',
 			'delivery', 'poc', 'expo', 'hosting', 'asset', 'state', 'orderby', 'order', 'location_id',
+			'fix', 'comp', 'excepted',
 		) );
 		$vh_find_url  = self::page_url( 'vulnerabilities', $vh_tab_carry );
 		$vh_prod_url  = self::page_url( 'vulnerabilities', array_merge( $vh_tab_carry, array( 'tab' => 'products' ) ) );
@@ -1715,7 +1716,7 @@ final class VulnHub_Dash_App {
 			 * servers threw the libcurl part away.
 			 */
 			self::hidden_filters(
-				array( 'search', 'fix', 'excepted', 'patch_available', 'ticketed', 'os_eol', 'support', 'severity', 'asset_type', 'team_id', 'department', 'age', 'overdue', 'life' )
+				array( 'search', 'fix', 'comp', 'excepted', 'patch_available', 'ticketed', 'os_eol', 'support', 'severity', 'asset_type', 'team_id', 'department', 'age', 'overdue', 'life' )
 			);
 			?>
 			<label><?php esc_html_e( 'Search', 'vulnhub' ); ?>
@@ -1728,6 +1729,15 @@ final class VulnHub_Dash_App {
 						<option value="<?php echo esc_attr( $vh_ac ); ?>" <?php selected( self::q( 'fix' ), $vh_ac ); ?>
 							title="<?php echo esc_attr( VH_Action::description( $vh_ac ) ); ?>"><?php echo esc_html( $vh_al ); ?></option>
 					<?php endforeach; ?>
+				</select>
+			</label>
+			<label><?php esc_html_e( 'Component', 'vulnhub' ); ?>
+				<select name="comp">
+					<option value=""><?php esc_html_e( 'App and bundled', 'vulnhub' ); ?></option>
+					<option value="app" <?php selected( self::q( 'comp' ), 'app' ); ?>
+						title="<?php esc_attr_e( 'The product\'s own vulnerabilities: updating the app fixes them.', 'vulnhub' ); ?>"><?php esc_html_e( 'App update only', 'vulnhub' ); ?></option>
+					<option value="bundled" <?php selected( self::q( 'comp' ), 'bundled' ); ?>
+						title="<?php esc_attr_e( 'A library or file shipped inside another application: it changes only when that vendor ships a build carrying the fix.', 'vulnhub' ); ?>"><?php esc_html_e( 'Bundled library or file', 'vulnhub' ); ?></option>
 				</select>
 			</label>
 			<label><?php esc_html_e( 'Exceptions', 'vulnhub' ); ?>
@@ -1845,7 +1855,7 @@ final class VulnHub_Dash_App {
 				$vh_pcar = self::current_filters( array(
 					'search', 'patch_available', 'ticketed', 'os_eol', 'severity', 'asset_type', 'team_id', 'department',
 					'age', 'overdue', 'life', 'zone', 'platform', 'sev_not', 'route', 'delivery',
-					'poc', 'expo', 'hosting', 'asset', 'state',
+					'poc', 'expo', 'hosting', 'asset', 'state', 'fix', 'comp', 'excepted',
 				) );
 				?>
 				<ul class="vh-prodlist vh-prodlist--exp">
@@ -1881,7 +1891,55 @@ final class VulnHub_Dash_App {
 												?>
 											</span>
 										</div>
-										<div class="vh-prodrow__bar"><span style="width:<?php echo (int) $vh_ppct; ?>%"></span></div>
+										<?php
+										/*
+										 * One bar, two segments: the product's own update
+										 * and the components shipped inside it, split by
+										 * findings. Each count links to exactly its rows
+										 * (`comp`), so the segment, the list and the
+										 * export agree by construction.
+										 */
+										$vh_pf     = max( 1, (int) $vh_pr['findings'] );
+										$vh_pbf    = (int) ( $vh_pr['bundled_findings'] ?? 0 );
+										$vh_paf    = (int) $vh_pr['findings'] - $vh_pbf;
+										$vh_pb_pct = round( 100 * $vh_pbf / $vh_pf, 2 );
+										?>
+										<div class="vh-prodrow__bar vh-prodrow__bar--split" role="img"
+											aria-label="<?php echo esc_attr( sprintf( /* translators: 1: app findings, 2: bundled findings. */ __( '%1$s app-update findings, %2$s bundled library or file findings', 'vulnhub' ), number_format_i18n( $vh_paf ), number_format_i18n( $vh_pbf ) ) ); ?>">
+											<span style="width:<?php echo (int) $vh_ppct; ?>%">
+												<i class="vh-pseg vh-pseg--app" style="width:<?php echo esc_attr( (string) ( 100 - $vh_pb_pct ) ); ?>%"></i><i class="vh-pseg vh-pseg--bundled" style="width:<?php echo esc_attr( (string) $vh_pb_pct ); ?>%"></i>
+											</span>
+										</div>
+										<div class="vh-prodrow__split">
+											<?php if ( $vh_paf > 0 ) : ?>
+												<a class="vh-prodrow__part vh-prodrow__part--app" href="<?php echo esc_url( add_query_arg( 'comp', 'app', $vh_purl ) ); ?>">
+													<?php
+													printf(
+														/* translators: 1: assets, 2: findings. */
+														esc_html__( 'App update: %1$s assets · %2$s findings', 'vulnhub' ),
+														esc_html( number_format_i18n( (int) ( $vh_pr['app_assets'] ?? 0 ) ) ),
+														esc_html( number_format_i18n( $vh_paf ) )
+													);
+													?>
+												</a>
+											<?php endif; ?>
+											<?php if ( $vh_pbf > 0 ) : ?>
+												<a class="vh-prodrow__part vh-prodrow__part--bundled" href="<?php echo esc_url( add_query_arg( 'comp', 'bundled', $vh_purl ) ); ?>">
+													<?php
+													printf(
+														/* translators: 1: assets, 2: findings. */
+														esc_html__( 'Bundled library or file: %1$s assets · %2$s findings', 'vulnhub' ),
+														esc_html( number_format_i18n( (int) ( $vh_pr['bundled_assets'] ?? 0 ) ) ),
+														esc_html( number_format_i18n( $vh_pbf ) )
+													);
+													?>
+												</a>
+												<?php if ( current_user_can( Caps::REQUEST_EXCEPTION ) ) : ?>
+													<a class="vh-prodrow__except" href="<?php echo esc_url( self::page_url( 'exceptions', array( 'new' => 1, 'bundled' => (string) $vh_pr['product_slug'], 'app' => (string) $vh_pr['product'] ) ) ); ?>"
+														title="<?php esc_attr_e( 'Request one exception for every bundled library or file in this application, including ones found later. Goes through the usual approval.', 'vulnhub' ); ?>"><?php esc_html_e( 'Request exception for bundled', 'vulnhub' ); ?></a>
+												<?php endif; ?>
+											<?php endif; ?>
+										</div>
 									</div>
 								</summary>
 								<div class="vh-prodrow__body" data-vh-product-assets data-vh-loaded="0">
@@ -1893,6 +1951,10 @@ final class VulnHub_Dash_App {
 				</ul>
 				<p class="vh-sub vh-muted"><?php esc_html_e( 'Expand a product to see the outdated assets one update would fix, and export the remediation list.', 'vulnhub' ); ?></p>
 				<p class="vh-sub"><?php esc_html_e( 'Products behind the findings in this scope, ranked by assets affected. A bundled library is attributed to the app that ships it. Select a product to filter the findings list to it.', 'vulnhub' ); ?></p>
+				<p class="vh-sub vh-prodlegend">
+					<span class="vh-prodlegend__key vh-prodlegend__key--app"></span><?php esc_html_e( 'App update: the product\'s own vulnerabilities, fixed by updating it', 'vulnhub' ); ?>
+					<span class="vh-prodlegend__key vh-prodlegend__key--bundled"></span><?php esc_html_e( 'Bundled library or file: shipped inside the app, fixed only when its vendor ships a build carrying it', 'vulnhub' ); ?>
+				</p>
 			<?php endif; ?>
 		<?php elseif ( 'vuln_assets' === $vh_tab ) : ?>
 			<?php
@@ -2221,6 +2283,19 @@ final class VulnHub_Dash_App {
 						if ( preg_match( '/^i-[0-9a-f]{8,17}$/', (string) $a['hostname'] ) && '' !== (string) ( $a['business_service'] ?? '' ) && (string) $a['business_service'] !== (string) $a['hostname'] ) :
 							?>
 							<span class="vh-meta"><?php echo esc_html( (string) $a['business_service'] ); ?></span>
+						<?php endif; ?>
+						<?php
+						// The full name under the short one: CMDB records for the same
+						// server name in several environments (sit, preprod, security)
+						// otherwise read as identical rows.
+						$vh_fqdn = trim( (string) ( $a['fqdn'] ?? '' ) );
+						if ( '' !== $vh_fqdn && strtolower( $vh_fqdn ) !== strtolower( (string) $a['hostname'] ) ) :
+							?>
+							<span class="vh-host-fqdn"><?php
+								// Wraps only at the dots, never inside a label ("appsrv-01"),
+								// and copies as the plain name.
+								echo implode( '.<wbr>', array_map( static fn( string $l ): string => '<span>' . esc_html( $l ) . '</span>', explode( '.', $vh_fqdn ) ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+							?></span>
 						<?php endif; ?>
 						<span class="vh-meta"><?php echo esc_html( (string) $a['ipv4'] ); ?></span></td>
 					<td data-th="<?php esc_attr_e( 'Scan coverage', 'vulnhub' ); ?>">
@@ -2732,6 +2807,9 @@ final class VulnHub_Dash_App {
 			 * only the argument passed to Repo keeps the old name.
 			 */
 			'action'     => self::q( 'fix' ),
+			// App update or bundled component: `comp` = app|bundled, the
+			// rule the By-product bar splits on (Repo::component_sql()).
+			'comp'       => self::q( 'comp' ),
 			'excepted'   => self::q( 'excepted' ),
 			'support'    => self::q( 'support' ),
 			'path_zone'  => self::q( 'zone' ),
@@ -3454,6 +3532,28 @@ final class VulnHub_Dash_App {
 							?>
 							<span class="vh-chip <?php echo $vh_a_in_svc ? '' : 'vh-chip--warn'; ?>">
 								<?php echo esc_html( (string) ( vh_lifecycle_statuses()[ $vh_a_life ]['label'] ?? $vh_a_life ) ); ?>
+							</span>
+							<?php
+							// Where the status came from (docs/LIFECYCLE.md).
+							$vh_a_lsrc = (string) ( $a['lifecycle_source'] ?? '' );
+							$vh_a_lwhy = (string) ( $a['lifecycle_reason'] ?? '' );
+							$vh_a_lat  = (string) ( $a['lifecycle_set_at'] ?? '' );
+							?>
+							<span class="vh-meta vh-life-src">
+								<?php
+								if ( '' === $vh_a_lsrc ) {
+									esc_html_e( 'Source not recorded (set before provenance was kept)', 'vulnhub' );
+								} else {
+									echo esc_html( (string) ( \VulnHub\Core\Lifecycle::sources()[ $vh_a_lsrc ] ?? $vh_a_lsrc ) );
+									if ( '' !== $vh_a_lwhy ) {
+										echo ' · ' . esc_html( $vh_a_lwhy );
+									}
+									if ( '' !== $vh_a_lat ) {
+										/* translators: %s: how long ago. */
+										echo ' · ' . esc_html( sprintf( __( 'since %s', 'vulnhub' ), vh_ago( $vh_a_lat ) ) );
+									}
+								}
+								?>
 							</span>
 							<?php if ( $vh_a_arch > 0 ) : ?>
 								<span class="vh-meta">

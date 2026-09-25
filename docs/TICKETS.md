@@ -340,6 +340,54 @@ A merge moves `ticket_assets` rows to the surviving asset
 The link is the pasted URL if the operator pasted one. Otherwise it is the Jira
 connector's site plus `/browse/KEY`. With neither, there is no link.
 
+## AWS machines on a ticket: account and instance, by name
+
+The file attached to a ticket -- vulnerability or scope, when raised and on
+every *Send an updated list* -- carries five AWS columns whenever its
+selection holds an AWS machine (`aws_instance_id` set, or a record AWS made):
+account id, account name, instance id, instance name, region. They are added
+whatever columns were ticked, because the service desk finds the machine in
+the console by account and Name tag, and the hostname is often neither. A
+selection with no AWS machine gets no AWS columns; non-AWS rows in a mixed
+file leave them empty. The same five are ordinary, optional columns on the
+Findings and Assets & owners exports.
+
+All five entry points reach this through two functions, so none of them
+needed its own change: `VulnHub_Dash_Export::findings_csv()` (Raise ticket
+for selected, per-row Raise Jira request, from one vulnerability, and the
+vulnerability ticket's updated list) and `assets_csv()` (Assets & owners'
+scope ticket and its updated list), via `with_aws_columns()`. Automation
+rules raise without a file. The names themselves come from
+`docs/COVERAGE.md`, "Account and instance names".
+
+## The ticket page's findings: filter, columns, by asset
+
+The findings table under a vulnerability ticket used to be one fixed list
+cut at 200 rows with no pager -- a 572-finding ticket showed 200 and said
+nothing -- in five fixed columns, with no owner detail.
+
+- **Where each stands**: All / Open / Reopened / Fixed, and *Resolved: out of
+  service* when any asset has left service, each with its count (`fstate`).
+  The counts add up to the ticket's total and Fixed matches the progress
+  bar.
+- **Search** across host, vulnerability, owner, email, department, team,
+  address and AWS instance name (`fq`).
+- **Group by asset** (`fgroup=asset`): one row per machine with its owner and
+  its open / reopened / fixed counts, most outstanding first, expanding to
+  its vulnerabilities.
+- **Columns** from a picker: owner, email, job title, department, manager,
+  team, location, asset type, OS, IPv4, AWS account and instance, lifecycle,
+  last seen, first found, due, state, verification. Remembered per user
+  (`vulnhub_ticket_finding_cols` user meta); *Reset to default*. Names and
+  emails are masked until the eye in the Owner header is pressed.
+- Paged: 100 findings or 50 assets a page (`fp`, `ap`).
+
+**In service means the in-service set.** The table and the By department tab
+compared lifecycle to the literal `in_service`, so a finding on an Unknown
+asset (and on an asset in quarantine or repair) read *resolved, out of
+service* -- 58 open findings across five tickets. They now use
+`vh_in_service_statuses()`, as the progress bar and verification always did.
+
 ## Due dates
 
 A ticket's Jira due date is counted **from the day it is raised**. It used to be
@@ -932,3 +980,41 @@ A vulnerability ticket's findings can be grouped **by department** (the departme
 of the person who owns each finding's asset), with resolved / outstanding counts
 and a progress bar per department. Resolved uses the same rule as the list: the
 scanner reports it fixed **or** the asset is out of service.
+
+## Choosing assets on a ticket, and setting them aside
+
+On a vulnerability ticket's findings, grouped by asset:
+
+- **Owner** filter beside Group: *Any owner / Has an owner / No owner*
+  (`fowner`). It narrows the population, so the tab counts follow it; search
+  still does not.
+- **Pick assets**: a checkbox per row, one for the page, and *Select all N
+  matching* for every asset the current filter matches across all pages. The
+  selection is kept per ticket in the browser session while paging.
+- **Send an updated list for selected**: the same dialog and endpoint as the
+  ticket-wide button (`POST /vulnhub/v1/tickets/{id}/attachment`) with
+  `asset_ids`. The file holds only those assets' still-open findings, is
+  named `open-findings-<key>-<n>-assets-<date>.csv`, and the internal note
+  says it is a partial list, not the whole ticket. Without `asset_ids` the
+  button behaves exactly as before.
+- **Set aside for this ticket**, reason *Resolved* or *Out of scope*, with an
+  optional note; *Take back* undoes it. `POST /vulnhub/v1/tickets/{id}/aside`
+  (`asset_ids`, `reason`, `note`; empty reason takes back), raise-level
+  permission. Stored in `ticket_aside` (schema v37): one row per ticket and
+  asset, with who and when -- the same machine is untouched on every other
+  ticket. Only assets the ticket covers are accepted. Audited as
+  `ticket.aside_set` / `ticket.aside_cleared`. Nothing is sent to Jira.
+
+**What set aside means for the numbers.** An asset set aside stops being
+outstanding on that ticket: its open findings count as done in
+`Tickets::progress()` (reported separately as `findings_aside` /
+`assets_aside`, and the bar says "findings done ... includes N set aside"
+rather than folding them into "fixed"), they show under a *Set aside* tab
+instead of Open, and they leave the updated list. The denominators do not
+change. Fixed findings on a set-aside asset stay Fixed.
+
+**Checked** on a 1,318-finding ticket, inside a rolled-back transaction:
+two assets set aside moved findings done 651 -> 655 (4 set aside) and assets
+clear 55 -> 57; an asset not on the ticket was refused; the rollback left no
+rows. The selected-assets preview for three assets listed 10 findings, equal
+to a direct count of their open findings on the ticket.

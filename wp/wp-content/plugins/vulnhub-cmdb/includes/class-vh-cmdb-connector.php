@@ -1909,11 +1909,24 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 				);
 			} else {
 				$payload['lifecycle_status'] = $lifecycle;
+				$payload['lifecycle_source'] = 'cmdb';
+				/* translators: 1: the CMDB's own status text, 2: CMDB key. */
+				$payload['lifecycle_reason'] = trim( sprintf( __( 'CMDB Status: %1$s %2$s', 'vulnhub' ), (string) ( $record['install_status'] ?? '' ), '' !== (string) ( $record['cmdb_key'] ?? '' ) ? '(' . (string) $record['cmdb_key'] . ')' : '' ) );
 			}
 		}
 
 		if ( '' !== (string) $record['criticality'] ) {
 			$payload['criticality'] = (string) $record['criticality'];
+		}
+
+		/*
+		 * A hypervisor host is a network device even when the register files
+		 * it under "Servers": the OS outranks the class here, and counts as
+		 * explicit so it also corrects records typed server on earlier runs.
+		 */
+		if ( vh_is_hypervisor_os( (string) ( $record['operating_system'] ?? '' ) ) ) {
+			$record['asset_type']        = 'network';
+			$record['asset_type_source'] = 'explicit';
 		}
 
 		$type = $this->reconcile_asset_type(

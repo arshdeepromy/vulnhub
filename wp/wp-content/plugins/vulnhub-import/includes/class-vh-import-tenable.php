@@ -944,6 +944,11 @@ final class VulnHub_Import_Tenable {
 
 		$needle = strtolower( trim( $os ) );
 
+		// A hypervisor host is a network device (see vh_is_hypervisor_os()).
+		if ( vh_is_hypervisor_os( $os ) ) {
+			return 'network';
+		}
+
 		if ( '' !== $needle ) {
 			if ( str_contains( $needle, 'windows server' ) || preg_match( '/windows (2000|2003|2008|2012|2016|2019|2022|2025)/', $needle ) ) {
 				return 'server';
@@ -961,7 +966,7 @@ final class VulnHub_Import_Tenable {
 			if ( preg_match( '/\b(ipados|iphone os|android)\b/', $needle ) || preg_match( '/\bios\b/', $needle ) ) {
 				return 'mobile';
 			}
-			if ( preg_match( '/\b(linux|ubuntu|debian|centos|red hat|rhel|suse|rocky|almalinux|freebsd|solaris|aix|esxi)\b/', $needle ) ) {
+			if ( preg_match( '/\b(linux|ubuntu|debian|centos|red hat|rhel|suse|rocky|almalinux|freebsd|solaris|aix)\b/', $needle ) ) {
 				return 'server';
 			}
 			if ( preg_match( '/windows (11|10|8\.1|8|7)/', $needle ) || preg_match( '/\b(macos|mac os x|os x)\b/', $needle ) ) {

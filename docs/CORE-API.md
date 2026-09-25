@@ -937,6 +937,7 @@ vh_table( 'assets' );          vh_now();                  vh_to_mysql( $any );
 vh_severities();               vh_severity_from_id( 3 );  vh_severity_label( 'high' );
 vh_severity_color( 'high' );   vh_severity_pill( 'high' );
 vh_asset_types();              vh_user_bound_asset_types();  vh_finding_states();
+vh_is_computer_os( $os );      vh_is_hypervisor_os( $os );   // ESXi -> asset type 'network' in every classifier
 vh_risk_score( $sev, $crit, $exploitable, $vpr );
 vh_json( $maybe_json );        vh_date( $mysql );         vh_ago( $mysql );
 vh_date_only( $date );         // a DATE column, never shifted by a timezone

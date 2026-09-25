@@ -402,6 +402,11 @@ final class VulnHub_Cmdb_Schema {
 	public static function asset_type( string $type, string $os = '', string $hostname = '' ): string {
 		$needle = strtolower( trim( $type ) );
 
+		// A hypervisor host is a network device whatever class the register gave it.
+		if ( vh_is_hypervisor_os( $os ) ) {
+			return 'network';
+		}
+
 		if ( array_key_exists( $needle, vh_asset_types() ) ) {
 			return $needle;
 		}
@@ -461,7 +466,7 @@ final class VulnHub_Cmdb_Schema {
 			if ( preg_match( '/\b(ipados|iphone os|android|windows phone)\b/', $os_needle ) || preg_match( '/\bios\b/', $os_needle ) ) {
 				return 'mobile';
 			}
-			if ( preg_match( '/\b(linux|ubuntu|debian|centos|red hat|rhel|suse|rocky|almalinux|freebsd|solaris|aix|esxi)\b/', $os_needle ) ) {
+			if ( preg_match( '/\b(linux|ubuntu|debian|centos|red hat|rhel|suse|rocky|almalinux|freebsd|solaris|aix)\b/', $os_needle ) ) {
 				return 'server';
 			}
 			if ( preg_match( '/windows (11|10|8\.1|8|7)/', $os_needle ) || preg_match( '/\b(macos|mac os x|os x|chrome ?os)\b/', $os_needle ) ) {

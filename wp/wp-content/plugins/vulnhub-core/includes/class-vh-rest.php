@@ -192,6 +192,17 @@ final class Rest {
 
 		register_rest_route(
 			self::NS,
+			'/tickets/(?P<id>\d+)/aside',
+			array(
+				// Taking assets out of a ticket's progress is a raise-level act.
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'ticket_aside' ),
+				'permission_callback' => array( $this, 'can_raise' ),
+			)
+		);
+
+		register_rest_route(
+			self::NS,
 			'/tickets/(?P<id>\d+)/transitions',
 			array(
 				array(
@@ -653,8 +664,10 @@ final class Rest {
 			null,
 			$ticket,
 			array(
-				'preview' => (bool) $request->get_param( 'preview' ),
-				'note'    => (string) $request->get_param( 'note' ),
+				'preview'   => (bool) $request->get_param( 'preview' ),
+				'note'      => (string) $request->get_param( 'note' ),
+				// Empty: the whole ticket, as before. Otherwise only these assets.
+				'asset_ids' => array_values( array_filter( array_map( 'intval', (array) $request->get_param( 'asset_ids' ) ) ) ),
 			)
 		);
 
@@ -667,6 +680,45 @@ final class Rest {
 		}
 
 		return new WP_REST_Response( $result );
+	}
+
+	/**
+	 * Set assets aside on a ticket (resolved / out of scope), or take them back.
+	 */
+	public function ticket_aside( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$ticket = Tickets::get( (int) $request['id'] );
+
+		if ( ! $ticket ) {
+			return new WP_Error( 'vulnhub_not_found', __( 'Ticket not found.', 'vulnhub' ), array( 'status' => 404 ) );
+		}
+
+		$ids    = array_values( array_filter( array_map( 'intval', (array) $request->get_param( 'asset_ids' ) ) ) );
+		$reason = (string) $request->get_param( 'reason' );
+
+		if ( ! $ids ) {
+			return new WP_Error( 'vulnhub_no_assets', __( 'Select at least one asset.', 'vulnhub' ), array( 'status' => 400 ) );
+		}
+		if ( '' !== $reason && ! isset( Tickets::aside_reasons()[ $reason ] ) ) {
+			return new WP_Error( 'vulnhub_bad_reason', __( 'Choose Resolved or Out of scope.', 'vulnhub' ), array( 'status' => 400 ) );
+		}
+
+		$n = Tickets::set_aside( (int) $ticket['id'], $ids, $reason, (string) $request->get_param( 'note' ) );
+
+		if ( class_exists( 'VulnHub_Dash_Widgets' ) ) {
+			\VulnHub_Dash_Widgets::bust_for_connector( 'jira' );
+		}
+
+		return new WP_REST_Response(
+			array(
+				'ok'      => true,
+				'changed' => $n,
+				'message' => '' === $reason
+					/* translators: %d: assets. */
+					? sprintf( _n( '%d asset taken back into this ticket.', '%d assets taken back into this ticket.', $n, 'vulnhub' ), $n )
+					/* translators: %d: assets. */
+					: sprintf( _n( '%d asset set aside.', '%d assets set aside.', $n, 'vulnhub' ), $n ),
+			)
+		);
 	}
 
 	/**

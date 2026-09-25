@@ -327,6 +327,17 @@ final class VulnHub_AWS_Connector extends Connector {
 			return array( 'ok' => false, 'message' => __( 'The SSO login returned no accounts.', 'vulnhub' ) );
 		}
 
+		// The account list already names every account; keep the names.
+		do_action(
+			'vulnhub_aws_account_names',
+			array_column(
+				array_filter( $accounts, static fn( array $a ): bool => ! empty( $a['accountId'] ) && ! empty( $a['accountName'] ) ),
+				'accountName',
+				'accountId'
+			),
+			'aws_sso'
+		);
+
 		$ok      = 0;
 		$failed  = 0;
 		$records = 0;

@@ -295,6 +295,49 @@ both call. The old parameters (`aws`, `agent_dark`, `dropped`) still work, so
 every link a widget or a bookmark holds does. Checked: each old and new form
 returns the same count, and a merged value survives Apply.
 
+## 11. A product row that was two kinds of work
+
+A By-product row attributes a bundled library to the application that ships
+it, which is right for ranking and wrong for raising work. The row for a
+meeting client read *79 assets · 413 findings*; 14 of those were the client's
+own advisories (update the client), and 399 were a `libcurl.dll` shipped in a
+companion package and in a browser component (nothing to do but wait for the
+vendors). Raising a ticket from the row put both on one ticket, and the ticket
+could never close on the update it asked for.
+
+**`comp` = `app` | `bundled`**, on the wire and in `Repo::findings()`, splits
+the two. The test is `Repo::bundled_sql()`, negated for `app`: a **library**
+that `Repo::component_sql()` attributes to another application. It is
+deliberately narrower than the component test behind `VH_Action`'s
+`update_app`. That test also counts an application installed inside another,
+and the first browser pass showed what that does here: Word, Excel,
+PowerPoint, Outlook and Publisher each read 100% "bundled", because their
+findings are Microsoft's monthly C2R updates found under the Office folder.
+Updating the suite fixes those; they are app updates, and an exception for
+"bundled files we can only wait on" must never sweep them up (3,314
+application-kind components on this estate, beside 10,539 library ones).
+It is also independent of `fix`: `fix=patch` excluded components, but also
+excepted findings, config fixes and anything with no fix, so it could not
+answer "which of this product's findings are its own?".
+
+- **List:** a *Component* select beside *Action*; in `hidden_filters()`' own-
+  control list so Apply keeps it once.
+- **Everything built from `findings_base_args()`:** select-all, *Raise ticket
+  for selected*, and the product expansion inherit it with no code of their
+  own.
+- **Export:** read back as `comp` in both findings bases.
+- **Tabs and product links:** carried with `fix` and `excepted`, which the tab
+  and product links had not carried either.
+- **By product:** each row's bar is two segments, app update (series-1) and
+  bundled (series-2), split by findings, with a count under each that links
+  to `comp=app` / `comp=bundled`. The grouping query gains `bundled_findings`,
+  `bundled_assets` and `app_assets` (about +0.6 s uncached on this estate; the
+  tab is cached).
+
+**Checked:** for four rows (a meeting client, an office suite, a chat client, a
+browser) app + bundled equals the row, each segment's link returns exactly its
+count, and the export with `comp` returns the same rows as the list.
+
 ## What was checked and found sound
 
 Worth recording, so the next audit does not re-tread it:

@@ -60,6 +60,16 @@ final class VulnHub_AWS_Coverage {
 	}
 
 	public static function on_sync( string $connector = '' ): void {
+		// A CMDB sync brings new cloud records by name and domain only.
+		if ( 'cmdb' === $connector ) {
+			$placed = self::link_by_domain();
+			self::stamp_names();
+			if ( ( $placed['placed'] + $placed['linked'] ) > 0 && class_exists( '\\VulnHub\\Core\\Coverage' ) ) {
+				\VulnHub\Core\Coverage::recalculate();
+			}
+			return;
+		}
+
 		if ( ! in_array( $connector, array( 'aws', 'plerion' ), true ) ) {
 			return;
 		}
@@ -72,7 +82,13 @@ final class VulnHub_AWS_Coverage {
 		}
 
 		$moved += self::link_twins()['linked'];
+		$placed  = self::link_by_domain();
+		$moved  += $placed['placed'] + $placed['linked'];
 		$moved += self::enrich();
+
+		// Names are carried, not counted: they move no asset between
+		// coverage buckets, so they never trigger a recount.
+		self::stamp_names();
 
 		if ( $moved > 0 && class_exists( '\\VulnHub\\Core\\Coverage' ) ) {
 			\VulnHub\Core\Coverage::recalculate();
@@ -225,6 +241,9 @@ final class VulnHub_AWS_Coverage {
 
 				if ( in_array( (string) $r['lifecycle_status'], array( 'unknown', 'in_service', 'spare', '' ), true ) && $want !== (string) $r['lifecycle_status'] ) {
 					$set['lifecycle_status'] = $want;
+					$set['lifecycle_source'] = 'aws';
+					$set['lifecycle_reason'] = 'in_service' === $want ? __( 'AWS: instance running', 'vulnhub' ) : __( 'AWS: instance stopped', 'vulnhub' );
+					$set['lifecycle_set_at'] = vh_now();
 				}
 			}
 
@@ -233,6 +252,62 @@ final class VulnHub_AWS_Coverage {
 				$wpdb->update( $a, $set, array( 'id' => (int) $r['id'] ) );
 				++$n;
 			}
+		}
+
+		return $n;
+	}
+
+	/**
+	 * The instance's Name tag, its account and that account's name, onto
+	 * every record matched to an instance.
+	 *
+	 * Kept, not mirrored: a record whose instance the latest capture did not
+	 * list, or whose tag has gone, keeps the last name it had -- a ticket
+	 * raised against it next week still says which machine it is. A bare
+	 * instance id is not a name. The account number fills in only where the
+	 * record has none. See docs/COVERAGE.md, "Account and instance names".
+	 *
+	 * @return int Records changed.
+	 */
+	public static function stamp_names(): int {
+		global $wpdb;
+
+		$a   = vh_table( 'assets' );
+		$all = self::instances();
+		$n   = 0;
+
+		if ( $all ) {
+			$ids  = array_keys( $all );
+			$rows = (array) $wpdb->get_results( // phpcs:ignore
+				$wpdb->prepare(
+					"SELECT id, aws_instance_id, cloud_account_id, aws_instance_name FROM {$a} WHERE aws_instance_id IN (" . implode( ',', array_fill( 0, count( $ids ), '%s' ) ) . ')', // phpcs:ignore
+					...$ids
+				),
+				ARRAY_A
+			);
+
+			foreach ( $rows as $r ) {
+				$i   = $all[ (string) $r['aws_instance_id'] ];
+				$tag = trim( (string) $i['name'] );
+				$set = array();
+
+				if ( '' !== $tag && ! preg_match( '/^i-[0-9a-f]{8,17}$/', $tag ) && $tag !== (string) $r['aws_instance_name'] ) {
+					$set['aws_instance_name'] = mb_substr( $tag, 0, 255 );
+				}
+				if ( '' === (string) $r['cloud_account_id'] && '' !== (string) $i['account'] ) {
+					$set['cloud_account_id'] = (string) $i['account'];
+				}
+
+				if ( $set ) {
+					$set['updated_at'] = vh_now();
+					$wpdb->update( $a, $set, array( 'id' => (int) $r['id'] ) );
+					++$n;
+				}
+			}
+		}
+
+		if ( class_exists( 'VulnHub_AWS_Account_Names' ) ) {
+			$n += VulnHub_AWS_Account_Names::stamp_assets();
 		}
 
 		return $n;
@@ -501,6 +576,161 @@ final class VulnHub_AWS_Coverage {
 		}
 
 		return $out;
+	}
+
+	/**
+	 * Place records the other feeds hold on their AWS account by DNS domain,
+	 * then join each to its instance by name inside that account.
+	 *
+	 * `link_twins()` needs an address, and a record the CMDB made for a
+	 * cloud machine often has none -- only a hostname and a domain. Where
+	 * the domain after the host spells an account's name (dots for dashes:
+	 * `appsrv01.cloud.corp.sit` in account `cloud-corp-sit`), the record
+	 * is that account's: it gets the account id, AWS as its provider and the
+	 * account's region, and `stamp_names()` then carries the account name.
+	 * Exact equality only; two accounts sharing a name place nothing.
+	 *
+	 * Inside that account the hostname is matched to a Name tag the way
+	 * `link_twins()` matches it (the tag is the hostname, or the hostname
+	 * then `-`, `_` or `.`), or an `ip-a-b-c-d` hostname to the instance's
+	 * private address. Terminated instances never match. Exactly one
+	 * candidate links; more is reported, never guessed. An instance that
+	 * already sits on an id-named record folds that record into this one,
+	 * as `link_twins()` does; one on a record with a real name is left
+	 * alone and reported.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public static function link_by_domain( bool $dry_run = false ): array {
+		global $wpdb;
+
+		$a   = vh_table( 'assets' );
+		$out = array( 'placed' => 0, 'linked' => 0, 'ambiguous' => 0, 'dry_run' => $dry_run, 'pairs' => array(), 'unresolved' => array() );
+
+		if ( ! class_exists( 'VulnHub_AWS_Account_Names' ) ) {
+			return $out;
+		}
+
+		$by_name = array();
+		foreach ( VulnHub_AWS_Account_Names::all() as $id => $name ) {
+			$k = self::label_key( $name );
+			if ( '' !== $k ) {
+				$by_name[ $k ] = ( isset( $by_name[ $k ] ) && $by_name[ $k ] !== (string) $id ) ? '' : (string) $id;
+			}
+		}
+		$by_name = array_filter( $by_name );
+		if ( ! $by_name ) {
+			return $out;
+		}
+
+		$per     = array();
+		$regions = array();
+		foreach ( self::instances() as $iid => $i ) {
+			if ( 'terminated' === $i['state'] ) {
+				continue;
+			}
+			$per[ $i['account'] ][ $iid ] = $i;
+			if ( '' !== $i['region'] ) {
+				$regions[ $i['account'] ][ $i['region'] ] = ( $regions[ $i['account'] ][ $i['region'] ] ?? 0 ) + 1;
+			}
+		}
+
+		$rows = (array) $wpdb->get_results( // phpcs:ignore
+			"SELECT id, hostname, fqdn, cloud_account_id, cloud_provider, cloud_region FROM {$a}
+			 WHERE lifecycle_status <> 'retired' AND duplicate_of IS NULL
+			   AND LOCATE( '.', fqdn ) > 0 AND ( aws_instance_id = '' OR aws_instance_id IS NULL )",
+			ARRAY_A
+		);
+
+		foreach ( $rows as $r ) {
+			$fq   = strtolower( trim( (string) $r['fqdn'] ) );
+			$host = strtolower( trim( (string) $r['hostname'] ) );
+			$acct = $by_name[ self::label_key( substr( $fq, strpos( $fq, '.' ) + 1 ) ) ] ?? '';
+
+			if ( '' === $acct || ( '' !== (string) $r['cloud_account_id'] && (string) $r['cloud_account_id'] !== $acct ) ) {
+				continue;
+			}
+
+			$set = array();
+			if ( '' === (string) $r['cloud_account_id'] ) {
+				$set['cloud_account_id'] = $acct;
+				++$out['placed'];
+			}
+			if ( 'aws' !== strtolower( (string) $r['cloud_provider'] ) ) {
+				$set['cloud_provider'] = 'AWS';
+			}
+			if ( '' === (string) $r['cloud_region'] && ! empty( $regions[ $acct ] ) ) {
+				arsort( $regions[ $acct ] );
+				$set['cloud_region'] = (string) array_key_first( $regions[ $acct ] );
+			}
+
+			$cands = array();
+			if ( strlen( $host ) >= 3 ) {
+				$ip = preg_match( '/^ip-(\d{1,3})-(\d{1,3})-(\d{1,3})-(\d{1,3})$/', $host, $m ) ? "{$m[1]}.{$m[2]}.{$m[3]}.{$m[4]}" : '';
+				foreach ( $per[ $acct ] ?? array() as $iid => $i ) {
+					$tag = strtolower( trim( (string) $i['name'] ) );
+					$by_tag = '' !== $tag && ( $tag === $host || ( str_starts_with( $tag, $host ) && in_array( substr( $tag, strlen( $host ), 1 ), array( '-', '_', '.' ), true ) ) );
+					if ( $by_tag || ( '' !== $ip && $ip === (string) $i['ip'] ) ) {
+						$cands[ $iid ] = $i;
+					}
+				}
+			}
+
+			$link = '';
+			$own  = null;
+			if ( 1 === count( $cands ) ) {
+				$link = (string) array_key_first( $cands );
+				$own  = $wpdb->get_row( $wpdb->prepare( "SELECT id, hostname FROM {$a} WHERE aws_instance_id = %s AND lifecycle_status <> 'retired' AND id <> %d ORDER BY id LIMIT 1", $link, (int) $r['id'] ), ARRAY_A ); // phpcs:ignore
+				if ( $own && ! preg_match( '/^i-[0-9a-f]{8,17}$/', (string) $own['hostname'] ) ) {
+					$out['unresolved'][] = array( 'asset' => (int) $r['id'], 'reason' => 'instance already on record ' . (int) $own['id'], 'instances' => array( $link => $cands[ $link ]['name'] ) );
+					$link = '';
+					$own  = null;
+				}
+			} elseif ( count( $cands ) > 1 ) {
+				++$out['ambiguous'];
+				$out['unresolved'][] = array( 'asset' => (int) $r['id'], 'reason' => 'several instances match', 'instances' => array_map( static fn( array $i ): string => $i['name'] . ' (' . $i['state'] . ')', $cands ) );
+			}
+
+			if ( '' !== $link ) {
+				$out['pairs'][] = array( 'asset' => (int) $r['id'], 'instance' => $link, 'name' => $cands[ $link ]['name'], 'folded' => $own ? (int) $own['id'] : 0 );
+				++$out['linked'];
+			}
+
+			if ( $dry_run || ( ! $set && '' === $link ) ) {
+				continue;
+			}
+
+			if ( $own ) {
+				$merged = \VulnHub\Core\Duplicates::merge( (int) $own['id'], (int) $r['id'], false );
+				if ( empty( $merged['ok'] ) ) {
+					$link = '';
+				} else {
+					$wpdb->update( $a, array( 'aws_instance_id' => '' ), array( 'id' => (int) $own['id'] ) );
+				}
+			}
+			if ( '' !== $link ) {
+				$set['aws_instance_id'] = $link;
+				$tag = trim( (string) $cands[ $link ]['name'] );
+				if ( '' !== $tag && ! preg_match( '/^i-[0-9a-f]{8,17}$/', $tag ) ) {
+					$set['aws_instance_name'] = mb_substr( $tag, 0, 255 );
+				}
+			}
+			if ( $set ) {
+				$set['updated_at'] = vh_now();
+				$wpdb->update( $a, $set, array( 'id' => (int) $r['id'] ) );
+			}
+		}
+
+		if ( ! $dry_run && ( $out['placed'] + $out['linked'] ) > 0 ) {
+			vulnhub()->logger->audit( 'aws.domain_placed', sprintf( 'Placed %d records on their AWS account by domain, linked %d to an instance', $out['placed'], $out['linked'] ), 'connector', 'aws', array( 'pairs' => $out['pairs'], 'unresolved' => $out['unresolved'] ) );
+		}
+
+		return $out;
+	}
+
+	/** An account name or DNS domain as one comparable key: `a.b-c` and `a-b-c` agree. */
+	private static function label_key( string $s ): string {
+		return trim( (string) preg_replace( '/[^a-z0-9]+/', '-', strtolower( trim( $s ) ) ), '-' );
 	}
 
 	/* =================================================================

@@ -193,6 +193,18 @@ A type that says nothing useful yields an empty string, so the record keeps
 whatever the operating system and hostname implied rather than being overwritten
 with `unknown`.
 
+**One exception: a hypervisor is a network device.** The register files ESXi
+hosts under `Servers`, but they take no endpoint agent, have no named user and
+are patched with the infrastructure, so they were reading as servers that were
+"Not in Tenable". `vh_is_hypervisor_os()` (core) is asked before the object
+type: an operating system of VMware ESXi (or vSphere Hypervisor) makes the
+record `network`, marked explicit so it also corrects records typed `server`
+on earlier runs. The same helper decides it in `Schema::asset_type()`, the
+Tenable connector (where `system_types` "hypervisor" counts too, ahead of tag
+taxonomy) and the Tenable CSV import, so every feed agrees on every sync.
+vCenter is not a hypervisor host and stays a server. Existing records were
+moved once when the rule shipped (18 hosts, audit entry `asset.type_rule`).
+
 ## Pagination and the runaway guard
 
 ```

@@ -54,7 +54,33 @@ final class Exceptions {
 			'asset'   => __( 'Every finding on one asset', 'vulnhub' ),
 			'vuln'    => __( 'One vulnerability across all assets', 'vulnhub' ),
 			'team'    => __( 'One vulnerability across a team', 'vulnhub' ),
+			'bundled' => __( 'Every bundled library or file in one application, now and as found', 'vulnhub' ),
 		);
+	}
+
+	/**
+	 * The application a `bundled` exception is keyed on, as its slug.
+	 *
+	 * The request form is launched from a finding, so the reference may be a
+	 * finding id: the exception then covers the application that finding's
+	 * component ships in, and only if it is a component at all. A slug is
+	 * taken as given (the By-product row links with one).
+	 */
+	private static function bundled_slug( string $ref ): string {
+		global $wpdb;
+
+		if ( ctype_digit( $ref ) ) {
+			return (string) $wpdb->get_var(
+				$wpdb->prepare(
+					'SELECT ' . Repo::product_group_slug_sql( 'f', 'v' ) . ' FROM ' . vh_table( 'findings' ) . ' f
+					 INNER JOIN ' . vh_table( 'vulns' ) . ' v ON v.id = f.vuln_id
+					 WHERE f.id = %d AND ' . Repo::bundled_sql( 'f', 'v' ), // phpcs:ignore
+					(int) $ref
+				)
+			);
+		}
+
+		return sanitize_title( $ref );
 	}
 
 	private static function next_reference(): string {
@@ -108,7 +134,17 @@ final class Exceptions {
 		$status = ! empty( $data['submit'] ) ? 'pending' : 'draft';
 
 		$scope_ref = (string) ( $data['scope_ref'] ?? '' );
-		$label     = self::describe_scope( $scope_type, $scope_ref );
+		if ( 'bundled' === $scope_type ) {
+			$scope_ref = self::bundled_slug( $scope_ref );
+			if ( '' === $scope_ref ) {
+				return array(
+					'ok'      => false,
+					'id'      => 0,
+					'message' => __( 'That finding is not a library or file bundled inside another application, so there is no application to scope this exception to.', 'vulnhub' ),
+				);
+			}
+		}
+		$label = self::describe_scope( $scope_type, $scope_ref );
 
 		$row = array(
 			'reference'             => self::next_reference(),
@@ -351,6 +387,73 @@ final class Exceptions {
 	}
 
 	/**
+	 * Extend every active exception to findings that arrived after it was
+	 * approved.
+	 *
+	 * apply() runs once, at approval, so a scope that reads as "this
+	 * vulnerability everywhere" or "every bundled library in Zoom" stopped at
+	 * the findings that existed that day: the next scan's new copy came in
+	 * open. Additive only -- it never detaches or moves a finding from one
+	 * exception to another; revocation and expiry still go through apply()
+	 * and the nightly sweep.
+	 *
+	 * @return int Findings newly covered.
+	 */
+	public static function reapply_active(): int {
+		global $wpdb;
+
+		$rows = (array) $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT * FROM ' . vh_table( 'exceptions' ) . " WHERE status = 'approved' AND ( expires_at IS NULL OR expires_at > %s ) ORDER BY id ASC",
+				vh_now()
+			),
+			ARRAY_A
+		);
+
+		$total = 0;
+		foreach ( $rows as $exception ) {
+			$where = self::scope_where( $exception );
+			if ( ! $where ) {
+				continue;
+			}
+
+			$added = (int) $wpdb->query(
+				$wpdb->prepare(
+					'UPDATE ' . vh_table( 'findings' ) . ' f
+					 INNER JOIN ' . vh_table( 'assets' ) . " a ON a.id = f.asset_id
+					 SET f.exception_id = %d, f.updated_at = %s
+					 WHERE f.state IN ('open','reopened') AND f.exception_id = 0 AND {$where['sql']}", // phpcs:ignore
+					(int) $exception['id'],
+					vh_now(),
+					...$where['params']
+				)
+			);
+
+			if ( $added > 0 ) {
+				$total += $added;
+				self::refresh_affected( (int) $exception['id'] );
+			}
+		}
+
+		if ( $total > 0 ) {
+			Repo::recalculate_asset_rollups();
+			vulnhub()->logger->audit(
+				'exception.extended',
+				sprintf(
+					/* translators: %d: number of findings. */
+					_n( '%d new finding covered by an existing exception', '%d new findings covered by existing exceptions', $total, 'vulnhub' ),
+					$total
+				),
+				'exception',
+				'',
+				array( 'count' => $total )
+			);
+		}
+
+		return $total;
+	}
+
+	/**
 	 * Count what an exception would affect, without applying it.
 	 */
 	public static function refresh_affected( int $id ): int {
@@ -407,6 +510,18 @@ final class Exceptions {
 					'sql'    => 'f.vuln_id = %d AND a.team_id = %d',
 					'params' => array( (int) $exception['vuln_id'], (int) $exception['team_id'] ),
 				);
+			case 'bundled':
+				// Exactly the orange segment of one By-product row: attributed
+				// to that product (the row's own grouping) and a component
+				// (bundled_sql(), the rule `comp=bundled` filters by). Correlated rather than
+				// joined: apply() and refresh_affected() join only assets.
+				if ( '' === (string) $exception['scope_ref'] ) {
+					return null;
+				}
+				return array(
+					'sql'    => 'EXISTS ( SELECT 1 FROM ' . vh_table( 'vulns' ) . ' v WHERE v.id = f.vuln_id AND ' . Repo::product_group_slug_sql( 'f', 'v' ) . ' = %s AND ' . Repo::bundled_sql( 'f', 'v' ) . ' )',
+					'params' => array( (string) $exception['scope_ref'] ),
+				);
 		}
 		return null;
 	}
@@ -437,6 +552,14 @@ final class Exceptions {
 				);
 			case 'team':
 				return __( 'Vulnerability scoped to a team', 'vulnhub' );
+			case 'bundled':
+				global $wpdb;
+				$app = (string) $wpdb->get_var( $wpdb->prepare( 'SELECT ' . Repo::product_group_name_sql( 'f', 'v' ) . ' FROM ' . vh_table( 'findings' ) . ' f INNER JOIN ' . vh_table( 'vulns' ) . ' v ON v.id = f.vuln_id WHERE ' . Repo::product_group_slug_sql( 'f', 'v' ) . ' = %s LIMIT 1', $ref ) ); // phpcs:ignore
+				return sprintf(
+					/* translators: %s: application name. */
+					__( 'Bundled libraries and files in %s', 'vulnhub' ),
+					'' !== $app ? $app : $ref
+				);
 		}
 		return $type;
 	}

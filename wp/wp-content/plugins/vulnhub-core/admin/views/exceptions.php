@@ -17,6 +17,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 // phpcs:disable WordPress.Security.NonceVerification.Recommended
 $vh_new        = isset( $_GET['new'] );
 $vh_finding_id = isset( $_GET['finding'] ) ? (int) $_GET['finding'] : 0;
+// From a By-product row: every bundled library or file in one application.
+$vh_bundled    = isset( $_GET['bundled'] ) ? sanitize_title( wp_unslash( (string) $_GET['bundled'] ) ) : '';
+$vh_bundled_nm = isset( $_GET['app'] ) ? sanitize_text_field( wp_unslash( (string) $_GET['app'] ) ) : $vh_bundled;
 $vh_view_id    = isset( $_GET['exception'] ) ? (int) $_GET['exception'] : 0;
 $vh_status     = isset( $_GET['status'] ) ? sanitize_key( wp_unslash( $_GET['status'] ) ) : '';
 // phpcs:enable
@@ -39,7 +42,7 @@ if ( $vh_new && current_user_can( 'vulnhub_request_exception' ) ) :
 			</p>
 
 			<form id="vh-exception-form">
-				<input type="hidden" name="scope_ref" value="<?php echo esc_attr( (string) $vh_finding_id ); ?>">
+				<input type="hidden" name="scope_ref" value="<?php echo esc_attr( '' !== $vh_bundled ? $vh_bundled : (string) $vh_finding_id ); ?>">
 				<input type="hidden" name="asset_id" value="<?php echo esc_attr( (string) ( $vh_finding['asset_id'] ?? 0 ) ); ?>">
 				<input type="hidden" name="vuln_id" value="<?php echo esc_attr( (string) ( $vh_finding['vuln_id'] ?? 0 ) ); ?>">
 				<input type="hidden" name="severity" value="<?php echo esc_attr( (string) ( $vh_finding['severity'] ?? '' ) ); ?>">
@@ -49,7 +52,7 @@ if ( $vh_new && current_user_can( 'vulnhub_request_exception' ) ) :
 						<th scope="row"><label for="vh-exc-title"><?php esc_html_e( 'Title', 'vulnhub' ); ?></label></th>
 						<td>
 							<input type="text" id="vh-exc-title" name="title" class="large-text"
-								value="<?php echo esc_attr( $vh_vuln && $vh_asset ? ( $vh_vuln['title'] . ' on ' . $vh_asset['hostname'] ) : '' ); ?>" required>
+								value="<?php echo esc_attr( '' !== $vh_bundled ? sprintf( /* translators: %s: application. */ __( 'Bundled libraries and files in %s', 'vulnhub' ), $vh_bundled_nm ) : ( $vh_vuln && $vh_asset ? ( $vh_vuln['title'] . ' on ' . $vh_asset['hostname'] ) : '' ) ); ?>" required>
 						</td>
 					</tr>
 					<tr>
@@ -57,10 +60,18 @@ if ( $vh_new && current_user_can( 'vulnhub_request_exception' ) ) :
 						<td>
 							<select id="vh-exc-scope" name="scope_type">
 								<?php foreach ( Exceptions::scope_types() as $vh_k => $vh_l ) : ?>
-									<option value="<?php echo esc_attr( $vh_k ); ?>"><?php echo esc_html( $vh_l ); ?></option>
+									<?php
+									// A request for an application's bundled components has
+									// no finding behind it, so only that scope makes sense.
+									if ( '' !== $vh_bundled && 'bundled' !== $vh_k ) {
+										continue;
+									}
+									?>
+									<option value="<?php echo esc_attr( $vh_k ); ?>" <?php selected( '' !== $vh_bundled && 'bundled' === $vh_k ); ?>><?php echo esc_html( $vh_l ); ?></option>
 								<?php endforeach; ?>
 							</select>
 							<span class="vh-field-help"><?php esc_html_e( 'Widening the scope from one finding to a whole asset or vulnerability affects more findings — the count is shown after you save.', 'vulnhub' ); ?></span>
+							<span class="vh-field-help"><?php esc_html_e( 'The bundled scope covers every library or file shipped inside the application, including ones found after approval. The application\'s own vulnerabilities are never included.', 'vulnhub' ); ?></span>
 						</td>
 					</tr>
 					<tr>

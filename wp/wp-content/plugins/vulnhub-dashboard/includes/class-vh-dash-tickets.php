@@ -1235,19 +1235,35 @@ final class VulnHub_Dash_Tickets {
 			? sprintf( __( 'scanner data %s', 'vulnhub' ), vh_ago( $as_of ) )
 			: '';
 
+		// Set-aside work counts as done, and says so rather than hiding in "fixed".
+		$f_aside = (int) ( $progress['findings_aside'] ?? 0 );
+		$a_aside = (int) ( $progress['assets_aside'] ?? 0 );
+
 		return '<div class="vh-tprog">'
 			. self::progress_bar(
 				(int) $progress['findings_fixed'],
 				(int) $progress['findings'],
-				/* translators: 1: findings fixed, 2: findings on the ticket. */
-				__( '%1$s of %2$s findings fixed', 'vulnhub' )
+				$f_aside > 0
+					/* translators: 1: findings done, 2: findings on the ticket. */
+					? __( '%1$s of %2$s findings done', 'vulnhub' )
+					/* translators: 1: findings fixed, 2: findings on the ticket. */
+					: __( '%1$s of %2$s findings fixed', 'vulnhub' ),
+				$f_aside > 0
+					/* translators: %s: findings set aside. */
+					? sprintf( __( 'includes %s set aside on this ticket', 'vulnhub' ), number_format_i18n( $f_aside ) )
+					: ''
 			)
 			. self::progress_bar(
 				(int) $progress['assets_fixed'],
 				(int) $progress['assets'],
 				/* translators: 1: assets clear, 2: assets on the ticket. */
 				__( '%1$s of %2$s assets clear', 'vulnhub' ),
-				$aside
+				trim(
+					( $a_aside > 0
+						/* translators: %s: assets set aside. */
+						? sprintf( _n( '%s asset set aside', '%s assets set aside', $a_aside, 'vulnhub' ), number_format_i18n( $a_aside ) ) . ( '' !== $aside ? ' · ' : '' )
+						: '' ) . $aside
+				)
 			)
 			. '</div>';
 	}
@@ -1841,11 +1857,14 @@ final class VulnHub_Dash_Tickets {
 
 		$rows = (array) $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 			$wpdb->prepare(
+				// In service is the whole in-service set (Unknown, quarantine and
+				// repair included), as the progress bar counts it; comparing to
+				// the literal showed every Unknown asset's findings as resolved.
 				'SELECT COALESCE( NULLIF( p.department, %s ), %s ) AS dept,
 					COUNT(DISTINCT a.id) AS assets,
 					COUNT(*) AS total,
-					SUM( CASE WHEN f.state = %s OR a.lifecycle_status <> %s THEN 1 ELSE 0 END ) AS resolved,
-					SUM( CASE WHEN f.state <> %s AND a.lifecycle_status = %s THEN 1 ELSE 0 END ) AS outstanding
+					SUM( CASE WHEN f.state = %s OR a.lifecycle_status NOT IN ( ' . vh_in_service_sql() . ' ) THEN 1 ELSE 0 END ) AS resolved,
+					SUM( CASE WHEN f.state <> %s AND a.lifecycle_status IN ( ' . vh_in_service_sql() . ' ) THEN 1 ELSE 0 END ) AS outstanding
 				 FROM ' . vh_table( 'ticket_findings' ) . ' tf
 				 JOIN ' . vh_table( 'findings' ) . ' f ON f.id = tf.finding_id
 				 JOIN ' . vh_table( 'assets' ) . ' a ON a.id = f.asset_id
@@ -1856,9 +1875,7 @@ final class VulnHub_Dash_Tickets {
 				'',
 				__( 'Unassigned', 'vulnhub' ),
 				'fixed',
-				'in_service',
 				'fixed',
-				'in_service',
 				(int) $t['id']
 			),
 			ARRAY_A
@@ -1900,52 +1917,527 @@ final class VulnHub_Dash_Tickets {
 		echo '</tbody></table></div>';
 	}
 
-	private static function render_findings( array $t ): void {
-		$rows = array_slice( Tickets::findings_for( (int) $t['id'] ), 0, 200 );
+	/**
+	 * Columns the ticket's findings table can show, in display order.
+	 *
+	 * Owner columns come from the person record (Intune/Entra or the CMDB);
+	 * names are masked until the eye in the header is pressed, as on every
+	 * other owner column.
+	 *
+	 * @return array<string,array{0:string,1:bool}> key => [label, on by default].
+	 */
+	private static function ticket_finding_columns(): array {
+		return array(
+			'host'        => array( __( 'Host', 'vulnhub' ), true ),
+			'vuln'        => array( __( 'Vulnerability', 'vulnhub' ), true ),
+			'severity'    => array( __( 'Severity', 'vulnhub' ), true ),
+			'owner'       => array( __( 'Owner', 'vulnhub' ), true ),
+			'email'       => array( __( 'Owner email', 'vulnhub' ), false ),
+			'job'         => array( __( 'Job title', 'vulnhub' ), false ),
+			'department'  => array( __( 'Department', 'vulnhub' ), true ),
+			'manager'     => array( __( 'Manager', 'vulnhub' ), false ),
+			'team'        => array( __( 'Team', 'vulnhub' ), false ),
+			'location'    => array( __( 'Location', 'vulnhub' ), false ),
+			'asset_type'  => array( __( 'Asset type', 'vulnhub' ), false ),
+			'os'          => array( __( 'Operating system', 'vulnhub' ), false ),
+			'ipv4'        => array( __( 'IPv4', 'vulnhub' ), false ),
+			'aws'         => array( __( 'AWS account / instance', 'vulnhub' ), false ),
+			'lifecycle'   => array( __( 'Lifecycle', 'vulnhub' ), false ),
+			'seen'        => array( __( 'Last seen', 'vulnhub' ), true ),
+			'first_found' => array( __( 'First found', 'vulnhub' ), false ),
+			'due'         => array( __( 'Due', 'vulnhub' ), false ),
+			'state'       => array( __( 'State', 'vulnhub' ), true ),
+			'verify'      => array( __( 'Verification', 'vulnhub' ), true ),
+		);
+	}
 
-		if ( ! $rows ) {
+	/**
+	 * The columns this person chose, remembered per user.
+	 *
+	 * Apply on the picker sends `fcols[]` with `fcols_set=1`; that choice is
+	 * saved and used on every ticket until changed. `fcols=default` resets.
+	 *
+	 * @return string[]
+	 */
+	private static function ticket_finding_cols_chosen(): array {
+		$all  = self::ticket_finding_columns();
+		$uid  = get_current_user_id();
+		$meta = 'vulnhub_ticket_finding_cols';
+
+		// phpcs:disable WordPress.Security.NonceVerification.Recommended
+		if ( isset( $_GET['fcols_set'] ) ) {
+			$picked = isset( $_GET['fcols'] ) && is_array( $_GET['fcols'] ) ? array_map( 'sanitize_key', wp_unslash( $_GET['fcols'] ) ) : array();
+			$picked = array_values( array_intersect( array_keys( $all ), $picked ) );
+			if ( $uid && $picked ) {
+				update_user_meta( $uid, $meta, $picked );
+			}
+		} elseif ( 'default' === self::q( 'fcols' ) && $uid ) {
+			delete_user_meta( $uid, $meta );
+		}
+		// phpcs:enable
+
+		$saved = $uid ? (array) get_user_meta( $uid, $meta, true ) : array();
+		$saved = array_values( array_intersect( array_keys( $all ), array_map( 'strval', $saved ) ) );
+
+		if ( $saved ) {
+			return $saved;
+		}
+
+		return array_keys( array_filter( $all, static fn( array $c ): bool => $c[1] ) );
+	}
+
+	/**
+	 * Every finding on a ticket, with the asset, its owner and where it
+	 * stands. State here is the ticket's reading of it: a finding on an
+	 * asset that is no longer in service reads `oos` (resolved, out of
+	 * service) whatever the scanner last said. "In service" means the whole
+	 * in-service set -- Unknown, In quarantine and In repair count -- the
+	 * same set the progress bar and verification use (Tickets, via
+	 * vh_in_service_sql()).
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	private static function ticket_finding_rows( int $ticket_id ): array {
+		global $wpdb;
+
+		$rows = (array) $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			$wpdb->prepare(
+				'SELECT f.id, f.asset_id, f.state, f.severity, f.first_found, f.last_found, f.due_at, f.verification_state,
+						a.hostname, a.fqdn, a.ipv4, a.asset_type, a.operating_system, a.lifecycle_status,
+						a.tenable_last_scan, a.defender_last_seen, a.aws_instance_id, a.aws_instance_name, a.aws_account_name,
+						v.title AS vuln_title, v.severity_id,
+						p.display_name AS owner, COALESCE( NULLIF( p.email, \'\' ), p.upn ) AS owner_email, p.job_title,
+						p.department, p.manager_name, t.name AS team, l.name AS location
+				 FROM ' . vh_table( 'ticket_findings' ) . ' tf
+				 INNER JOIN ' . vh_table( 'findings' ) . ' f ON f.id = tf.finding_id
+				 INNER JOIN ' . vh_table( 'assets' ) . ' a ON a.id = f.asset_id
+				 INNER JOIN ' . vh_table( 'vulns' ) . ' v ON v.id = f.vuln_id
+				 LEFT JOIN ' . vh_table( 'people' ) . ' p ON p.id = a.owner_person_id
+				 LEFT JOIN ' . vh_table( 'teams' ) . ' t ON t.id = a.team_id
+				 LEFT JOIN ' . vh_table( 'locations' ) . ' l ON l.id = a.location_id
+				 WHERE tf.ticket_id = %d
+				 ORDER BY v.severity_id DESC, a.hostname ASC, v.title ASC',
+				$ticket_id
+			),
+			ARRAY_A
+		);
+
+		$live  = vh_in_service_statuses();
+		$aside = \VulnHub\Core\Tickets::aside_for( $ticket_id );
+		foreach ( $rows as &$r ) {
+			$life             = (string) $r['lifecycle_status'];
+			$a                = $aside[ (int) $r['asset_id'] ] ?? null;
+			$r['aside']       = $a ? (string) $a['reason'] : '';
+			$r['aside_note']  = $a ? (string) $a['note'] : '';
+			$r['aside_at']    = $a ? (string) $a['set_at'] : '';
+			$r['shown']       = ( '' !== $life && ! in_array( $life, $live, true ) ) ? 'oos' : (string) $r['state'];
+			// Set aside on this ticket: still-open work that no longer counts here.
+			if ( $a && in_array( $r['shown'], array( 'open', 'reopened' ), true ) ) {
+				$r['shown'] = 'aside';
+			}
+		}
+		unset( $r );
+
+		return $rows;
+	}
+
+	/** A finding row's cell for one column, escaped. */
+	private static function ticket_finding_cell( string $col, array $f ): string {
+		switch ( $col ) {
+			case 'host':
+				return '<a class="vh-mono" href="' . esc_url( self::page_url( 'assets', array( 'asset' => (int) $f['asset_id'] ) ) ) . '">' . esc_html( (string) $f['hostname'] ) . '</a>';
+			case 'vuln':
+				return esc_html( vh_trim( (string) $f['vuln_title'], 90 ) );
+			case 'severity':
+				return function_exists( 'vh_severity_pill' ) ? wp_kses_post( vh_severity_pill( (string) $f['severity'] ) ) : esc_html( (string) $f['severity'] );
+			case 'owner':
+				return '' !== (string) $f['owner'] ? VulnHub_Dash_App::owner_mask_html( (string) $f['owner'] ) : '<span class="vh-chip vh-chip--warn">' . esc_html__( 'Unassigned', 'vulnhub' ) . '</span>';
+			case 'email':
+				return '' !== (string) $f['owner_email'] ? VulnHub_Dash_App::owner_mask_html( (string) $f['owner_email'] ) : '<span class="vh-muted">—</span>';
+			case 'manager':
+				return '' !== (string) $f['manager_name'] ? VulnHub_Dash_App::owner_mask_html( (string) $f['manager_name'] ) : '<span class="vh-muted">—</span>';
+			case 'job':
+			case 'department':
+			case 'team':
+			case 'location':
+				$k = array( 'job' => 'job_title', 'department' => 'department', 'team' => 'team', 'location' => 'location' )[ $col ];
+				return '' !== (string) $f[ $k ] ? esc_html( (string) $f[ $k ] ) : '<span class="vh-muted">—</span>';
+			case 'asset_type':
+				return esc_html( vh_asset_type_label( (string) $f['asset_type'] ) );
+			case 'os':
+				return '<span class="vh-meta">' . esc_html( vh_trim( (string) $f['operating_system'], 42 ) ) . '</span>';
+			case 'ipv4':
+				return '<span class="vh-mono">' . esc_html( (string) $f['ipv4'] ) . '</span>';
+			case 'aws':
+				if ( '' === (string) $f['aws_instance_id'] ) {
+					return '<span class="vh-muted">—</span>';
+				}
+				return esc_html( (string) ( $f['aws_instance_name'] ?: $f['aws_instance_id'] ) ) . '<span class="vh-meta">' . esc_html( (string) $f['aws_account_name'] ) . '</span>';
+			case 'lifecycle':
+				return esc_html( (string) ( vh_lifecycle_statuses()[ (string) $f['lifecycle_status'] ]['label'] ?? $f['lifecycle_status'] ) );
+			case 'seen':
+				$seen = array();
+				if ( ! empty( $f['tenable_last_scan'] ) ) {
+					$seen[] = 'Tenable ' . vh_ago( (string) $f['tenable_last_scan'] );
+				}
+				if ( ! empty( $f['defender_last_seen'] ) ) {
+					$seen[] = 'Defender ' . vh_ago( (string) $f['defender_last_seen'] );
+				}
+				return $seen ? '<span class="vh-meta vh-nowrap">' . esc_html( implode( ' · ', $seen ) ) . '</span>' : '<span class="vh-muted">—</span>';
+			case 'first_found':
+				return '<span class="vh-meta">' . esc_html( $f['first_found'] ? vh_date_only( (string) $f['first_found'] ) : '—' ) . '</span>';
+			case 'due':
+				return '<span class="vh-meta">' . esc_html( $f['due_at'] ? vh_ago( (string) $f['due_at'] ) : '—' ) . '</span>';
+			case 'state':
+				if ( 'oos' === $f['shown'] ) {
+					return '<span class="vh-state vh-state--good">' . esc_html__( 'resolved', 'vulnhub' ) . '</span> <span class="vh-meta">' . esc_html__( 'out of service', 'vulnhub' ) . '</span>';
+				}
+				$tone = array( 'fixed' => 'good', 'open' => 'bad', 'reopened' => 'warn' )[ (string) $f['shown'] ] ?? '';
+				return '<span class="vh-state' . ( $tone ? ' vh-state--' . $tone : '' ) . '">' . esc_html( (string) $f['shown'] ) . '</span>';
+			case 'verify':
+				return esc_html( Tickets::verification_labels()[ (string) ( $f['verification_state'] ?? '' ) ] ?? '—' );
+		}
+
+		return '';
+	}
+
+	/**
+	 * A vulnerability ticket's findings: filter by where each stands, search,
+	 * pick the columns (owner detail included), and read them flat or one
+	 * row per asset. Paged, so a 572-finding ticket shows all 572 -- the
+	 * table used to stop silently at 200.
+	 */
+	private static function render_findings( array $t ): void {
+		$all = self::ticket_finding_rows( (int) $t['id'] );
+
+		if ( ! $all ) {
 			echo '<p class="vh-chart-empty">' . esc_html__( 'This ticket covers no findings.', 'vulnhub' ) . '</p>';
 			return;
 		}
+
+		$states = array(
+			''         => __( 'All', 'vulnhub' ),
+			'open'     => __( 'Open', 'vulnhub' ),
+			'reopened' => __( 'Reopened', 'vulnhub' ),
+			'fixed'    => __( 'Fixed', 'vulnhub' ),
+			'oos'      => __( 'Resolved: out of service', 'vulnhub' ),
+			'aside'    => __( 'Set aside', 'vulnhub' ),
+		);
+		$owners = array(
+			''     => __( 'Any owner', 'vulnhub' ),
+			'has'  => __( 'Has an owner', 'vulnhub' ),
+			'none' => __( 'No owner', 'vulnhub' ),
+		);
+		$owner  = array_key_exists( self::q( 'fowner' ), $owners ) ? self::q( 'fowner' ) : '';
+		if ( '' !== $owner ) {
+			// A population filter, so the tab counts follow it too.
+			$all = array_values( array_filter( $all, static fn( array $r ): bool => ( '' === trim( (string) $r['owner'] ) ) === ( 'none' === $owner ) ) );
+		}
+		$state  = array_key_exists( self::q( 'fstate' ), $states ) ? self::q( 'fstate' ) : '';
+		$group  = 'asset' === self::q( 'fgroup' ) ? 'asset' : '';
+		$search = self::q( 'fq' );
+		$cols   = self::ticket_finding_cols_chosen();
+		$labels = self::ticket_finding_columns();
+
+		$count = array_fill_keys( array_keys( $states ), 0 );
+		foreach ( $all as $r ) {
+			++$count[''];
+			if ( isset( $count[ $r['shown'] ] ) ) {
+				++$count[ $r['shown'] ];
+			}
+		}
+
+		$rows = array_values(
+			array_filter(
+				$all,
+				static function ( array $r ) use ( $state, $search ): bool {
+					if ( '' !== $state && $r['shown'] !== $state ) {
+						return false;
+					}
+					if ( '' === $search ) {
+						return true;
+					}
+					$hay = strtolower( implode( ' ', array( $r['hostname'], $r['vuln_title'], $r['owner'], $r['owner_email'], $r['department'], $r['team'], $r['ipv4'], $r['aws_instance_name'] ) ) );
+					return str_contains( $hay, strtolower( $search ) );
+				}
+			)
+		);
+
+		$base = self::page_url( 'tickets', array( 'ticket' => (int) $t['id'] ) );
+		$keep = array_filter(
+			array(
+				'fstate' => $state,
+				'fgroup' => $group,
+				'fq'     => $search,
+				'fowner' => $owner,
+			)
+		);
 		?>
+		<div class="vh-tf-bar">
+			<div class="vh-segbar vh-tf-states" role="group" aria-label="<?php esc_attr_e( 'Show findings that are', 'vulnhub' ); ?>">
+				<?php foreach ( $states as $key => $label ) : ?>
+					<?php
+					if ( in_array( $key, array( 'oos', 'aside' ), true ) && 0 === $count[ $key ] && $state !== $key ) {
+						continue;
+					}
+					$href = add_query_arg( array_filter( array_merge( $keep, array( 'fstate' => $key ) ) ), $base );
+					?>
+					<a class="vh-seg<?php echo $state === $key ? ' is-active' : ''; ?>" href="<?php echo esc_url( $href ); ?>"<?php echo $state === $key ? ' aria-current="true"' : ''; ?>>
+						<?php echo esc_html( $label ); ?> <span class="vh-seg__n"><?php echo esc_html( number_format_i18n( $count[ $key ] ) ); ?></span>
+					</a>
+				<?php endforeach; ?>
+			</div>
+
+			<form class="vh-tf-tools" method="get" action="<?php echo esc_url( $base ); ?>">
+				<input type="hidden" name="ticket" value="<?php echo esc_attr( (string) (int) $t['id'] ); ?>">
+				<?php if ( '' !== $state ) : ?><input type="hidden" name="fstate" value="<?php echo esc_attr( $state ); ?>"><?php endif; ?>
+				<label class="vh-tf-search">
+					<span class="screen-reader-text"><?php esc_html_e( 'Search findings', 'vulnhub' ); ?></span>
+					<input type="search" name="fq" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Host, vulnerability, owner, department…', 'vulnhub' ); ?>">
+				</label>
+				<label><?php esc_html_e( 'Owner', 'vulnhub' ); ?>
+					<select name="fowner" onchange="this.form.submit()">
+						<?php foreach ( $owners as $k => $label ) : ?>
+							<option value="<?php echo esc_attr( $k ); ?>" <?php selected( $owner, $k ); ?>><?php echo esc_html( $label ); ?></option>
+						<?php endforeach; ?>
+					</select>
+				</label>
+				<label><?php esc_html_e( 'Group', 'vulnhub' ); ?>
+					<select name="fgroup" onchange="this.form.submit()">
+						<option value=""><?php esc_html_e( 'None: one row per finding', 'vulnhub' ); ?></option>
+						<option value="asset" <?php selected( $group, 'asset' ); ?>><?php esc_html_e( 'By asset', 'vulnhub' ); ?></option>
+					</select>
+				</label>
+				<details class="vh-tf-cols">
+					<summary class="vh-btn vh-btn--ghost vh-btn--sm"><?php esc_html_e( 'Columns', 'vulnhub' ); ?></summary>
+					<div class="vh-tf-cols__panel">
+						<input type="hidden" name="fcols_set" value="1">
+						<?php foreach ( $labels as $key => $col ) : ?>
+							<label class="vh-check"><input type="checkbox" name="fcols[]" value="<?php echo esc_attr( $key ); ?>" <?php checked( in_array( $key, $cols, true ) ); ?>> <?php echo esc_html( $col[0] ); ?></label>
+						<?php endforeach; ?>
+						<div class="vh-tf-cols__foot">
+							<button class="vh-btn vh-btn--sm vh-btn--primary"><?php esc_html_e( 'Apply', 'vulnhub' ); ?></button>
+							<a class="vh-linkbtn" href="<?php echo esc_url( add_query_arg( array_merge( $keep, array( 'fcols' => 'default' ) ), $base ) ); ?>"><?php esc_html_e( 'Reset to default', 'vulnhub' ); ?></a>
+						</div>
+						<p class="vh-meta"><?php esc_html_e( 'Remembered for you on every ticket.', 'vulnhub' ); ?></p>
+					</div>
+				</details>
+				<button class="vh-btn vh-btn--sm"><?php esc_html_e( 'Apply', 'vulnhub' ); ?></button>
+			</form>
+		</div>
+		<?php
+
+		if ( ! $rows ) {
+			echo '<p class="vh-chart-empty">' . esc_html__( 'No findings on this ticket match.', 'vulnhub' ) . '</p>';
+			return;
+		}
+
+		if ( 'asset' === $group ) {
+			self::render_findings_by_asset( $t, $rows, $cols, $base, $keep );
+			return;
+		}
+
+		$per   = 100;
+		$pages = max( 1, (int) ceil( count( $rows ) / $per ) );
+		$page  = min( $pages, max( 1, (int) self::q( 'fp' ) ) );
+		$shown = array_slice( $rows, ( $page - 1 ) * $per, $per );
+		?>
+		<p class="vh-sub vh-muted">
+			<?php
+			printf(
+				/* translators: 1: first row, 2: last row, 3: total. */
+				esc_html__( 'Showing %1$s–%2$s of %3$s findings.', 'vulnhub' ),
+				esc_html( number_format_i18n( ( $page - 1 ) * $per + 1 ) ),
+				esc_html( number_format_i18n( ( $page - 1 ) * $per + count( $shown ) ) ),
+				esc_html( number_format_i18n( count( $rows ) ) )
+			);
+			?>
+		</p>
 		<div class="vh-tablewrap">
 			<table class="vh-table">
 				<thead><tr>
-					<th><?php esc_html_e( 'Host', 'vulnhub' ); ?></th>
-					<th><?php esc_html_e( 'Vulnerability', 'vulnhub' ); ?></th>
-					<th><?php esc_html_e( 'Last seen', 'vulnhub' ); ?></th>
-					<th><?php esc_html_e( 'State', 'vulnhub' ); ?></th>
-					<th><?php esc_html_e( 'Verification', 'vulnhub' ); ?></th>
+					<?php foreach ( $cols as $c ) : ?>
+						<th><?php echo esc_html( $labels[ $c ][0] ); ?><?php echo in_array( $c, array( 'owner', 'email', 'manager' ), true ) && 'owner' === $c ? VulnHub_Dash_App::owner_eye_html() : ''; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></th>
+					<?php endforeach; ?>
 				</tr></thead>
 				<tbody>
-				<?php foreach ( $rows as $f ) : ?>
-					<?php
-					// An asset the CMDB no longer has in service cannot carry a live
-					// finding -- the machine is gone -- so it reads as resolved here
-					// whatever the scanner last said.
-					$vh_oos   = 'in_service' !== (string) ( $f['lifecycle_status'] ?? '' ) && '' !== (string) ( $f['lifecycle_status'] ?? '' );
-					$vh_seen  = array();
-					if ( ! empty( $f['tenable_last_scan'] ) )  { $vh_seen[] = 'Tenable ' . vh_ago( (string) $f['tenable_last_scan'] ); }
-					if ( ! empty( $f['defender_last_seen'] ) ) { $vh_seen[] = 'Defender ' . vh_ago( (string) $f['defender_last_seen'] ); }
-					?>
+				<?php foreach ( $shown as $f ) : ?>
 					<tr>
-						<td><a class="vh-mono" href="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $f['asset_id'] ) ) ); ?>"><?php echo esc_html( (string) $f['hostname'] ); ?></a></td>
-						<td><?php echo esc_html( vh_trim( (string) $f['vuln_title'], 90 ) ); ?></td>
-						<td class="vh-meta vh-nowrap"><?php echo $vh_seen ? esc_html( implode( ' · ', $vh_seen ) ) : '<span class="vh-muted">—</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
-						<td>
-							<?php if ( $vh_oos ) : ?>
-								<span class="vh-state vh-state--good"><?php esc_html_e( 'resolved', 'vulnhub' ); ?></span>
-								<span class="vh-meta"><?php esc_html_e( 'out of service', 'vulnhub' ); ?></span>
-							<?php else : ?>
-								<?php echo esc_html( (string) $f['state'] ); ?>
-							<?php endif; ?>
-						</td>
-						<td><?php echo esc_html( Tickets::verification_labels()[ (string) ( $f['verification_state'] ?? '' ) ] ?? '—' ); ?></td>
+						<?php foreach ( $cols as $c ) : ?>
+							<td data-th="<?php echo esc_attr( $labels[ $c ][0] ); ?>"><?php echo self::ticket_finding_cell( $c, $f ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+						<?php endforeach; ?>
 					</tr>
 				<?php endforeach; ?>
 				</tbody>
 			</table>
 		</div>
 		<?php
+		self::ticket_findings_pager( $page, $pages, 'fp', add_query_arg( $keep, $base ) );
+	}
+
+	/**
+	 * One row per asset: its owner and where its findings stand, expanding
+	 * to the vulnerabilities themselves.
+	 *
+	 * @param array<int,array<string,mixed>> $rows Filtered findings.
+	 * @param string[]                       $cols Chosen columns.
+	 * @param array<string,string>           $keep Filters to carry.
+	 */
+	private static function render_findings_by_asset( array $t, array $rows, array $cols, string $base, array $keep ): void {
+		$labels = self::ticket_finding_columns();
+		$assets = array();
+
+		foreach ( $rows as $f ) {
+			$id = (int) $f['asset_id'];
+			if ( ! isset( $assets[ $id ] ) ) {
+				$assets[ $id ] = array( 'row' => $f, 'items' => array(), 'n' => array( 'open' => 0, 'reopened' => 0, 'fixed' => 0, 'oos' => 0, 'aside' => 0 ) );
+			}
+			$assets[ $id ]['items'][] = $f;
+			if ( isset( $assets[ $id ]['n'][ $f['shown'] ] ) ) {
+				++$assets[ $id ]['n'][ $f['shown'] ];
+			}
+		}
+
+		// Most outstanding work first.
+		uasort(
+			$assets,
+			static fn( array $x, array $y ): int => ( $y['n']['open'] + $y['n']['reopened'] ) <=> ( $x['n']['open'] + $x['n']['reopened'] ) ?: strcmp( (string) $x['row']['hostname'], (string) $y['row']['hostname'] )
+		);
+
+		// Asset-level columns only; the finding-level ones go in the rows below.
+		$acols = array_values( array_diff( $cols, array( 'vuln', 'severity', 'first_found', 'due', 'state', 'verify' ) ) );
+		$fcols = array_values( array_intersect( array( 'vuln', 'severity', 'first_found', 'due', 'state', 'verify' ), $cols ) ) ?: array( 'vuln', 'state' );
+
+		$per   = 50;
+		$pages = max( 1, (int) ceil( count( $assets ) / $per ) );
+		$page  = min( $pages, max( 1, (int) self::q( 'ap' ) ) );
+		$shown = array_slice( $assets, ( $page - 1 ) * $per, $per, true );
+		$pick  = self::can_transition();
+		$jira  = $pick && 'jira' === (string) $t['provider'];
+		$why   = \VulnHub\Core\Tickets::aside_reasons();
+		?>
+		<?php if ( $pick ) : ?>
+			<div class="vh-tf-sel" data-vh-tf-sel data-ticket="<?php echo (int) $t['id']; ?>" data-all="<?php echo esc_attr( wp_json_encode( array_map( 'intval', array_keys( $assets ) ) ) ); ?>">
+				<span class="vh-tf-sel__n" data-vh-tf-count><?php esc_html_e( 'None selected', 'vulnhub' ); ?></span>
+				<button type="button" class="vh-linkbtn" data-vh-tf-all>
+					<?php
+					/* translators: %s: assets matching the filter. */
+					echo esc_html( sprintf( __( 'Select all %s matching', 'vulnhub' ), number_format_i18n( count( $assets ) ) ) );
+					?>
+				</button>
+				<button type="button" class="vh-linkbtn" data-vh-tf-none><?php esc_html_e( 'Clear', 'vulnhub' ); ?></button>
+				<span class="vh-tf-sel__sep" aria-hidden="true"></span>
+				<?php if ( $jira ) : ?>
+					<span class="vh-tf-sel__grp">
+						<button type="button" class="vh-btn vh-btn--sm" data-vh-reattach="<?php echo (int) $t['id']; ?>" data-vh-reattach-assets="[]" data-vh-needs-sel disabled><?php esc_html_e( 'Send an updated list for selected', 'vulnhub' ); ?></button>
+						<span class="vh-meta" data-vh-reattach-status role="status"></span>
+					</span>
+				<?php endif; ?>
+				<span class="vh-tf-sel__grp">
+					<select data-vh-aside-reason aria-label="<?php esc_attr_e( 'Reason', 'vulnhub' ); ?>">
+						<?php foreach ( $why as $k => $label ) : ?>
+							<option value="<?php echo esc_attr( $k ); ?>"><?php echo esc_html( $label ); ?></option>
+						<?php endforeach; ?>
+					</select>
+					<input type="text" maxlength="500" data-vh-aside-note placeholder="<?php esc_attr_e( 'Note (optional)', 'vulnhub' ); ?>" aria-label="<?php esc_attr_e( 'Note', 'vulnhub' ); ?>">
+					<button type="button" class="vh-btn vh-btn--sm" data-vh-aside-set data-vh-needs-sel disabled><?php esc_html_e( 'Set aside for this ticket', 'vulnhub' ); ?></button>
+					<button type="button" class="vh-btn vh-btn--ghost vh-btn--sm" data-vh-aside-clear data-vh-needs-sel disabled><?php esc_html_e( 'Take back', 'vulnhub' ); ?></button>
+				</span>
+				<span class="vh-meta" data-vh-aside-status role="status"></span>
+			</div>
+		<?php endif; ?>
+		<p class="vh-sub vh-muted">
+			<?php
+			printf(
+				/* translators: 1: assets, 2: findings. */
+				esc_html__( '%1$s assets carry these %2$s findings. Expand one to see its vulnerabilities.', 'vulnhub' ),
+				esc_html( number_format_i18n( count( $assets ) ) ),
+				esc_html( number_format_i18n( count( $rows ) ) )
+			);
+			?>
+		</p>
+		<div class="vh-tablewrap">
+			<table class="vh-table vh-tf-assets">
+				<thead><tr>
+					<?php if ( $pick ) : ?>
+						<th class="vh-tf-pickcol"><input type="checkbox" data-vh-tf-page aria-label="<?php esc_attr_e( 'Select every asset on this page', 'vulnhub' ); ?>"></th>
+					<?php endif; ?>
+					<?php foreach ( $acols as $c ) : ?>
+						<th><?php echo esc_html( $labels[ $c ][0] ); ?><?php echo 'owner' === $c ? VulnHub_Dash_App::owner_eye_html() : ''; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></th>
+					<?php endforeach; ?>
+					<th class="vh-num"><?php esc_html_e( 'Open', 'vulnhub' ); ?></th>
+					<th class="vh-num"><?php esc_html_e( 'Reopened', 'vulnhub' ); ?></th>
+					<th class="vh-num"><?php esc_html_e( 'Fixed', 'vulnhub' ); ?></th>
+					<th><?php esc_html_e( 'Vulnerabilities', 'vulnhub' ); ?></th>
+				</tr></thead>
+				<tbody>
+				<?php foreach ( $shown as $a ) : ?>
+					<?php $out = $a['n']['open'] + $a['n']['reopened']; ?>
+					<tr class="<?php echo 0 === $out ? 'vh-tf-clear' : ''; ?>">
+						<?php if ( $pick ) : ?>
+							<td class="vh-tf-pickcol"><input type="checkbox" data-vh-tf-pick value="<?php echo (int) $a['row']['asset_id']; ?>" aria-label="<?php echo esc_attr( sprintf( /* translators: %s: host. */ __( 'Select %s', 'vulnhub' ), (string) $a['row']['hostname'] ) ); ?>"></td>
+						<?php endif; ?>
+						<?php foreach ( $acols as $i => $c ) : ?>
+							<td data-th="<?php echo esc_attr( $labels[ $c ][0] ); ?>"><?php echo self::ticket_finding_cell( $c, $a['row'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+								<?php if ( 0 === $i && '' !== (string) $a['row']['aside'] ) : ?>
+									<span class="vh-chip vh-chip--muted vh-tf-aside" title="<?php echo esc_attr( trim( vh_date( (string) $a['row']['aside_at'] ) . ' ' . (string) $a['row']['aside_note'] ) ); ?>">
+										<?php
+										/* translators: %s: reason. */
+										echo esc_html( sprintf( __( 'Set aside: %s', 'vulnhub' ), $why[ (string) $a['row']['aside'] ] ?? (string) $a['row']['aside'] ) );
+										?>
+									</span>
+								<?php endif; ?>
+							</td>
+						<?php endforeach; ?>
+						<td class="vh-num"><?php echo $a['n']['open'] ? '<strong>' . (int) $a['n']['open'] . '</strong>' : '0'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+						<td class="vh-num"><?php echo (int) $a['n']['reopened']; ?></td>
+						<td class="vh-num"><?php echo (int) ( $a['n']['fixed'] + $a['n']['oos'] ); ?></td>
+						<td>
+							<details class="vh-tf-vulns">
+								<summary>
+									<?php
+									/* translators: %d: findings. */
+									echo esc_html( sprintf( _n( '%d finding', '%d findings', count( $a['items'] ), 'vulnhub' ), count( $a['items'] ) ) );
+									?>
+								</summary>
+								<table class="vh-table vh-table--inner">
+									<tbody>
+									<?php foreach ( $a['items'] as $f ) : ?>
+										<tr>
+											<?php foreach ( $fcols as $c ) : ?>
+												<td><?php echo self::ticket_finding_cell( $c, $f ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
+											<?php endforeach; ?>
+										</tr>
+									<?php endforeach; ?>
+									</tbody>
+								</table>
+							</details>
+						</td>
+					</tr>
+				<?php endforeach; ?>
+				</tbody>
+			</table>
+		</div>
+		<?php
+		self::ticket_findings_pager( $page, $pages, 'ap', add_query_arg( $keep, $base ) );
+	}
+
+	private static function ticket_findings_pager( int $page, int $pages, string $param, string $here ): void {
+		if ( $pages < 2 ) {
+			return;
+		}
+		?>
+		<nav class="vh-pager" aria-label="<?php esc_attr_e( 'Pagination', 'vulnhub' ); ?>">
+			<?php if ( $page > 1 ) : ?>
+				<a class="vh-btn vh-btn--ghost" href="<?php echo esc_url( add_query_arg( $param, $page - 1, $here ) ); ?>">&larr; <?php esc_html_e( 'Previous', 'vulnhub' ); ?></a>
+			<?php endif; ?>
+			<?php /* translators: 1: current page, 2: total pages. */ ?>
+			<span class="vh-pager__count"><?php echo esc_html( sprintf( __( 'Page %1$d of %2$d', 'vulnhub' ), $page, $pages ) ); ?></span>
+			<?php if ( $page < $pages ) : ?>
+				<a class="vh-btn vh-btn--ghost" href="<?php echo esc_url( add_query_arg( $param, $page + 1, $here ) ); ?>"><?php esc_html_e( 'Next', 'vulnhub' ); ?> &rarr;</a>
+			<?php endif; ?>
+		</nav>
+		<?php
 	}
 }
+

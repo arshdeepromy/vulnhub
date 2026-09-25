@@ -151,6 +151,7 @@ final class VulnHub_Dash_Export {
 				$cov  = __( 'Coverage', 'vulnhub' );
 				$keys = __( 'Source identifiers', 'vulnhub' );
 				$exp  = __( 'Exposure', 'vulnhub' );
+				$aws  = __( 'AWS', 'vulnhub' );
 
 				$cols = array(
 					'hostname'      => array( $id, __( 'Hostname', 'vulnhub' ), static fn( array $r ): string => (string) $r['hostname'] ),
@@ -163,6 +164,14 @@ final class VulnHub_Dash_Export {
 					'owner'         => array( $own, __( 'Owner', 'vulnhub' ), static fn( array $r ): string => self::person_name( (int) $r['owner_person_id'] ) ),
 					'team'          => array( $own, __( 'Team', 'vulnhub' ), static fn( array $r ): string => self::team_name( (int) $r['team_id'] ) ),
 					'site'          => array( $own, __( 'Site', 'vulnhub' ), static fn( array $r ): string => self::location_name( (int) $r['location_id'] ) ),
+					// AWS: which account and which instance, by name as well as
+					// number, because the hostname is often neither (see
+					// aws_columns(); a ticket's file adds them by itself).
+					'aws_account_id'    => array( $aws, __( 'AWS account id', 'vulnhub' ), static fn( array $r ): string => self::is_aws( $r ) ? (string) ( $r['cloud_account_id'] ?? '' ) : '' ),
+					'aws_account_name'  => array( $aws, __( 'AWS account name', 'vulnhub' ), static fn( array $r ): string => self::is_aws( $r ) ? (string) ( $r['aws_account_name'] ?? '' ) : '' ),
+					'aws_instance_id'   => array( $aws, __( 'AWS instance id', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['aws_instance_id'] ?? '' ) ),
+					'aws_instance_name' => array( $aws, __( 'AWS instance name', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['aws_instance_name'] ?? '' ) ),
+					'aws_region'        => array( $aws, __( 'AWS region', 'vulnhub' ), static fn( array $r ): string => self::is_aws( $r ) ? (string) ( $r['cloud_region'] ?? '' ) : '' ),
 					'coverage'      => array( $cov, __( 'Tenable coverage', 'vulnhub' ), static fn( array $r ): string => Coverage::label( (string) $r['coverage_state'] ) ),
 					'agent'         => array( $cov, __( 'Tenable agent', 'vulnhub' ), static fn( array $r ): string => Agent_Coverage::label( (string) ( $r['agent_coverage_state'] ?? '' ) ) ),
 					'agent_seen'    => array( $cov, __( 'Agent last check-in', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['agent_last_connect'] ?? '' ) ),
@@ -186,6 +195,7 @@ final class VulnHub_Dash_Export {
 				$vuln  = __( 'Vulnerability', 'vulnhub' );
 				$sev   = __( 'Severity and scoring', 'vulnhub' );
 				$rem   = __( 'Remediation', 'vulnhub' );
+				$aws   = __( 'AWS', 'vulnhub' );
 
 				$cols = array(
 					'hostname'    => array( $asset, __( 'Asset', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['hostname'] ?: $r['fqdn'] ) ),
@@ -194,6 +204,14 @@ final class VulnHub_Dash_Export {
 					'os'          => array( $asset, __( 'Operating system', 'vulnhub' ), static fn( array $r ): string => (string) $r['operating_system'] ),
 					'owner'       => array( $asset, __( 'Owner', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['owner_name'] ?? '' ) ),
 					'team'        => array( $asset, __( 'Team', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['team_name'] ?? '' ) ),
+					// AWS: which account and which instance, by name as well as
+					// number, because the hostname is often neither (see
+					// aws_columns(); a ticket's file adds them by itself).
+					'aws_account_id'    => array( $aws, __( 'AWS account id', 'vulnhub' ), static fn( array $r ): string => self::is_aws( $r ) ? (string) ( $r['cloud_account_id'] ?? '' ) : '' ),
+					'aws_account_name'  => array( $aws, __( 'AWS account name', 'vulnhub' ), static fn( array $r ): string => self::is_aws( $r ) ? (string) ( $r['aws_account_name'] ?? '' ) : '' ),
+					'aws_instance_id'   => array( $aws, __( 'AWS instance id', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['aws_instance_id'] ?? '' ) ),
+					'aws_instance_name' => array( $aws, __( 'AWS instance name', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['aws_instance_name'] ?? '' ) ),
+					'aws_region'        => array( $aws, __( 'AWS region', 'vulnhub' ), static fn( array $r ): string => self::is_aws( $r ) ? (string) ( $r['cloud_region'] ?? '' ) : '' ),
 					'plugin_id'   => array( $vuln, __( 'Plugin', 'vulnhub' ), static fn( array $r ): string => (string) $r['plugin_id'] ),
 					'title'       => array( $vuln, __( 'Vulnerability', 'vulnhub' ), static fn( array $r ): string => (string) $r['vuln_title'] ),
 					'family'      => array( $vuln, __( 'Family', 'vulnhub' ), static fn( array $r ): string => (string) $r['family'] ),
@@ -1095,6 +1113,9 @@ final class VulnHub_Dash_Export {
 				// `fix` on the wire: `action` belongs to admin-post.php, which
 				// this very request is addressed to.
 				'action'          => self::get( 'fix' ),
+				// App update or bundled component, read back so the file
+				// matches a list narrowed to either (Repo::component_sql()).
+				'comp'            => self::get( 'comp' ),
 				'excepted'        => self::get( 'excepted' ),
 				/*
 				 * The lifecycle-support scope (EOL / in-support) and the
@@ -1211,10 +1232,72 @@ final class VulnHub_Dash_Export {
 			$base = self::findings_base();
 			unset( $base['state'] );
 
+			$col_keys = self::with_aws_columns( $col_keys, self::ticket_columns(), self::any_aws( 'findings', $ids ) );
+
 			return self::csv_in_memory( 'findings', $col_keys, self::ticket_columns(), $base, static fn( array $a ): array => Repo::findings( $a ) );
 		} finally {
 			self::$src = null;
 		}
+	}
+
+	/**
+	 * The AWS columns, in the order they appear in both views.
+	 *
+	 * @return string[]
+	 */
+	public static function aws_columns(): array {
+		return array( 'aws_account_id', 'aws_account_name', 'aws_instance_id', 'aws_instance_name', 'aws_region' );
+	}
+
+	/** An AWS machine: an EC2 instance, or a record AWS itself made. */
+	private static function is_aws( array $r ): bool {
+		return '' !== (string) ( $r['aws_instance_id'] ?? '' ) || 'aws' === strtolower( (string) ( $r['cloud_provider'] ?? '' ) );
+	}
+
+	/**
+	 * Does this ticket's selection hold any AWS machine?
+	 *
+	 * @param string $kind findings|assets -- what the ids are.
+	 * @param int[]  $ids  Finding or asset ids.
+	 */
+	private static function any_aws( string $kind, array $ids ): bool {
+		global $wpdb;
+
+		$ids = array_values( array_filter( array_map( 'intval', $ids ) ) );
+		if ( ! $ids ) {
+			return false;
+		}
+
+		$a  = vh_table( 'assets' );
+		$in = implode( ',', $ids );
+		$aws = "( a.aws_instance_id <> '' OR a.cloud_provider = 'aws' )";
+
+		$sql = 'findings' === $kind
+			? 'SELECT 1 FROM ' . vh_table( 'findings' ) . " f INNER JOIN {$a} a ON a.id = f.asset_id WHERE f.id IN ({$in}) AND {$aws} LIMIT 1"
+			: "SELECT 1 FROM {$a} a WHERE a.id IN ({$in}) AND {$aws} LIMIT 1";
+
+		return (bool) $wpdb->get_var( $sql ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+	}
+
+	/**
+	 * A ticket's columns, plus the AWS ones when the selection holds an AWS
+	 * machine. The service desk works from the account and instance names
+	 * (a hostname is often an instance id, or a name the console does not
+	 * show), so a ticket touching AWS always carries them -- whatever was
+	 * ticked, and on every later "Send an updated list" too, which rebuilds
+	 * through the same two functions. Rows that are not AWS leave the cells
+	 * empty.
+	 *
+	 * @param string[] $chosen   Columns picked; none means the defaults.
+	 * @param string[] $defaults The ticket's default columns.
+	 * @return string[]
+	 */
+	private static function with_aws_columns( array $chosen, array $defaults, bool $aws ): array {
+		if ( ! $aws ) {
+			return $chosen;
+		}
+
+		return array_values( array_unique( array_merge( $chosen ?: $defaults, self::aws_columns() ) ) );
 	}
 
 	/**
@@ -1236,6 +1319,8 @@ final class VulnHub_Dash_Export {
 	 */
 	public static function assets_csv( array $ids, array $col_keys ): array {
 		self::$src = array( 'in_memory' => '1' );
+
+		$col_keys = self::with_aws_columns( $col_keys, self::asset_ticket_columns(), self::any_aws( 'assets', $ids ) );
 
 		try {
 			return self::csv_in_memory(
@@ -1344,6 +1429,9 @@ final class VulnHub_Dash_Export {
 				// `fix` on the wire: `action` belongs to admin-post.php, which
 				// this very request is addressed to.
 				'action'          => self::get( 'fix' ),
+				// App update or bundled component, read back so the file
+				// matches a list narrowed to either (Repo::component_sql()).
+				'comp'            => self::get( 'comp' ),
 				'excepted'        => self::get( 'excepted' ),
 				'support'         => self::get( 'support' ),
 				'path_zone'       => self::get( 'path_zone' ),

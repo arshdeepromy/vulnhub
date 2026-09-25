@@ -256,7 +256,7 @@ final class VulnHub_Jira_Ticketer {
 	 * @param string              $key       Jira issue key.
 	 * @return array<string,mixed>
 	 */
-	private function refresh_findings_attachment( $connector, array $ticket, string $key, bool $preview = false, string $note_override = '' ): array {
+	private function refresh_findings_attachment( $connector, array $ticket, string $key, bool $preview = false, string $note_override = '', array $only = array() ): array {
 		if ( ! class_exists( 'VulnHub_Dash_Export' ) ) {
 			return array( 'ok' => false, 'message' => __( 'The export component is not available.', 'vulnhub' ) );
 		}
@@ -271,21 +271,37 @@ final class VulnHub_Jira_Ticketer {
 
 		// Still open is open or reopened, and never a finding whose risk has
 		// been accepted -- that is not outstanding remediation work.
+		// Assets set aside on this ticket (resolved / out of scope) are not
+		// outstanding here, so they leave the list. A selection narrows the
+		// list to those assets; the counts in the note stay the ticket's.
+		$aside    = \VulnHub\Core\Tickets::aside_for( $ticket_id );
+		$only     = array_flip( array_filter( $only ) );
 		$open_ids = array();
 		$fixed    = 0;
+		$assets   = array();
 
 		foreach ( $findings as $f ) {
 			$state = (string) ( $f['state'] ?? '' );
+			$aid   = (int) ( $f['asset_id'] ?? 0 );
 
 			if ( in_array( $state, array( 'open', 'reopened' ), true ) && 0 === (int) ( $f['exception_id'] ?? 0 ) ) {
-				$open_ids[] = (int) $f['id'];
+				if ( isset( $aside[ $aid ] ) || ( $only && ! isset( $only[ $aid ] ) ) ) {
+					continue;
+				}
+				$open_ids[]     = (int) $f['id'];
+				$assets[ $aid ] = true;
 			} elseif ( 'fixed' === $state ) {
 				++$fixed;
 			}
 		}
 
 		if ( ! $open_ids ) {
-			return array( 'ok' => false, 'message' => __( 'Every finding on this ticket is fixed or risk-accepted, so there is nothing still open to send.', 'vulnhub' ) );
+			return array(
+				'ok'      => false,
+				'message' => $only
+					? __( 'None of the selected assets has a vulnerability still open on this ticket.', 'vulnhub' )
+					: __( 'Every finding on this ticket is fixed, risk-accepted or set aside, so there is nothing still open to send.', 'vulnhub' ),
+			);
 		}
 
 		// The columns it was raised with, so the file matches the first one.
@@ -308,7 +324,9 @@ final class VulnHub_Jira_Ticketer {
 			);
 		}
 
-		$name  = sprintf( 'open-findings-%s-%s.csv', strtolower( $key ), gmdate( 'Y-m-d' ) );
+		$name  = $only
+			? sprintf( 'open-findings-%s-%d-assets-%s.csv', strtolower( $key ), count( $assets ), gmdate( 'Y-m-d' ) )
+			: sprintf( 'open-findings-%s-%s.csv', strtolower( $key ), gmdate( 'Y-m-d' ) );
 		$still = count( $open_ids );
 
 		$default_note = sprintf(
@@ -320,13 +338,25 @@ final class VulnHub_Jira_Ticketer {
 			$still
 		);
 
+		if ( $only ) {
+			$default_note = sprintf(
+				/* translators: 1: file name, 2: still open, 3: assets. */
+				__( 'Refreshed list for selected assets attached: %1$s. It lists the %2$d vulnerabilities still open (open or reopened) on these %3$d assets only -- not the whole ticket.', 'vulnhub' ),
+				$name,
+				$still,
+				count( $assets )
+			);
+		}
+
 		// Preview: everything above is in memory only. Return what will be sent
 		// -- counts, file, a sample and the default note -- and attach nothing.
 		if ( $preview ) {
 			$sample = array();
 
+			$listed = array_flip( $open_ids );
+
 			foreach ( $findings as $f ) {
-				if ( ! in_array( (string) ( $f['state'] ?? '' ), array( 'open', 'reopened' ), true ) || 0 !== (int) ( $f['exception_id'] ?? 0 ) ) {
+				if ( ! isset( $listed[ (int) $f['id'] ] ) ) {
 					continue;
 				}
 
@@ -348,7 +378,10 @@ final class VulnHub_Jira_Ticketer {
 				'kind'         => 'vulnerability',
 				'filename'     => $name,
 				/* translators: 1: still open, 2: total, 3: fixed. */
-				'scope'        => sprintf( __( '%1$d still open of %2$d — %3$d fixed', 'vulnhub' ), $still, $total, $fixed ),
+				'scope'        => $only
+					/* translators: 1: still open, 2: assets. */
+					? sprintf( __( '%1$d still open on %2$d selected assets', 'vulnhub' ), $still, count( $assets ) )
+					: sprintf( __( '%1$d still open of %2$d — %3$d fixed', 'vulnhub' ), $still, $total, $fixed ),
 				'rows'         => (int) $csv['rows'],
 				'columns'      => array( 'Asset', 'Vulnerability', 'Severity', 'State' ),
 				'sample'       => $sample,
@@ -455,7 +488,7 @@ final class VulnHub_Jira_Ticketer {
 		// list. Its progress report is the findings still open, so it takes a
 		// different path; scope tickets fall through to the asset path below.
 		if ( \VulnHub\Core\Tickets::KIND_VULNERABILITY === (string) ( $ticket['kind'] ?? '' ) ) {
-			return $this->refresh_findings_attachment( $connector, $ticket, $key, $preview, $note_override );
+			return $this->refresh_findings_attachment( $connector, $ticket, $key, $preview, $note_override, array_map( 'intval', (array) ( $options['asset_ids'] ?? array() ) ) );
 		}
 
 		if ( ! class_exists( 'VulnHub_Dash_Export' ) ) {

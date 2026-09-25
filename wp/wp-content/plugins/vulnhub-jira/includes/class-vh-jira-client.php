@@ -96,6 +96,21 @@ final class VulnHub_Jira_Client {
 	public const MAX_PAGE = 5000;
 
 	/**
+	 * POST endpoints that only read, and so are never checked against the
+	 * project allowlist.
+	 *
+	 * Jira's enhanced JQL search is POST-only, but it changes nothing. The
+	 * allowlist used to treat every non-GET as a write, could not find a
+	 * project in a JQL body, and refused it -- so from the day the allowlist
+	 * went in, every ticket-status poll was stopped before it left the
+	 * building and the sync reported every tracked ticket as "not returned".
+	 * Exact paths only: anything not named here is still treated as a write.
+	 */
+	private const READ_ONLY_POSTS = array(
+		self::API . '/search/jql',
+	);
+
+	/**
 	 * Site base URL, e.g. https://yoursite.atlassian.net — no trailing slash.
 	 */
 	private string $base_url;
@@ -807,14 +822,20 @@ final class VulnHub_Jira_Client {
 	 * A refusal response when a write would leave the allowed projects.
 	 *
 	 * Reads are never refused: listing desks and request types across the
-	 * site is what the routing screen is for. Anything that creates, edits,
-	 * comments, transitions or attaches is checked. A write whose project
-	 * cannot be worked out is refused too -- failing closed is the point.
+	 * site is what the routing screen is for, and JQL search is a read even
+	 * though Jira only accepts it as a POST (see READ_ONLY_POSTS). Anything
+	 * that creates, edits, comments, transitions or attaches is checked. A
+	 * write whose project cannot be worked out is refused too -- failing
+	 * closed is the point.
 	 *
 	 * @param array<string,mixed>|null $body Request body.
 	 */
 	private function refuse_outside_allowlist( string $method, string $path, ?array $body ): ?\VulnHub\Core\Http_Response {
 		if ( ! $this->allowed_projects || 'GET' === strtoupper( $method ) ) {
+			return null;
+		}
+
+		if ( 'POST' === strtoupper( $method ) && in_array( $path, self::READ_ONLY_POSTS, true ) ) {
 			return null;
 		}
 

@@ -360,6 +360,22 @@ function vh_normalise_source( string $raw ): string {
  * @param string $os Operating system string from any feed.
  * @return bool
  */
+/**
+ * True when an operating system string is a bare-metal hypervisor (VMware ESXi).
+ *
+ * A hypervisor host is classified as a network device, whatever the feed calls
+ * it: the CMDB files ESXi hosts under "Servers" and Tenable reports them as
+ * "hypervisor", but they take no endpoint agent, have no named user, and are
+ * patched with the infrastructure, not the server estate. Every classifier
+ * (CMDB, Tenable API, Tenable CSV) asks this first, so the rule holds on every
+ * future sync rather than being corrected by hand after each one.
+ *
+ * @param string $os Operating system string from any feed.
+ */
+function vh_is_hypervisor_os( string $os ): bool {
+	return (bool) preg_match( '/\b(vmware esxi|esxi|vsphere hypervisor)\b/', strtolower( trim( $os ) ) );
+}
+
 function vh_is_computer_os( string $os ): bool {
 	$v = strtolower( trim( $os ) );
 

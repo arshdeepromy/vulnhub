@@ -107,6 +107,42 @@ final class VulnHub_Plerion_Client {
 	}
 
 	/**
+	 * Every integration: one per connected cloud account, with the name it
+	 * was onboarded under and the provider's account number.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function integrations(): array {
+		// Cursor-paged like findings: `page` is refused as an unknown
+		// property, and a full page still carries a cursor on the last one,
+		// so the loop stops on an empty page or a repeated cursor.
+		$out    = array();
+		$cursor = '';
+		$pages  = 0;
+
+		do {
+			$q = array( 'perPage' => 100 );
+			if ( '' !== $cursor ) {
+				$q['cursor'] = $cursor;
+			}
+
+			$body = $this->get( '/v1/tenant/integrations', $q );
+			$rows = (array) ( $body['data'] ?? array() );
+
+			foreach ( $rows as $row ) {
+				$out[] = (array) $row;
+			}
+
+			$next   = (string) ( ( (array) ( $body['meta'] ?? array() ) )['cursor'] ?? '' );
+			$stop   = ! $rows || '' === $next || $next === $cursor;
+			$cursor = $next;
+			++$pages;
+		} while ( ! $stop && $pages < 50 );
+
+		return $out;
+	}
+
+	/**
 	 * Walk the cursor-paginated findings list, handing each row to $cb.
 	 *
 	 * @param array<string,scalar> $query Base query (filters).

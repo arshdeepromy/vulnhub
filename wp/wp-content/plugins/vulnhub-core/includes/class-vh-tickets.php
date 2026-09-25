@@ -728,12 +728,15 @@ final class Tickets {
 				 */
 				'SELECT tf.ticket_id,
 					COUNT(*) AS findings,
-					SUM( NOT ( f.state IN (\'open\', \'reopened\') AND f.archived_at IS NULL AND f.exception_id = 0 ) ) AS findings_fixed,
+					SUM( NOT ( f.state IN (\'open\', \'reopened\') AND f.archived_at IS NULL AND f.exception_id = 0 AND ta.id IS NULL ) ) AS findings_fixed,
+					SUM( f.state IN (\'open\', \'reopened\') AND f.archived_at IS NULL AND f.exception_id = 0 AND ta.id IS NOT NULL ) AS findings_aside,
 					COUNT(DISTINCT f.asset_id) AS assets,
-					COUNT(DISTINCT CASE WHEN f.state IN (\'open\', \'reopened\') AND f.archived_at IS NULL AND f.exception_id = 0 THEN f.asset_id END) AS assets_open,
+					COUNT(DISTINCT CASE WHEN f.state IN (\'open\', \'reopened\') AND f.archived_at IS NULL AND f.exception_id = 0 AND ta.id IS NULL THEN f.asset_id END) AS assets_open,
+					COUNT(DISTINCT ta.asset_id) AS assets_aside,
 					MAX(f.last_synced_at) AS as_of
 				 FROM ' . vh_table( 'ticket_findings' ) . ' tf
-				 INNER JOIN ' . vh_table( 'findings' ) . " f ON f.id = tf.finding_id
+				 INNER JOIN ' . vh_table( 'findings' ) . ' f ON f.id = tf.finding_id
+				 LEFT JOIN ' . vh_table( 'ticket_aside' ) . " ta ON ta.ticket_id = tf.ticket_id AND ta.asset_id = f.asset_id
 				 WHERE tf.ticket_id IN ({$placeholders})
 				 GROUP BY tf.ticket_id", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 				...$ids
@@ -751,11 +754,109 @@ final class Tickets {
 				'findings_fixed' => (int) $row['findings_fixed'],
 				'assets'         => $assets,
 				'assets_fixed'   => max( 0, $assets - (int) $row['assets_open'] ),
+				'findings_aside' => (int) ( $row['findings_aside'] ?? 0 ),
+				'assets_aside'   => (int) ( $row['assets_aside'] ?? 0 ),
 				'as_of'          => (string) ( $row['as_of'] ?? '' ),
 			);
 		}
 
 		return $out;
+	}
+
+	/*
+	 * =================================================================
+	 * Assets set aside on one ticket
+	 * ==============================================================
+	 */
+
+	/** Why an asset can be set aside on a ticket. */
+	public static function aside_reasons(): array {
+		return array(
+			'resolved'     => __( 'Resolved', 'vulnhub' ),
+			'out_of_scope' => __( 'Out of scope', 'vulnhub' ),
+		);
+	}
+
+	/**
+	 * Every asset set aside on a ticket: asset id => reason, note, who, when.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	public static function aside_for( int $ticket_id ): array {
+		global $wpdb;
+
+		$out = array();
+		foreach ( (array) $wpdb->get_results( $wpdb->prepare( 'SELECT asset_id, reason, note, set_by, set_at FROM ' . vh_table( 'ticket_aside' ) . ' WHERE ticket_id = %d', $ticket_id ), ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB
+			$out[ (int) $r['asset_id'] ] = $r;
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Set assets aside on a ticket, or take them back (empty reason).
+	 *
+	 * Only assets the ticket actually covers are touched, so a stale page or
+	 * a hand-made request cannot mark a machine on a ticket it is not on.
+	 *
+	 * @param int[] $asset_ids Assets.
+	 * @return int Assets changed.
+	 */
+	public static function set_aside( int $ticket_id, array $asset_ids, string $reason, string $note = '' ): int {
+		global $wpdb;
+
+		$ids = array_values( array_unique( array_filter( array_map( 'intval', $asset_ids ) ) ) );
+		if ( ! $ids ) {
+			return 0;
+		}
+
+		$in      = implode( ',', $ids );
+		$covered = array_map( 'intval', (array) $wpdb->get_col( $wpdb->prepare( 'SELECT DISTINCT f.asset_id FROM ' . vh_table( 'ticket_findings' ) . ' tf INNER JOIN ' . vh_table( 'findings' ) . " f ON f.id = tf.finding_id WHERE tf.ticket_id = %d AND f.asset_id IN ({$in})", $ticket_id ) ) ); // phpcs:ignore WordPress.DB -- ints only.
+		if ( ! $covered ) {
+			return 0;
+		}
+
+		$t = vh_table( 'ticket_aside' );
+		$n = 0;
+
+		if ( '' === $reason ) {
+			$n = (int) $wpdb->query( $wpdb->prepare( "DELETE FROM {$t} WHERE ticket_id = %d AND asset_id IN (" . implode( ',', $covered ) . ')', $ticket_id ) ); // phpcs:ignore WordPress.DB -- ints only.
+		} else {
+			if ( ! isset( self::aside_reasons()[ $reason ] ) ) {
+				return 0;
+			}
+			$note = mb_substr( trim( sanitize_textarea_field( $note ) ), 0, 500 );
+			foreach ( $covered as $aid ) {
+				$n += (int) $wpdb->query( // phpcs:ignore WordPress.DB
+					$wpdb->prepare(
+						"INSERT INTO {$t} ( ticket_id, asset_id, reason, note, set_by, set_at ) VALUES ( %d, %d, %s, %s, %d, %s )
+						 ON DUPLICATE KEY UPDATE reason = VALUES(reason), note = VALUES(note), set_by = VALUES(set_by), set_at = VALUES(set_at)",
+						$ticket_id,
+						$aid,
+						$reason,
+						$note,
+						get_current_user_id(),
+						vh_now()
+					)
+				) > 0 ? 1 : 0;
+			}
+		}
+
+		if ( $n > 0 && function_exists( 'vulnhub' ) ) {
+			vulnhub()->logger->audit(
+				'' === $reason ? 'ticket.aside_cleared' : 'ticket.aside_set',
+				'' === $reason
+					/* translators: %d: assets. */
+					? sprintf( _n( 'Took %d asset back into this ticket', 'Took %d assets back into this ticket', $n, 'vulnhub' ), $n )
+					/* translators: 1: assets, 2: reason. */
+					: sprintf( _n( 'Set %1$d asset aside on this ticket: %2$s', 'Set %1$d assets aside on this ticket: %2$s', $n, 'vulnhub' ), $n, self::aside_reasons()[ $reason ] ),
+				'ticket',
+				(string) $ticket_id,
+				array( 'assets' => $covered, 'reason' => $reason, 'note' => $note )
+			);
+		}
+
+		return $n;
 	}
 
 	/**

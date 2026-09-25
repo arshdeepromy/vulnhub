@@ -338,6 +338,37 @@ loses its instance id, so the next posture sync matches the twin, not the
 retired row. Core's hostname rule never lets a bare instance id rename a
 record a person named — the same rule it already had for `ip-10-…` names.
 
+### Account and instance names
+
+A ticket's reader works in the AWS console, where a machine is an account and
+an instance name. Neither was on the record: the hostname is often an
+instance id, a Windows default (`EC2AMAZ-…`) or a name only the OS knows, and
+account numbers are not something anyone reads.
+
+- **`assets.aws_instance_name`**: the instance's Name tag, from the capture or
+  the posture inventory (`instances()`), written by `stamp_names()` after
+  every AWS and posture sync. A bare instance id is not a name.
+- **`assets.aws_account_name`**, beside the existing `cloud_account_id` (now
+  also filled from the instance's account where the record had none).
+- **Where names come from** (`VulnHub_AWS_Account_Names`, option
+  `vulnhub_aws_account_names`): the posture inventory's integrations
+  (`/v1/tenant/integrations`, cursor-paged; the number is `awsAccountId` there,
+  `providerAccountId` on assets and findings) on every posture sync, and the
+  sign-in's account list (`accountName`) on every AWS sync. Each reports
+  through the `vulnhub_aws_account_names` action, so neither plugin depends on
+  the other.
+- **Kept, not mirrored.** An account a later read does not list keeps its
+  name; an empty name never overwrites one; a record whose instance is no
+  longer captured keeps its last instance name. Configured accounts whose
+  label is still the "N known assets" placeholder, or empty, take the real
+  name; a label somebody typed is left alone.
+- Name stamping never counts as a coverage move, so it never triggers a
+  recount.
+
+**Checked** on first run (schema v35): 65 named accounts; every one of the 96
+active records with an instance id got its account and account name, 93 an
+instance name, and 30 of those differ from the hostname.
+
 ### Numbers, filters, export
 
 - **`aws=ec2`** (running) and **`aws=ec2_stopped`** on Assets & owners, as an
@@ -356,6 +387,40 @@ stopped, 1 appliance set aside; both 49, Tenable only 12, Defender only 2,
 neither 17 — each equal to its list.
 
 ---
+
+### Records the CMDB made: placed by domain
+
+A CMDB record for a cloud machine often carries only a hostname and a DNS
+domain -- no address, no instance id -- so `link_twins()`, which needs the
+address, never joined it, and the record exported with every AWS column
+empty. `VulnHub_AWS_Coverage::link_by_domain()` fills that gap:
+
+- **Account by domain.** Where everything after the host in the FQDN spells
+  a known account name, dots for dashes (`appsrv01.cloud.corp.sit` in account
+  `cloud-corp-sit`), the record is that account's: it gets the account id,
+  provider AWS and the account's region, and `stamp_names()` carries the
+  account name. Exact equality only; two accounts with the same name place
+  nothing. It never overwrites an account a record already has.
+- **Instance by name, inside that account.** The hostname against the Name
+  tag, by the same rule as `link_twins()` (the tag is the hostname, or the
+  hostname then `-`, `_` or `.`), or an `ip-a-b-c-d` hostname against the
+  private address. Terminated instances never match. **Exactly one candidate
+  links**; an instance already on an id-named record folds that record in, as
+  `link_twins()` does. Several candidates, or an instance already on a record
+  with a real name, are reported in the `aws.domain_placed` audit entry for a
+  person to merge -- never guessed.
+- Runs after every AWS, posture and CMDB sync. Additive; a second run moves
+  nothing.
+
+A placed record with no instance keeps the instance columns empty: the
+account is proven by its domain, the machine is not. Such a record is
+usually one the CMDB still lists after the instance went, which is worth
+raising with the CMDB's owner rather than as an agent gap.
+
+**Checked** on first run: 22 records placed on 4 accounts, 0 linked (none of
+their names exists as an instance there), 3 reported (one instance already on
+its own record, two hostnames matching both a stopped and a running
+instance). Every placed record exports account id, account name and region.
 
 ## Checking it
 

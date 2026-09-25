@@ -870,6 +870,7 @@ final class Repo {
 			'hostname', 'fqdn', 'netbios_name', 'ipv4', 'ipv6', 'mac_address', 'serial_number',
 			'asset_type', 'operating_system', 'os_version', 'manufacturer', 'model',
 			'criticality', 'environment', 'business_service', 'compliance_state', 'lifecycle_status',
+			'lifecycle_source', 'lifecycle_reason',
 			'enrollment_type', 'join_type', 'owner_source', 'owner_confidence', 'owner_rule',
 		);
 		foreach ( $map as $key ) {
@@ -901,6 +902,16 @@ final class Repo {
 			if ( '' !== $value ) {
 				$row[ $key ] = $value;
 			}
+		}
+
+		// A status always says who set it: a sync that sends one without
+		// saying so is named by its own source (docs/LIFECYCLE.md,
+		// "Where an asset's lifecycle comes from").
+		if ( isset( $row['lifecycle_status'] ) && ! isset( $row['lifecycle_source'] ) ) {
+			$row['lifecycle_source'] = sanitize_key( (string) ( $data['primary_source'] ?? 'sync' ) ) ?: 'sync';
+		}
+		if ( isset( $row['lifecycle_source'] ) ) {
+			$row['lifecycle_reason'] = mb_substr( (string) ( $row['lifecycle_reason'] ?? '' ), 0, 191 );
 		}
 
 		foreach ( array( 'has_agent', 'is_managed' ) as $flag ) {
@@ -1976,7 +1987,7 @@ final class Repo {
 		}
 
 		if ( $absent ) {
-			Lifecycle::set( $absent, 'missing' );
+			Lifecycle::set( $absent, 'missing', 'tenable', __( 'Not in Tenable\'s last complete asset export', 'vulnhub' ) );
 
 			/*
 			 * The marker is written AFTER the move. Lifecycle::set() fires
@@ -2097,7 +2108,7 @@ final class Repo {
 			return $out;
 		}
 
-		Lifecycle::set( $retire, 'missing' );
+		Lifecycle::set( $retire, 'missing', 'tenable', __( 'Deleted in Tenable', 'vulnhub' ) );
 
 		// After the move, never before: Lifecycle::set() fires
 		// `vulnhub_lifecycle_changed`, which forget_pruned_tenable() listens to,
@@ -2194,7 +2205,7 @@ final class Repo {
 		$restored = array();
 
 		foreach ( $by_status as $status => $ids ) {
-			Lifecycle::set( $ids, (string) $status );
+			Lifecycle::set( $ids, (string) $status, 'restore', __( 'Status restored when the held record was released', 'vulnhub' ) );
 			$restored[ (string) $status ] = count( $ids );
 		}
 
@@ -3122,6 +3133,39 @@ final class Repo {
 		return "( {$v}.product_kind IN ( 'library', 'application' ) AND {$f}.bundle_app_slug <> '' AND {$f}.bundle_app_slug <> {$v}.product_slug"
 			. " AND NOT ( CHAR_LENGTH( {$f}.bundle_app_slug ) >= 4 AND LOCATE( {$f}.bundle_app_slug, {$v}.product_slug ) > 0 )"
 			. " AND NOT ( CHAR_LENGTH( {$v}.product_slug ) >= 4 AND LOCATE( {$v}.product_slug, {$f}.bundle_app_slug ) > 0 ) )";
+	}
+
+	/**
+	 * SQL: a library or file shipped inside another application -- the
+	 * `bundled` half of `comp`, the By-product bar and the `bundled`
+	 * exception scope.
+	 *
+	 * Narrower than component_sql() on purpose. That test also counts an
+	 * *application* installed inside another (Word under the Office folder,
+	 * whose finding is Microsoft's own monthly update), which is a fine
+	 * "update the app that ships it" route but not a bundled file: updating
+	 * the suite fixes it, and it must never be swept into an exception for
+	 * "everything we cannot fix but wait for". On this estate that is 3,314
+	 * application-kind components beside 10,539 library ones.
+	 */
+	public static function bundled_sql( string $f = 'f', string $v = 'v' ): string {
+		return "( {$v}.product_kind = 'library' AND " . self::component_sql( $f, $v ) . ' )';
+	}
+
+	/**
+	 * SQL: the product a finding is attributed to on the By-product page --
+	 * a bundled library or distro package to the application or source
+	 * package carrying it, everything else to its own product. The same
+	 * expression findings( product_slug ) and group=product use, for code
+	 * that has to agree with a product row (the `bundled` exception scope).
+	 */
+	public static function product_group_slug_sql( string $f = 'f', string $v = 'v' ): string {
+		return "( CASE WHEN {$v}.product_kind IN ( 'library', 'os_package' ) AND {$f}.bundle_app <> '' THEN {$f}.bundle_app_slug ELSE {$v}.product_slug END )";
+	}
+
+	/** The display name that goes with product_group_slug_sql(). */
+	public static function product_group_name_sql( string $f = 'f', string $v = 'v' ): string {
+		return "( CASE WHEN {$v}.product_kind IN ( 'library', 'os_package' ) AND {$f}.bundle_app <> '' THEN {$f}.bundle_app ELSE {$v}.product END )";
 	}
 
 	/**
@@ -4174,6 +4218,22 @@ final class Repo {
 			$where[] = \VH_Action::sql_for( (string) $args['action'], 'f', 'v' );
 			$need_v  = true;
 		}
+
+		/*
+		 * Whose release fixes it: the product's own update, or a library or
+		 * file shipped inside another application, which only changes when
+		 * that application's vendor ships a build carrying it. `comp` on the
+		 * wire and here. The test is bundled_sql(), the same expression the
+		 * By-product bar splits on and the `bundled` exception scope uses,
+		 * so the segment, the list, the export and the exception count one
+		 * set of rows. Unlike `fix`, it ignores whether a fix is known or the
+		 * finding is excepted: it answers only "app update or bundled".
+		 */
+		$comp = (string) ( $args['comp'] ?? '' );
+		if ( 'app' === $comp || 'bundled' === $comp ) {
+			$where[] = ( 'app' === $comp ? 'NOT ' : '' ) . self::bundled_sql( 'f', 'v' );
+			$need_v  = true;
+		}
 		if ( ! empty( $args['overdue'] ) ) {
 			$where[]  = 'f.due_at IS NOT NULL AND f.due_at < %s';
 			$params[] = vh_now();
@@ -4455,17 +4515,25 @@ final class Repo {
 			$grp_name = "CASE WHEN v.product_kind IN ( 'library', 'os_package' ) AND f.bundle_app <> '' THEN f.bundle_app ELSE v.product END";
 			$glimit   = max( 1, min( 200, (int) ( $args['limit'] ?? 60 ) ) );
 
+			// Each row also splits into the product's own update and the
+			// components shipped inside it, on the rule `comp` filters by.
+			$grp_comp = 'CASE WHEN ' . self::bundled_sql( 'f', 'v' ) . ' THEN 1 ELSE 0 END';
+
 			$psql = "SELECT product_slug,
 						MAX( product ) AS product,
 						MAX( product_kind ) AS product_kind,
 						MAX( component_class ) AS component_class,
 						COUNT( DISTINCT asset_id ) AS assets,
-						COUNT( * ) AS findings
+						COUNT( * ) AS findings,
+						SUM( is_comp ) AS bundled_findings,
+						COUNT( DISTINCT CASE WHEN is_comp = 1 THEN asset_id END ) AS bundled_assets,
+						COUNT( DISTINCT CASE WHEN is_comp = 0 THEN asset_id END ) AS app_assets
 					 FROM ( SELECT {$grp_slug} AS product_slug,
 								   {$grp_name} AS product,
 								   v.product_kind AS product_kind,
 								   v.component_class AS component_class,
-								   f.asset_id AS asset_id
+								   f.asset_id AS asset_id,
+								   {$grp_comp} AS is_comp
 							{$narrow} ) t
 					 WHERE product_slug <> ''
 					 GROUP BY product_slug
@@ -4572,6 +4640,7 @@ final class Repo {
 			"SELECT f.*,
 			a.hostname, a.fqdn, a.ipv4, a.asset_type, a.operating_system, a.criticality,
 			a.owner_person_id, a.team_id, a.location_id,
+			a.cloud_provider, a.aws_instance_id, a.aws_instance_name, a.cloud_account_id, a.aws_account_name, a.cloud_region,
 			v.title AS vuln_title, v.plugin_id, v.family, v.cve_json, v.cvss3_base, v.vpr_score,
 			v.product, v.product_slug, v.product_kind, v.component_class,
 			v.solution, v.description, v.exploit_available, v.patch_publication_date,

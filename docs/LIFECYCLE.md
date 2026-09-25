@@ -66,6 +66,37 @@ is the same product under a shorter name, not a bundle: `chrome` and
 contained. That moved 1,989 open findings from "update the app" to "patch
 available".
 
+### App update or bundled, as a filter, a bar and an exception
+
+The component test above is also exposed directly, because "what is this
+product's own update, and what is it carrying" is the question a remediation
+ticket is raised on (see `docs/FILTERS.md` §11):
+
+- **`comp=app|bundled`** on the findings list, its export and everything
+  raised from it.
+- **By product** splits each row's bar into the two.
+- **Exception scope `bundled`** (`Exceptions::scope_types()`): every component
+  attributed to one product row, keyed by the row's slug
+  (`Repo::product_group_slug_sql()` and `bundled_sql()`, so it is exactly
+  the row's bundled segment). Requested from the row's *Request exception for
+  bundled* link, or from a finding's Except form, where a bundled library
+  finding resolves to its application and anything else is refused. The
+  product's own vulnerabilities are never in it.
+
+"Bundled" is `Repo::bundled_sql()`: a *library* the component test attributes
+to another application. An application installed inside another (Word under
+Office) stays on the `update_app` route but counts as an app update here,
+because updating the suite fixes it.
+
+**Exceptions now follow new findings.** `apply()` runs once, at approval, so
+every scope silently stopped at the findings that existed that day.
+`Exceptions::reapply_active()` extends each approved, unexpired exception to
+open findings not yet covered, after every non-failed sync (priority 30, before
+the dashboard busts caches at 99) and in nightly housekeeping. It is additive
+only: it never detaches or moves a finding; revocation and expiry keep their
+own paths. It writes an `exception.extended` audit entry when it covers
+anything.
+
 ### Has the application's vendor shipped it? (`VulnHub\Core\App_Fix`)
 
 "Update the app" still leaves one question open: will updating fix it? Tenable
@@ -387,6 +418,50 @@ layout, and recorded as seen. Take it off and it stays off — saving a layout
 records everything on it as seen.
 
 ---
+
+## Where an asset's lifecycle comes from
+
+Lifecycle decides scope: a status that is not in service archives the
+asset's findings. Until schema v36 nothing recorded who set it, so "why is
+this In service?" meant reading code and the CMDB by hand. Every asset now
+carries `lifecycle_source`, `lifecycle_reason` and `lifecycle_set_at`, shown
+under the status on the asset page.
+
+**Who sets it, strongest first** (`Lifecycle::sources()`):
+
+| Source | When |
+|---|---|
+| `manual` | A person, through the lifecycle controls. `Lifecycle::set()` records `manual` when someone is signed in and it is not cron or wp-cli; automated callers pass their own source. |
+| `cmdb` | The CMDB's Status attribute (mapping `install_status <- Status`), on every CMDB sync, for everything the CMDB lists, with the status text and key as the reason. The guard that keeps a recently scanned machine in scope when the CMDB says otherwise still applies. |
+| `aws` | Records AWS or the posture inventory made: running is in service, stopped is spare, gone is retired. |
+| `tenable` | Missing from Tenable's complete export, deleted in Tenable, AppStream session machines removed. |
+| `merge`, `fleet`, `restore` | Duplicate merges, AppStream fleet records, released held records. |
+| `rule` | `Lifecycle::derive()`, below. |
+
+**The rule for what the CMDB does not list** (`Lifecycle::derive()`, after
+every non-failed sync at priority 25 and in nightly housekeeping):
+
+- **Server:** in service while Tenable, Defender, AWS or the posture
+  inventory has seen it inside the contact window
+  (`contact_window_days`, 45).
+- **Workstation:** in service only with an owner from Intune *and* a Tenable
+  scan or Defender contact inside the window; otherwise **Unknown**.
+- It moves only In service and Unknown records, and only between those two.
+  Both are in the reporting scope, so it never archives a finding or changes
+  a total. Retired, Missing and Spare were each set by newer evidence than a
+  sighting (a clean-up, an absence, a stopped instance) and are left alone,
+  as is anything `manual` or `cmdb`. A server it did not put in service it
+  never takes out.
+- The gaps stay visible on the existing filters: not in the CMDB, and no
+  owner.
+
+**First run:** 160 candidates; 64 servers Unknown -> In service, 44
+owner-less workstations In service -> Unknown (the Defender import had
+called every new device in service), 52 unchanged. Open findings in scope
+258,326 before and after; archived 3,378 before and after. A second run
+moves nothing. Existing records were backfilled from what can be proven
+(CMDB-owned, merges, fleet, Tenable removals, AWS records, and person-made
+changes from the audit log); the rest read "Source not recorded".
 
 ## Testing
 

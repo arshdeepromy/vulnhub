@@ -77,6 +77,31 @@ final class Scheduler {
 		add_action( self::HOOK_VERIFY, array( $this, 'verify_closures' ) );
 		add_action( self::HOOK_AUTOMATION, array( $this, 'run_automations' ) );
 		add_action( self::HOOK_SNAPSHOT, array( $this, 'daily_snapshot' ) );
+		// Servers and workstations the CMDB does not list: lifecycle from
+		// what the feeds saw (Lifecycle::derive()), after AWS has enriched
+		// its records (12) and before caches are busted (99).
+		add_action(
+			'vulnhub_sync_complete',
+			static function ( string $connector = '', string $status = '' ): void {
+				if ( 'failed' !== $status ) {
+					Lifecycle::derive();
+				}
+			},
+			25,
+			2
+		);
+		// New findings inherit the exceptions already approved for them,
+		// before the dashboard caches are busted (priority 99).
+		add_action(
+			'vulnhub_sync_complete',
+			static function ( string $connector = '', string $status = '' ): void {
+				if ( 'failed' !== $status ) {
+					Exceptions::reapply_active();
+				}
+			},
+			30,
+			2
+		);
 		add_action( 'vulnhub_loaded', array( $this, 'ensure_schedules' ), 20 );
 	}
 
@@ -317,6 +342,12 @@ final class Scheduler {
 			 SET f.exception_id = 0
 			 WHERE f.exception_id > 0 AND (e.id IS NULL OR e.status <> 'approved')"
 		);
+
+		// And cover anything that arrived under a still-active exception.
+		Exceptions::reapply_active();
+
+		// Lifecycle for what the CMDB does not list (also after each sync).
+		Lifecycle::derive();
 
 		// Trim audit + sync logs.
 		$keep_days = (int) vulnhub()->settings->platform( 'log_retention_days', 120 );

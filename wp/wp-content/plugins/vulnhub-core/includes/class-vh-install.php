@@ -157,6 +157,11 @@ final class Install {
 			cloud_provider varchar(32) NOT NULL DEFAULT '',
 			cloud_account_id varchar(64) NOT NULL DEFAULT '',
 			cloud_region varchar(64) NOT NULL DEFAULT '',
+			aws_instance_name varchar(255) NOT NULL DEFAULT '',
+			aws_account_name varchar(191) NOT NULL DEFAULT '',
+			lifecycle_source varchar(32) NOT NULL DEFAULT '',
+			lifecycle_reason varchar(191) NOT NULL DEFAULT '',
+			lifecycle_set_at datetime NULL DEFAULT NULL,
 			patch_group varchar(96) NOT NULL DEFAULT '',
 			cmdb_key varchar(64) NOT NULL DEFAULT '',
 			sources_json varchar(191) NOT NULL DEFAULT '',
@@ -433,6 +438,25 @@ final class Install {
 			PRIMARY KEY  (id),
 			UNIQUE KEY ticket_finding (ticket_id,finding_id),
 			KEY finding_id (finding_id)
+		) {$charset};";
+
+		/*
+		 * Assets set aside on one ticket: resolved another way, or not this
+		 * ticket's business. Per ticket, so the same machine stays in scope
+		 * on every other ticket. Their findings stop counting as outstanding
+		 * here, and nowhere else.
+		 */
+		$sql[] = "CREATE TABLE {$p}ticket_aside (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			ticket_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			asset_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			reason varchar(16) NOT NULL DEFAULT '',
+			note varchar(500) NOT NULL DEFAULT '',
+			set_by bigint(20) unsigned NOT NULL DEFAULT 0,
+			set_at datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
+			PRIMARY KEY  (id),
+			UNIQUE KEY ticket_asset (ticket_id,asset_id),
+			KEY asset_id (asset_id)
 		) {$charset};";
 
 		/*

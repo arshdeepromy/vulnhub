@@ -3539,7 +3539,7 @@ document.addEventListener( 'click', function ( e ) {
 		}
 
 		var dlg = null;
-		var current = { id: 0, status: null };
+		var current = { id: 0, status: null, assets: [] };
 
 		function dialog() {
 			if ( dlg ) { return dlg; }
@@ -3603,7 +3603,7 @@ document.addEventListener( 'click', function ( e ) {
 			var statusEl = d.querySelector( '[data-vh-ra-status]' );
 			sendBtn.disabled = true;
 			statusEl.textContent = 'Attaching and posting…';
-			wp.apiFetch( { path: '/vulnhub/v1/tickets/' + current.id + '/attachment', method: 'POST', data: { note: note } } )
+			wp.apiFetch( { path: '/vulnhub/v1/tickets/' + current.id + '/attachment', method: 'POST', data: { note: note, asset_ids: current.assets } } )
 				.then( function ( result ) {
 					d.close();
 					if ( current.status ) { current.status.textContent = ( result && result.message ) || 'Attached.'; }
@@ -3619,6 +3619,12 @@ document.addEventListener( 'click', function ( e ) {
 			if ( ! button ) { return; }
 			event.preventDefault();
 
+			// A selection button carries its assets; the ticket-wide one has none.
+			current.assets = [];
+			if ( button.hasAttribute( 'data-vh-reattach-assets' ) ) {
+				try { current.assets = JSON.parse( button.dataset.vhReattachAssets || '[]' ) || []; } catch ( e ) { current.assets = []; }
+				if ( ! current.assets.length ) { return; }
+			}
 			current.id     = parseInt( button.dataset.vhReattach, 10 );
 			current.status = button.parentNode.querySelector( '[data-vh-reattach-status]' );
 
@@ -3631,7 +3637,7 @@ document.addEventListener( 'click', function ( e ) {
 			d.querySelector( '[data-vh-ra-status]' ).textContent = '';
 			if ( ! d.open ) { d.showModal(); }
 
-			wp.apiFetch( { path: '/vulnhub/v1/tickets/' + current.id + '/attachment', method: 'POST', data: { preview: true } } )
+			wp.apiFetch( { path: '/vulnhub/v1/tickets/' + current.id + '/attachment', method: 'POST', data: { preview: true, asset_ids: current.assets } } )
 				.then( function ( result ) { renderPreview( result || {} ); } )
 				.catch( function ( error ) {
 					var b = d.querySelector( '[data-vh-ra-body]' );
@@ -3640,4 +3646,90 @@ document.addEventListener( 'click', function ( e ) {
 				} );
 		} );
 	}() );
+}() );
+
+/*
+ * Ticket page, findings grouped by asset: pick assets (this page, or every
+ * asset the filter matches), then send an updated list for just those or set
+ * them aside on this ticket. The selection survives paging within the tab.
+ */
+( function () {
+	var bar = document.querySelector( '[data-vh-tf-sel]' );
+	if ( ! bar || ! window.wp || ! window.wp.apiFetch ) { return; }
+
+	var ticket = parseInt( bar.dataset.ticket, 10 );
+	var key    = 'vh-tf-pick-' + ticket;
+	var all    = [];
+	var picked = {};
+	try { all = JSON.parse( bar.dataset.all || '[]' ) || []; } catch ( e ) { all = []; }
+	try { ( JSON.parse( window.sessionStorage.getItem( key ) || '[]' ) || [] ).forEach( function ( id ) { picked[ id ] = true; } ); } catch ( e ) {}
+
+	var countEl = bar.querySelector( '[data-vh-tf-count]' );
+	var sendBtn = bar.querySelector( '[data-vh-reattach]' );
+	var status  = bar.querySelector( '[data-vh-aside-status]' );
+
+	function ids() { return Object.keys( picked ).map( function ( k ) { return parseInt( k, 10 ); } ); }
+	function boxes() { return Array.prototype.slice.call( document.querySelectorAll( '[data-vh-tf-pick]' ) ); }
+
+	function sync() {
+		var list = ids();
+		boxes().forEach( function ( b ) { b.checked = !! picked[ b.value ]; } );
+		var page = document.querySelector( '[data-vh-tf-page]' );
+		if ( page ) { var bs = boxes(); page.checked = bs.length > 0 && bs.every( function ( b ) { return b.checked; } ); }
+		countEl.textContent = list.length ? list.length + ( 1 === list.length ? ' asset selected' : ' assets selected' ) : 'None selected';
+		Array.prototype.forEach.call( bar.querySelectorAll( '[data-vh-needs-sel]' ), function ( b ) { b.disabled = 0 === list.length; } );
+		if ( sendBtn ) { sendBtn.setAttribute( 'data-vh-reattach-assets', JSON.stringify( list ) ); }
+		try { window.sessionStorage.setItem( key, JSON.stringify( list ) ); } catch ( e ) {}
+	}
+
+	document.addEventListener( 'change', function ( event ) {
+		var t = event.target;
+		if ( ! t || ! t.matches ) { return; }
+		if ( t.matches( '[data-vh-tf-pick]' ) ) {
+			if ( t.checked ) { picked[ t.value ] = true; } else { delete picked[ t.value ]; }
+			sync();
+		} else if ( t.matches( '[data-vh-tf-page]' ) ) {
+			boxes().forEach( function ( b ) { if ( t.checked ) { picked[ b.value ] = true; } else { delete picked[ b.value ]; } } );
+			sync();
+		}
+	} );
+
+	bar.querySelector( '[data-vh-tf-all]' ).addEventListener( 'click', function () {
+		all.forEach( function ( id ) { picked[ id ] = true; } );
+		sync();
+	} );
+	bar.querySelector( '[data-vh-tf-none]' ).addEventListener( 'click', function () {
+		picked = {};
+		sync();
+	} );
+
+	function aside( reason ) {
+		var list = ids();
+		if ( ! list.length ) { return; }
+		var sel   = bar.querySelector( '[data-vh-aside-reason]' );
+		var label = sel.options[ sel.selectedIndex ] ? sel.options[ sel.selectedIndex ].text : reason;
+		var n     = list.length + ( 1 === list.length ? ' asset' : ' assets' );
+		var ask   = reason
+			? 'Set ' + n + ' aside on this ticket as "' + label + '"?\n\nTheir open findings stop counting as outstanding on this ticket only, and leave its updated list. Nothing is sent to Jira. You can take them back.'
+			: 'Take ' + n + ' back into this ticket? Their open findings count as outstanding again.';
+		if ( ! window.confirm( ask ) ) { return; }
+		status.textContent = 'Saving…';
+		window.wp.apiFetch( {
+			path: '/vulnhub/v1/tickets/' + ticket + '/aside',
+			method: 'POST',
+			data: { asset_ids: list, reason: reason, note: reason ? bar.querySelector( '[data-vh-aside-note]' ).value : '' }
+		} ).then( function ( r ) {
+			status.textContent = ( r && r.message ) || 'Saved.';
+			picked = {};
+			sync();
+			window.location.reload();
+		} ).catch( function ( err ) {
+			status.textContent = ( err && err.message ) || 'Not saved.';
+		} );
+	}
+
+	bar.querySelector( '[data-vh-aside-set]' ).addEventListener( 'click', function () { aside( bar.querySelector( '[data-vh-aside-reason]' ).value ); } );
+	bar.querySelector( '[data-vh-aside-clear]' ).addEventListener( 'click', function () { aside( '' ); } );
+
+	sync();
 }() );

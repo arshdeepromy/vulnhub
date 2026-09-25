@@ -1916,7 +1916,8 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 	 *   1. `system_types` — Tenable's own device classification. When it says
 	 *      router/switch/firewall/AP, that is authoritative network gear.
 	 *   2. Mobile operating systems — iOS/iPadOS/Android are never servers.
-	 *   3. Server operating systems — "Windows Server", any Linux/BSD/ESXi
+	 *   0. A hypervisor (ESXi OS, or system_types "hypervisor") is network.
+ *   3. Server operating systems — "Windows Server", any Linux/BSD
 	 *      build string. Checked BEFORE desktop Windows, because
 	 *      "Microsoft Windows Server 2022" also contains "Windows".
 	 *   4. Desktop operating systems — Windows 10/11/8/7, macOS.
@@ -2001,6 +2002,11 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 		// addresses and tags. In one real 912-asset export, 911 were typed
 		// purely by tag category (WORKSTATIONS / SERVERS), and nothing else in
 		// the file could have classified them.
+		// A hypervisor host is a network device, whatever a tag or class says.
+		if ( vh_is_hypervisor_os( $os ) || in_array( 'hypervisor', $system_types, true ) ) {
+			return 'network';
+		}
+
 		$type_from_tag = $this->asset_type_from_tags( $record['tags'] ?? array() );
 		if ( '' !== $type_from_tag ) {
 			return $type_from_tag;
@@ -2014,9 +2020,6 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 			if ( preg_match( '/(printer|scanner|voip|camera|embedded|scada|medical)/', $type ) ) {
 				return 'appliance';
 			}
-			if ( 'hypervisor' === $type ) {
-				return 'server';
-			}
 		}
 
 		// 2. Mobile platforms.
@@ -2029,7 +2032,7 @@ final class VulnHub_Tenable_Connector extends \VulnHub\Core\Connector {
 		if ( str_contains( $os, 'windows server' ) || preg_match( '/windows (2000|2003|2008|2012|2016|2019|2022|2025)/', $os ) ) {
 			return 'server';
 		}
-		if ( preg_match( '/\b(linux|ubuntu|debian|centos|red hat|rhel|suse|oracle linux|amazon linux|rocky|almalinux|freebsd|openbsd|solaris|aix|esxi|vmware vcenter)\b/', $os ) ) {
+		if ( preg_match( '/\b(linux|ubuntu|debian|centos|red hat|rhel|suse|oracle linux|amazon linux|rocky|almalinux|freebsd|openbsd|solaris|aix|vmware vcenter)\b/', $os ) ) {
 			return 'server';
 		}
 

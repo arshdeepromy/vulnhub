@@ -209,6 +209,31 @@ final class VulnHub_Plerion_Connector extends Connector {
 			);
 		}
 
+		/*
+		 * Account names, from the integrations: an account number means
+		 * nothing on a ticket. Best effort -- a failure here is logged and
+		 * never fails an asset sync that already succeeded.
+		 */
+		try {
+			$names = array();
+			foreach ( $client->integrations() as $in ) {
+				// `awsAccountId` on an integration (assets and findings call
+				// the same number `providerAccountId`).
+				$acct = (string) ( $in['awsAccountId'] ?? $in['providerAccountId'] ?? '' );
+				if ( 'AWS' === strtoupper( (string) ( $in['provider'] ?? '' ) ) && '' !== $acct && ! empty( $in['name'] ) ) {
+					$names[ $acct ] = (string) $in['name'];
+				}
+			}
+			if ( $names ) {
+				do_action( 'vulnhub_aws_account_names', $names, 'plerion' );
+			}
+			/* translators: %d: accounts. */
+			$this->log( sprintf( __( 'Account names: %d AWS account(s) named by their integration.', 'vulnhub' ), count( $names ) ) );
+		} catch ( \Throwable $e ) {
+			/* translators: %s: error. */
+			$this->log( sprintf( __( 'Account names not read: %s', 'vulnhub' ), $e->getMessage() ) );
+		}
+
 		$posture = '';
 
 		if ( (bool) $this->get( 'use_findings', true ) ) {

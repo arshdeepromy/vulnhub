@@ -183,5 +183,8 @@ require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-network.php';
 require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-exposure.php';
 require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-coverage.php';
 VulnHub_AWS_Coverage::init();
+// Account number -> name, reported by Plerion and the AWS sign-in.
+require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-account-names.php';
+VulnHub_AWS_Account_Names::init();
 require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-network-page.php';
 VulnHub_AWS_Network_Page::init();
