@@ -102,6 +102,7 @@ final class VulnHub_AWS_Network_Page {
 				'rest'     => esc_url_raw( rest_url( 'vulnhub-aws/v1/network' ) ),
 				'nonce'    => wp_create_nonce( 'wp_rest' ),
 				'accounts' => VulnHub_AWS_Network::accounts(),
+				'names'    => self::account_names(),
 			)
 		);
 
@@ -114,6 +115,26 @@ final class VulnHub_AWS_Network_Page {
 				'nonce' => wp_create_nonce( 'wp_rest' ),
 			)
 		);
+	}
+
+	/**
+	 * Account id => name for the account picker. Names come from the merged
+	 * name map (Plerion / AWS SSO); an account it lacks falls back to the
+	 * label it was registered under.
+	 *
+	 * @return array<string,string>
+	 */
+	private static function account_names(): array {
+		global $wpdb;
+		$out = array();
+		foreach ( (array) $wpdb->get_results( 'SELECT account_id, label FROM ' . $wpdb->prefix . 'vulnhub_aws_accounts', ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			if ( '' !== (string) $r['label'] ) { $out[ (string) $r['account_id'] ] = (string) $r['label']; }
+		}
+		if ( class_exists( 'VulnHub_AWS_Account_Names' ) ) {
+			// `+`, not array_merge: account ids are numeric strings and would be renumbered.
+			$out = VulnHub_AWS_Account_Names::all() + $out;
+		}
+		return $out;
 	}
 
 	/** Which tab the request is on. `estate` or `account`. */
@@ -156,7 +177,7 @@ final class VulnHub_AWS_Network_Page {
 		}
 
 		echo '<div class="vh-net-controls">';
-		echo '<label>' . esc_html__( 'Account', 'vulnhub' ) . ' <select data-vh-net-account></select></label>';
+		echo '<label class="vh-net-acct">' . esc_html__( 'Account', 'vulnhub' ) . ' <span class="vh-net-acct__pick"><select data-vh-net-account></select><span class="vh-net-acct__id" data-vh-net-account-id></span></span></label>';
 		echo '<label>' . esc_html__( 'VPC', 'vulnhub' ) . ' <select data-vh-net-vpc></select></label>';
 		echo '<span class="vh-meta" data-vh-net-meta></span>';
 		echo '</div>';

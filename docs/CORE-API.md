@@ -285,9 +285,12 @@ Repo::upsert_asset( array(
     'last_intune_sync'   => '…',
     'tags'               => array( array( 'key' => 'Team', 'value' => 'Infra' ) ),
     'software'           => array( … ),
-    'raw'                => array( … ),
+    'raw'                => array( 'yourfeed' => array( … ) ), // merged by top-level key
 ) );
 // returns ['id' => int, 'created' => bool]
+// `raw` is merged into the row's raw_json by top-level key: file your feed's
+// data under your own key, and you replace only that key. Other feeds' keys
+// (tenable, plerion, intune, cmdb, cloud) are kept.
 ```
 
 Matching order: tenable_uuid → intune_id → azure_ad_device_id → cmdb_id →

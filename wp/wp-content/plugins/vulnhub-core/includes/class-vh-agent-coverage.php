@@ -293,16 +293,28 @@ final class Agent_Coverage {
 
 		/*
 		 * Pass one: everything is either out of scope, or has an agent, or is
-		 * parked as OS-unknown for pass two to judge. `sources[].name` is the
-		 * evidence -- LOCATE, never LIKE '%…%', because a literal % in a SQL
-		 * fragment is read as a placeholder by wpdb::prepare().
+		 * parked as OS-unknown for pass two to judge.
+		 *
+		 * The evidence is Tenable's, tied to this asset's own Tenable identity:
+		 * the agent list (`agent_status` on/off, `agent_last_connect`, written
+		 * per Tenable uuid by the hourly agent reading), or a NESSUS_AGENT
+		 * source inside a Tenable block whose id is this asset's uuid. A bare
+		 * text search of raw_json was not enough: a record with no Tenable
+		 * identity carried a copy of another machine's block and read "Agent
+		 * installed" beside "Not in Tenable", while machines whose Tenable
+		 * block had been overwritten read "Agent required" with a live agent.
+		 * LOCATE, never LIKE '%…%': a literal % is a wpdb::prepare() placeholder.
 		 */
 		$wpdb->query(
 			$wpdb->prepare(
 				"UPDATE {$a} a SET a.agent_coverage_state = CASE
 					WHEN a.lifecycle_status NOT IN ({$in_scope}) THEN %s
 					WHEN a.asset_type NOT IN ({$types}) THEN %s
-					WHEN LOCATE('NESSUS_AGENT', COALESCE(a.raw_json, '')) > 0 THEN %s
+					WHEN COALESCE(a.tenable_uuid, '') <> '' AND (
+						a.agent_status IN ('on', 'off')
+						OR a.agent_last_connect IS NOT NULL
+						OR ( LOCATE('NESSUS_AGENT', COALESCE(a.raw_json, '')) > 0 AND JSON_VALUE(a.raw_json, '\$.tenable.id') = a.tenable_uuid )
+					) THEN %s
 					ELSE %s
 				END", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 				self::OUT_OF_SCOPE,

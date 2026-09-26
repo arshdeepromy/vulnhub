@@ -21,6 +21,7 @@ $vh_filter = array(
 	'severity'    => isset( $_GET['severity'] ) ? sanitize_key( wp_unslash( $_GET['severity'] ) ) : '',
 	'asset_type'  => isset( $_GET['asset_type'] ) ? sanitize_key( wp_unslash( $_GET['asset_type'] ) ) : '',
 	'team_id'     => isset( $_GET['team_id'] ) ? (int) $_GET['team_id'] : 0,
+	'owner'       => vh_owner_filter( isset( $_GET['owner'] ) ? sanitize_key( wp_unslash( $_GET['owner'] ) ) : '' ),
 	'has_ticket'  => isset( $_GET['has_ticket'] ) && '' !== $_GET['has_ticket'] ? sanitize_key( wp_unslash( $_GET['has_ticket'] ) ) : '',
 	'overdue'     => isset( $_GET['overdue'] ) ? 1 : 0,
 	'search'      => isset( $_GET['search'] ) ? sanitize_text_field( wp_unslash( $_GET['search'] ) ) : '',
@@ -94,6 +95,13 @@ $vh_teams = Repo::teams();
 					<?php echo esc_html( (string) $vh_t['name'] ); ?>
 				</option>
 			<?php endforeach; ?>
+		</select>
+	</label>
+
+	<label>
+		<?php esc_html_e( 'Owner', 'vulnhub' ); ?>
+		<select name="owner" data-vh-autosubmit>
+			<?php echo vh_owner_filter_options_html( (string) $vh_filter['owner'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside. ?>
 		</select>
 	</label>
 

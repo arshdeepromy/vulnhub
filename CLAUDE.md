@@ -32,6 +32,7 @@ obvious version was tried first and broke something.
 | `docs/COVERAGE.md`, `docs/LIFECYCLE.md` | What "not scanned" and "in service" mean, and to which assets |
 | `docs/PLERION.md` | Cloud posture: cloud assets, CSPM findings kept out of the vulnerability model, the exposure map |
 | `docs/AWS-NETWORK.md` | AWS SSO device login, what the network capture stores, and how the Cloud Network map is built |
+| `docs/AWS-COST.md` | AWS cost snapshot (Cost Explorer, CloudWatch, Price List), the confirmed / needs-confirmation savings rules, and shared decisions |
 | `docs/APPSTREAM.md` | AppStream duplicate cleanup: detecting one-shot streaming assets and deleting them through Tenable |
 | `docs/EOS.md`, `docs/ATTACK-PATHS.md` | Retirement programme; reachability |
 | `docs/BROWSER-PASS.md` | How to actually drive the product in a browser |

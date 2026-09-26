@@ -2921,6 +2921,7 @@ dialog.vh-ask::backdrop { background: rgba(4, 8, 18, .6); }
 .vh-move__row > span { font-size: 12.5px; color: var(--vh-ink-2); }
 .vh-move__row select,
 .vh-move__row input[type="text"],
+.vh-move__row input[type="number"],
 .vh-move__row textarea {
 	width: 100%; padding: 7px 9px; border-radius: 8px;
 	border: 1px solid var(--vh-line); background: var(--vh-neutral-bg);

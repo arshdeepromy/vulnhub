@@ -856,6 +856,19 @@ final class Tickets {
 			);
 		}
 
+		if ( $n > 0 ) {
+			/**
+			 * Assets were set aside on a ticket, or taken back. What the
+			 * ticket's verification said may no longer hold; a scanner
+			 * plugin re-checks it.
+			 *
+			 * @param int    $ticket_id Ticket.
+			 * @param string $reason    New reason, or '' when taken back.
+			 * @param int[]  $asset_ids Assets changed.
+			 */
+			do_action( 'vulnhub_ticket_aside_changed', $ticket_id, $reason, $covered );
+		}
+
 		return $n;
 	}
 

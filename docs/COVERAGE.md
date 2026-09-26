@@ -123,6 +123,29 @@ into `raw_json`, so the dimension backfilled across the estate with no re-sync
 and no extra API calls. `agent_uuid` is *not* the signal: it comes back null on
 assets that demonstrably do have an agent.
 
+**The evidence has to be this asset's own.** A record counts as *Agent
+installed* only when it has a Tenable uuid **and** either Tenable's agent list
+names it (`agent_status` on or off, or an `agent_last_connect`, written per
+uuid by the hourly agent reading) or its raw record holds a `NESSUS_AGENT`
+source inside a Tenable block whose `id` is that same uuid. A bare text search
+of `raw_json` was the rule before, and it broke both ways:
+
+- *Agent installed* beside *Not in Tenable*: a CMDB connector built a new
+  record's raw data from a same-named match the asset store then rejected, so
+  three records with no Tenable identity carried another machine's Tenable
+  block. The connector now writes only its own `cmdb` block, and the copied
+  blocks were removed (audit `asset.raw_cleaned`).
+- *Agent required* with a live agent: `Repo::upsert_asset()` replaced the
+  whole `raw_json` with whatever the current feed sent, so a posture sync
+  after a Tenable sync erased the Tenable block. It now merges by feed key --
+  each feed replaces only its own (`tenable`, `plerion`, `intune`, `cmdb`,
+  `cloud`).
+
+Recalculated when the rule changed: 64 records moved to *Agent installed*
+(every one on Tenable's agent list), 3 moved off it; afterwards no record is
+*Agent installed* while *Not in Tenable*, and none with a live agent reads
+*Agent required*.
+
 **"No agent" splits in two, and that is the point.** An agent cannot be
 installed on a hypervisor appliance, a service processor, or an OS older than
 the agent supports. Chasing those is the waste this dimension exists to stop,

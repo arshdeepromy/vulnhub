@@ -63,6 +63,7 @@ final class VulnHub_Tenable_Ticket_Check {
 		add_filter( 'vulnhub_ticket_check_status', array( $this, 'status_filter' ), 10, 2 );
 		add_action( self::STEP_HOOK, array( $this, 'step' ), 10, 1 );
 		add_action( self::DUE_HOOK, array( $this, 'run_due' ), 10, 0 );
+		add_action( 'vulnhub_ticket_aside_changed', array( $this, 'on_aside_changed' ), 10, 1 );
 
 		add_action(
 			'init',
@@ -88,6 +89,23 @@ final class VulnHub_Tenable_Ticket_Check {
 	 */
 	public function start_filter( ?array $result, array $ticket_ids, bool $rescan ): ?array {
 		return null !== $result ? $result : $this->start( $ticket_ids, $rescan, 'manual' );
+	}
+
+	/**
+	 * Re-check a ticket once assets on it are set aside or taken back: a
+	 * "still detected" that only those assets were holding up should clear,
+	 * and one they were not should come back. Queued, no scan -- the verdict
+	 * lands within a minute or two, from Tenable's current results.
+	 */
+	public function on_aside_changed( int $ticket_id ): void {
+		$ticket    = \VulnHub\Core\Tickets::get( $ticket_id );
+		$connector = $this->connector();
+
+		if ( ! $ticket || (int) $ticket['asset_count'] > 0 || '' === (string) $ticket['external_key'] || ! $connector || ! $connector->is_enabled() ) {
+			return;
+		}
+
+		$this->start( array( $ticket_id ), false, 'aside' );
 	}
 
 	/**

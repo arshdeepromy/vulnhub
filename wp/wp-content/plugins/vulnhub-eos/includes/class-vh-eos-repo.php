@@ -556,6 +556,12 @@ final class VH_EOS_Repo {
 			$params[] = (int) $args['team_id'];
 		}
 
+		// The Owner filter: whether the asset has a named owner.
+		$owner_filter = vh_owner_filter( $args['owner'] ?? '' );
+		if ( '' !== $owner_filter ) {
+			$where[] = 'has' === $owner_filter ? 'a.owner_person_id > 0' : 'a.owner_person_id = 0';
+		}
+
 		if ( (int) $args['location_id'] > 0 ) {
 			$where[]  = 'a.location_id = %d';
 			$params[] = (int) $args['location_id'];
@@ -686,6 +692,12 @@ final class VH_EOS_Repo {
 		if ( (int) $args['team_id'] > 0 ) {
 			$where[]  = 'a.team_id = %d';
 			$params[] = (int) $args['team_id'];
+		}
+
+		// The Owner filter: whether the asset has a named owner.
+		$owner_filter = vh_owner_filter( $args['owner'] ?? '' );
+		if ( '' !== $owner_filter ) {
+			$where[] = 'has' === $owner_filter ? 'a.owner_person_id > 0' : 'a.owner_person_id = 0';
 		}
 
 		if ( (int) $args['location_id'] > 0 ) {

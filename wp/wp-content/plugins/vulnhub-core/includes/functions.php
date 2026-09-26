@@ -117,6 +117,46 @@ function vh_user_bound_asset_types(): array {
 }
 
 /**
+ * The Owner filter every asset and findings list offers: whether the asset
+ * has a named owner (a person, `owner_person_id`). Value => label; '' is
+ * "any". A team alone is not a named owner -- that is the Team filter.
+ *
+ * @return array<string,string>
+ */
+function vh_owner_filter_options(): array {
+	return array(
+		''     => __( 'Any owner', 'vulnhub' ),
+		'has'  => __( 'Has an owner', 'vulnhub' ),
+		'none' => __( 'Missing an owner', 'vulnhub' ),
+	);
+}
+
+/**
+ * A request's Owner filter value, or '' when absent or not one of ours.
+ *
+ * @param mixed $value Raw value.
+ */
+function vh_owner_filter( $value ): string {
+	$value = is_scalar( $value ) ? (string) $value : '';
+
+	return '' !== $value && isset( vh_owner_filter_options()[ $value ] ) ? $value : '';
+}
+
+/**
+ * The <option>s for an Owner filter <select>, with $current selected.
+ */
+function vh_owner_filter_options_html( string $current ): string {
+	$current = vh_owner_filter( $current );
+	$out     = '';
+
+	foreach ( vh_owner_filter_options() as $value => $label ) {
+		$out .= '<option value="' . esc_attr( $value ) . '"' . selected( $current, $value, false ) . '>' . esc_html( $label ) . '</option>';
+	}
+
+	return $out;
+}
+
+/**
  * Asset lifecycle status vocabulary.
  *
  * Real CMDB exports are full of devices that are deliberately unassigned —

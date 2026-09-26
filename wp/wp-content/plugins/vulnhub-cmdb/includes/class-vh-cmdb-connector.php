@@ -2224,7 +2224,15 @@ final class VulnHub_Cmdb_Connector extends \VulnHub\Core\Connector {
 	 * @return array<string,mixed>
 	 */
 	private function merge_raw( array $record, ?array $existing ): array {
-		$raw = vh_json( $existing['raw_json'] ?? null );
+		/*
+		 * Only this connector's own block. The asset store merges it into
+		 * whatever the other feeds hold on the row it actually writes. Starting
+		 * from $existing -- this connector's match, which the store may not
+		 * agree with -- once copied another machine's Tenable block (agent
+		 * evidence included) onto a brand-new record of the same name.
+		 */
+		unset( $existing );
+		$raw = array();
 
 		$raw['cmdb'] = array(
 			'source'           => $this->source(),

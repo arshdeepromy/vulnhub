@@ -211,6 +211,7 @@ $vh_args = array(
 	'team_id'    => isset( $_GET['team_id'] ) ? (int) $_GET['team_id'] : 0,
 	'needs_user' => isset( $_GET['needs_user'] ) ? 1 : 0,
 	'unowned'    => isset( $_GET['unowned'] ) ? 1 : 0,
+	'owner'      => vh_owner_filter( isset( $_GET['owner'] ) ? sanitize_key( wp_unslash( $_GET['owner'] ) ) : '' ),
 );
 // phpcs:enable
 
@@ -256,14 +257,23 @@ $vh_teams = Repo::teams();
 			<?php endforeach; ?>
 		</select>
 	</label>
-	<label style="flex-direction:row;align-items:center;gap:6px;text-transform:none;font-weight:400">
-		<input type="checkbox" name="needs_user" value="1" <?php checked( (int) $vh_args['needs_user'], 1 ); ?> data-vh-autosubmit>
-		<?php esc_html_e( 'Missing a user', 'vulnhub' ); ?>
+	<label>
+		<?php esc_html_e( 'Owner', 'vulnhub' ); ?>
+		<select name="owner" data-vh-autosubmit>
+			<?php echo vh_owner_filter_options_html( (string) $vh_args['owner'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside. ?>
+		</select>
 	</label>
-	<label style="flex-direction:row;align-items:center;gap:6px;text-transform:none;font-weight:400">
-		<input type="checkbox" name="unowned" value="1" <?php checked( (int) $vh_args['unowned'], 1 ); ?> data-vh-autosubmit>
-		<?php esc_html_e( 'No owner at all', 'vulnhub' ); ?>
-	</label>
+	<?php
+	// Older links (dashboard tiles, bookmarks) still narrow by these; they
+	// have no control of their own any more, so they ride along.
+	foreach ( array( 'needs_user', 'unowned' ) as $vh_legacy ) :
+		if ( $vh_args[ $vh_legacy ] ) :
+			?>
+			<input type="hidden" name="<?php echo esc_attr( $vh_legacy ); ?>" value="1">
+			<?php
+		endif;
+	endforeach;
+	?>
 	<button class="button button-primary"><?php esc_html_e( 'Filter', 'vulnhub' ); ?></button>
 	<a class="button" href="<?php echo esc_url( vh_admin_url( 'vulnhub-assets' ) ); ?>"><?php esc_html_e( 'Reset', 'vulnhub' ); ?></a>
 </form>

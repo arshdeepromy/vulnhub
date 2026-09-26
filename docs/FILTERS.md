@@ -338,6 +338,33 @@ answer "which of this product's findings are its own?".
 browser) app + bundled equals the row, each segment's link returns exactly its
 count, and the export with `comp` returns the same rows as the list.
 
+## 12. Owner: one dropdown, everywhere an asset can be filtered
+
+The assets list had a *Missing a user* checkbox (user-bound devices with no
+named owner) and nothing for the other two questions. It is now an **Owner**
+dropdown -- *Any owner / Has an owner / Missing an owner* -- on every list
+that filters by asset: Assets, Vulnerabilities (list and single
+vulnerability), the EOL plan, the ticket page's findings (`fowner`, same
+labels), and the wp-admin Assets and Findings screens.
+
+- One vocabulary: `vh_owner_filter_options()`, `vh_owner_filter()` (sanitise),
+  `vh_owner_filter_options_html()` in core `functions.php`.
+- `owner` = `has` | `none` on the wire. "Owner" means a named person
+  (`owner_person_id`); a team alone is not an owner -- that is the Team filter.
+- Applied in `Repo::assets()`, `Repo::findings()` (on the finding's asset) and
+  the EOS repository; carried by the CSV exports, the asset-list ticket query
+  (`ASSET_QUERY_KEYS`, described as "Owner: …"), REST `GET /assets` and
+  `/findings`, and the MCP `vulnhub_list_assets` tool.
+- `needs_user=1` still works: the owner summary's "N still need one" link and
+  older bookmarks use it. With no control of its own it shows as a removable
+  chip, *User devices missing a user*; wp-admin carries it (and `unowned`)
+  as hidden fields.
+
+**Checked**: Assets any/has/none = 1,102 / 520 / 582 (520 + 582 = 1,102);
+`needs_user` still 73; open findings has/none = 18,294 / 239,615 against
+257,908 in total; the export form carries `owner`; the EOL plan narrows 58 ->
+2 rows for *Has an owner*; no PHP or page errors.
+
 ## What was checked and found sound
 
 Worth recording, so the next audit does not re-tread it:

@@ -429,6 +429,17 @@ final class VulnHub_AWS_Connector extends Connector {
 		return '' !== trim( (string) $this->secret( 'session_token' ) );
 	}
 
+	/**
+	 * The stored SSO session and read regions, for read-only readers that are
+	 * not the sync itself (the cost view). Refreshes the token when close to
+	 * expiry, exactly as the sync does.
+	 *
+	 * @return array{token:array<string,mixed>,regions:string[]}
+	 */
+	public function read_session(): array {
+		return array( 'token' => $this->sso_token(), 'regions' => $this->regions() );
+	}
+
 	/** @return string[] */
 	private function regions(): array {
 		$raw = (string) $this->get( 'regions' );

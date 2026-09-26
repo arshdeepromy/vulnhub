@@ -69,7 +69,7 @@ final class VulnHub_Dash_Tickets {
 	 */
 	private const ASSET_QUERY_KEYS = array(
 		'search', 'asset_type', 'team_id', 'location_id', 'coverage', 'agent', 'defender', 'known',
-		'hosting', 'life', 'needs_user', 'primary_source', 'operating_system', 'patch_group',
+		'hosting', 'life', 'needs_user', 'owner', 'primary_source', 'operating_system', 'patch_group',
 		'eol', 'has', 'missing', 'orderby', 'order',
 	);
 
@@ -177,6 +177,9 @@ final class VulnHub_Dash_Tickets {
 					break;
 				case 'needs_user':
 					$out[] = __( 'Missing a user', 'vulnhub' );
+					break;
+				case 'owner':
+					$out[] = __( 'Owner', 'vulnhub' ) . ': ' . (string) ( vh_owner_filter_options()[ vh_owner_filter( $value ) ] ?? $value );
 					break;
 				case 'hosting':
 					$labels = class_exists( 'VulnHub_Hosting' ) ? VulnHub_Hosting::environment_labels() : array();
@@ -2123,11 +2126,7 @@ final class VulnHub_Dash_Tickets {
 			'oos'      => __( 'Resolved: out of service', 'vulnhub' ),
 			'aside'    => __( 'Set aside', 'vulnhub' ),
 		);
-		$owners = array(
-			''     => __( 'Any owner', 'vulnhub' ),
-			'has'  => __( 'Has an owner', 'vulnhub' ),
-			'none' => __( 'No owner', 'vulnhub' ),
-		);
+		$owners = vh_owner_filter_options();
 		$owner  = array_key_exists( self::q( 'fowner' ), $owners ) ? self::q( 'fowner' ) : '';
 		if ( '' !== $owner ) {
 			// A population filter, so the tab counts follow it too.

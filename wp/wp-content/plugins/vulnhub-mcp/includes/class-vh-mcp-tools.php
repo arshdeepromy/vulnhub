@@ -65,13 +65,14 @@ final class VulnHub_MCP_Tools {
 
 			'vulnhub_list_assets' => array(
 				'title'       => __( 'List assets', 'vulnhub' ),
-				'description' => 'Search and filter the asset inventory. Filters: search (hostname, IP, serial), coverage state, unowned, needs_user, has_vulns. Returns at most 100 at a time; page with offset.',
+				'description' => 'Search and filter the asset inventory. Filters: search (hostname, IP, serial), coverage state, owner (has = a named owner, none = missing one), unowned, needs_user, has_vulns. Returns at most 100 at a time; page with offset.',
 				'cap'         => Caps::VIEW,
 				'schema'      => array(
 					'type'       => 'object',
 					'properties' => array(
 						'search'     => $str,
 						'coverage'   => $str,
+						'owner'      => array( 'type' => 'string', 'enum' => array( 'has', 'none' ) ),
 						'unowned'    => $bool,
 						'needs_user' => $bool,
 						'has_vulns'  => $bool,

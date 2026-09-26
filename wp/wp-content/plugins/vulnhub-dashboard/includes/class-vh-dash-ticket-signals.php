@@ -6,10 +6,10 @@
  *
  * - **Mentioned you.** Somebody @mentioned your Jira account, or wrote your
  *   name, in a comment and you have not commented since.
- * - **Your reply.** The newest comment that is a person talking is somebody
- *   else's, on a ticket you are part of (you raised it, it is assigned to
- *   you, you have commented on it, or you were mentioned). Automations and
- *   relayed field changes ("Owner changed to: …") are not a person talking.
+ * - **Your reply.** Somebody has mentioned you (as above) since you last
+ *   commented. Being the newest comment on a ticket you raised is not enough:
+ *   routing notes and status updates are not asking you anything. Your next
+ *   comment clears it.
  * - **Assigned to you.** The Jira assignee is your account.
  * - **Chase.** Past its due date *and* you have already sent the current
  *   list. There is nothing left on your side, so the ticket is the other
@@ -237,7 +237,6 @@ final class VulnHub_Dash_Ticket_Signals {
 			}
 		}
 
-		$was_mentioned = false;
 		$my_name       = self::identity()['name'];
 		$said          = isset( $conv['said'] ) ? (array) $conv['said'] : null;
 
@@ -266,8 +265,6 @@ final class VulnHub_Dash_Ticket_Signals {
 				continue;
 			}
 
-			$was_mentioned = true;
-
 			// Newest first, so the first one found is the latest. Answered
 			// once you have commented after it; mentioning yourself is not
 			// somebody asking.
@@ -286,8 +283,6 @@ final class VulnHub_Dash_Ticket_Signals {
 				continue;
 			}
 
-			$was_mentioned = true;
-
 			if ( (string) ( $c['at'] ?? '' ) > $mine && ( empty( $f['mention'] ) || (string) $c['at'] > (string) $f['mention_at'] ) ) {
 				$f['mention']    = true;
 				$f['mention_by'] = (string) ( $c['by'] ?? '' );
@@ -297,38 +292,17 @@ final class VulnHub_Dash_Ticket_Signals {
 		}
 
 		/*
-		 * Whose turn it is: the newest comment that is a person talking. A
-		 * conversation read before `said` existed falls back on the newest
-		 * comment of any kind.
+		 * Your reply is owed only when somebody has asked for you: an
+		 * @mention or your name in a comment written since you last commented
+		 * (both worked out above). The newest comment merely being somebody
+		 * else's is not enough -- routing notes, status updates and relayed
+		 * work logs on a ticket you raised are not waiting on you. Commenting
+		 * after the mention clears it.
 		 */
-		if ( null !== $said ) {
-			$top  = $said[0] ?? null;
-			$last = $top ? array(
-				'author'    => (string) ( $top['by'] ?? '' ),
-				'author_id' => (string) ( $top['by_id'] ?? '' ),
-				'created'   => (string) ( $top['at'] ?? '' ),
-				'is_me'     => $is_me( $top ),
-			) : null;
-		} else {
-			$last = Tickets::last_comment( $t );
-		}
-
-		if ( $last && '' !== (string) ( $last['author_id'] ?? '' ) ) {
-			$involved = (int) ( $t['created_by'] ?? 0 ) === get_current_user_id()
-				|| $f['assigned']
-				|| '' !== $mine
-				|| $was_mentioned;
-
-			if ( $involved
-				&& $me !== (string) $last['author_id']
-				&& empty( $last['is_me'] )
-				&& 'app' !== (string) ( $last['author_type'] ?? '' )
-				&& (string) ( $last['created'] ?? '' ) > $mine
-			) {
-				$f['reply']    = true;
-				$f['reply_by'] = (string) ( $last['author'] ?? '' );
-				$f['reply_at'] = (string) ( $last['created'] ?? '' );
-			}
+		if ( ! empty( $f['mention'] ) ) {
+			$f['reply']    = true;
+			$f['reply_by'] = (string) $f['mention_by'];
+			$f['reply_at'] = (string) $f['mention_at'];
 		}
 
 		return $f;
@@ -509,7 +483,7 @@ final class VulnHub_Dash_Ticket_Signals {
 		}
 		if ( ! empty( $f['reply'] ) && empty( $f['mention'] ) ) {
 			/* translators: 1: person, 2: time ago. */
-			$why[] = sprintf( __( '%1$s commented %2$s; the next reply is yours', 'vulnhub' ), $f['reply_by'], vh_ago( $f['reply_at'] ) );
+			$why[] = sprintf( __( '%1$s mentioned you %2$s; the next reply is yours', 'vulnhub' ), $f['reply_by'], vh_ago( $f['reply_at'] ) );
 		}
 		if ( ! empty( $f['assigned'] ) ) {
 			$why[] = __( 'assigned to you in Jira', 'vulnhub' );
@@ -548,7 +522,7 @@ final class VulnHub_Dash_Ticket_Signals {
 				'reply',
 				self::icon( 'M9 14L4 9l5-5M4 9h10a6 6 0 016 6v5' ) . esc_html__( 'Your reply', 'vulnhub' ),
 				/* translators: 1: person, 2: time ago. */
-				sprintf( __( '%1$s commented %2$s. The newest comment is not yours, so the next reply is.', 'vulnhub' ), $f['reply_by'], vh_ago( $f['reply_at'] ) )
+				sprintf( __( '%1$s mentioned you %2$s, and you have not commented since.', 'vulnhub' ), $f['reply_by'], vh_ago( $f['reply_at'] ) )
 			);
 		}
 
@@ -701,7 +675,7 @@ final class VulnHub_Dash_Ticket_Signals {
 				'count'    => $counts['reply'],
 				'title'    => __( 'Tickets waiting on your reply', 'vulnhub' ),
 				/* translators: %s: ticket keys. */
-				'body'     => sprintf( __( 'The newest comment is somebody else\'s: %s.', 'vulnhub' ), $keys( 'reply' ) ),
+				'body'     => sprintf( __( 'Somebody mentioned you and you have not replied: %s.', 'vulnhub' ), $keys( 'reply' ) ),
 				'url'      => $url( 'reply' ),
 			);
 		}

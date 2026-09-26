@@ -222,14 +222,39 @@ final class VulnHub_Tenable_Verifier {
 			(int) ( $closed_ts - 30 * DAY_IN_SECONDS )
 		);
 
-		// 3. Judge each finding.
-		$notes      = array();
-		$detail     = array();
-		$confirmed  = 0;
-		$still_open = 0;
-		$unknown    = 0;
+		// 3. Judge each finding. Findings on an asset set aside on this
+		//    ticket (resolved another way, or out of scope) are not this
+		//    ticket's to answer for: they are neither judged nor stamped,
+		//    so a machine taken off the ticket cannot hold its close open
+		//    or be reopened by it.
+		$aside_assets = \VulnHub\Core\Tickets::aside_for( $ticket_id );
+		$notes        = array();
+		$detail       = array();
+		$confirmed    = 0;
+		$still_open   = 0;
+		$unknown      = 0;
+		$aside        = 0;
 
 		foreach ( $findings as $finding ) {
+			$set_aside = $aside_assets[ (int) $finding['asset_id'] ] ?? null;
+
+			if ( $set_aside ) {
+				++$aside;
+				$detail[] = array(
+					'finding_id' => (int) $finding['id'],
+					'hostname'   => (string) $finding['hostname'],
+					'plugin_id'  => (string) $finding['plugin_id'],
+					'verdict'    => 'aside',
+					'note'       => sprintf(
+						/* translators: 1: hostname, 2: reason. */
+						__( '%1$s is set aside on this ticket (%2$s), so it is not re-checked.', 'vulnhub' ),
+						(string) $finding['hostname'],
+						\VulnHub\Core\Tickets::aside_reasons()[ (string) $set_aside['reason'] ] ?? (string) $set_aside['reason']
+					),
+				);
+				continue;
+			}
+
 			$verdict = $this->judge_finding( $finding, $assets, $states, $closed_ts, $resolved );
 
 			$notes[]  = $verdict['note'];
@@ -277,8 +302,17 @@ final class VulnHub_Tenable_Verifier {
 			'fixed'    => $confirmed,
 			'open'     => $still_open,
 			'unknown'  => $unknown,
+			'aside'    => $aside,
 			'findings' => $detail,
 		);
+
+		// What is left to judge once set-aside assets are taken out, and a
+		// clause saying so, for every headline below.
+		$judged     = count( $findings ) - $aside;
+		$aside_note = $aside > 0
+			/* translators: %d: findings set aside. */
+			? ' ' . sprintf( _n( '(%d finding on assets set aside is not counted.)', '(%d findings on assets set aside are not counted.)', $aside, 'vulnhub' ), $aside )
+			: '';
 
 		if ( ! $resolved ) {
 			$summary['state']    = 'progress';
@@ -287,10 +321,10 @@ final class VulnHub_Tenable_Verifier {
 				__( '%1$s is still open: Tenable shows %2$d of %3$d findings fixed, %4$d still detected, %5$d not rescanned since it was raised.', 'vulnhub' ),
 				$key,
 				$confirmed,
-				count( $findings ),
+				$judged,
 				$still_open,
 				$unknown
-			);
+			) . $aside_note;
 
 			\VulnHub\Core\Tickets::set_last_check( $ticket_id, $summary );
 
@@ -305,8 +339,8 @@ final class VulnHub_Tenable_Verifier {
 				__( '%1$s was closed but Tenable still detects %2$d of %3$d findings. Those findings have been reopened.', 'vulnhub' ),
 				$key,
 				$still_open,
-				count( $findings )
-			);
+				$judged
+			) . $aside_note;
 		} elseif ( $unknown > 0 ) {
 			$state   = \VulnHub\Core\Tickets::VERIFY_UNKNOWN;
 			$headline = sprintf(
@@ -314,7 +348,15 @@ final class VulnHub_Tenable_Verifier {
 				__( '%1$s cannot be verified: Tenable has no scan data since it closed for %2$d of %3$d findings.', 'vulnhub' ),
 				$key,
 				$unknown,
-				count( $findings )
+				$judged
+			) . $aside_note;
+		} elseif ( 0 === $judged ) {
+			$state    = \VulnHub\Core\Tickets::VERIFY_CONFIRMED;
+			$headline = sprintf(
+				/* translators: 1: ticket key, 2: findings set aside. */
+				__( '%1$s verified: every asset on it has been set aside (%2$d findings), so nothing is left to re-check.', 'vulnhub' ),
+				$key,
+				$aside
 			);
 		} else {
 			$state   = \VulnHub\Core\Tickets::VERIFY_CONFIRMED;
@@ -323,7 +365,7 @@ final class VulnHub_Tenable_Verifier {
 				__( '%1$s verified: all %2$d findings are confirmed remediated in Tenable.', 'vulnhub' ),
 				$key,
 				$confirmed
-			);
+			) . $aside_note;
 		}
 
 		$note = $headline . ' ' . implode( ' ', $notes );
@@ -340,6 +382,7 @@ final class VulnHub_Tenable_Verifier {
 				'confirmed'   => $confirmed,
 				'still_open'  => $still_open,
 				'unknown'     => $unknown,
+				'aside'       => $aside,
 				'findings'    => $detail,
 			)
 		);

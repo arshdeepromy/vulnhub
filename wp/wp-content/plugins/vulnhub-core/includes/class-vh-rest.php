@@ -377,7 +377,7 @@ final class Rest {
 	public function findings( WP_REST_Request $request ): WP_REST_Response {
 		$args = $this->list_args(
 			$request,
-			array( 'state', 'severity', 'asset_id', 'team_id', 'location_id', 'asset_type', 'owner_person_id', 'search', 'has_ticket', 'excepted', 'overdue', 'orderby', 'order' )
+			array( 'state', 'severity', 'asset_id', 'team_id', 'location_id', 'asset_type', 'owner_person_id', 'owner', 'search', 'has_ticket', 'excepted', 'overdue', 'orderby', 'order' )
 		);
 		return new WP_REST_Response( Repo::findings( $args ) );
 	}
@@ -401,7 +401,7 @@ final class Rest {
 	public function assets( WP_REST_Request $request ): WP_REST_Response {
 		$args = $this->list_args(
 			$request,
-			array( 'search', 'asset_type', 'team_id', 'location_id', 'owner_person_id', 'criticality', 'unowned', 'needs_user', 'has_vulns', 'orderby', 'order' )
+			array( 'search', 'asset_type', 'team_id', 'location_id', 'owner_person_id', 'owner', 'criticality', 'unowned', 'needs_user', 'has_vulns', 'orderby', 'order' )
 		);
 		return new WP_REST_Response( Repo::assets( $args ) );
 	}

@@ -3358,11 +3358,16 @@ document.addEventListener( 'click', function ( e ) {
 		}
 
 		( chosen.fields || [] ).forEach( function ( field ) {
+			/* Older responses carried required fields only, with no flag. */
+			var required = false !== field.required;
 			var row = el( 'label', 'vh-move__row' );
-			row.appendChild( el( 'span', null, field.name ) );
+			row.appendChild( el( 'span', null, field.name + ( required ? ' *' : '' ) ) );
 
 			var input;
-			if ( 'select' === field.kind ) {
+			if ( 'textarea' === field.kind ) {
+				input = el( 'textarea' );
+				input.rows = 3;
+			} else if ( 'select' === field.kind ) {
 				input = el( 'select' );
 				input.appendChild( el( 'option', null, '—' ) );
 				input.firstChild.value = '';
@@ -3373,11 +3378,12 @@ document.addEventListener( 'click', function ( e ) {
 				} );
 			} else {
 				input = el( 'input' );
-				input.type = 'text';
+				input.type = 'number' === field.kind ? 'number' : 'text';
 			}
 
 			input.setAttribute( 'data-vh-move-field', field.id );
-			input.required = true;
+			if ( required ) { input.setAttribute( 'data-vh-move-required', '' ); }
+			input.required = required;
 			row.appendChild( input );
 			holder.appendChild( row );
 		} );
@@ -3458,8 +3464,8 @@ document.addEventListener( 'click', function ( e ) {
 
 		dlg.querySelectorAll( '[data-vh-move-field]' ).forEach( function ( input ) {
 			var value = ( input.value || '' ).trim();
-			if ( ! value && ! missing ) { missing = input; }
-			fields[ input.getAttribute( 'data-vh-move-field' ) ] = value;
+			if ( ! value && ! missing && input.hasAttribute( 'data-vh-move-required' ) ) { missing = input; }
+			if ( value ) { fields[ input.getAttribute( 'data-vh-move-field' ) ] = value; }
 		} );
 
 		if ( missing ) {

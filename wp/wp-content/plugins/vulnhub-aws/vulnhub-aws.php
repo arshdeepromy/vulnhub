@@ -188,3 +188,17 @@ require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-account-names.php';
 VulnHub_AWS_Account_Names::init();
 require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-network-page.php';
 VulnHub_AWS_Network_Page::init();
+
+/**
+ * AWS cost: a read-only snapshot of spend and usage (Cost Explorer,
+ * CloudWatch, the price list), the suggestions worked out from it, and the
+ * two pages that show them. Refreshed on demand -- Cost Explorer bills per
+ * request -- through the cron runner.
+ */
+require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-cost-store.php';
+require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-cost-collector.php';
+add_action( 'init', array( 'VulnHub_AWS_Cost_Store', 'install' ), 5 );
+VulnHub_AWS_Cost_Collector::init();
+require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-cost-recs.php';
+require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-cost-pages.php';
+VulnHub_AWS_Cost_Pages::init();

@@ -908,6 +908,7 @@ final class VulnHub_Dash_App {
 			'asset_type'  => self::q( 'asset_type' ),
 			'team_id'     => self::q( 'team_id' ),
 			'department'  => self::q( 'department' ),
+			'owner'       => vh_owner_filter( self::q( 'owner' ) ),
 			'location_id' => self::q( 'location_id' ),
 			'hosting'     => self::q( 'hosting' ),
 			'has_ticket'  => $vh_ticketed,
@@ -925,6 +926,7 @@ final class VulnHub_Dash_App {
 			'asset_type'  => $carry['asset_type'],
 			'team_id'     => self::qi( 'team_id' ),
 			'department'  => $carry['department'],
+			'owner'       => $carry['owner'],
 			'location_id' => $carry['location_id'],
 			'hosting'     => $carry['hosting'],
 			'has_ticket'  => $vh_ticketed,
@@ -1136,7 +1138,7 @@ final class VulnHub_Dash_App {
 				 * same rule the other list screens follow (docs/FILTERS.md).
 				 */
 				self::hidden_filters(
-					array( 'state', 'search', 'asset_type', 'team_id', 'department', 'location_id', 'hosting', 'ticketed', 'life', 'age', 'overdue' )
+					array( 'state', 'search', 'asset_type', 'team_id', 'department', 'owner', 'location_id', 'hosting', 'ticketed', 'life', 'age', 'overdue' )
 				);
 				?>
 				<input type="hidden" name="vuln" value="<?php echo esc_attr( (string) $vuln_id ); ?>">
@@ -1182,6 +1184,11 @@ final class VulnHub_Dash_App {
 						</select>
 					</label>
 				<?php endif; ?>
+				<label><?php esc_html_e( 'Owner', 'vulnhub' ); ?>
+					<select name="owner">
+						<?php echo vh_owner_filter_options_html( self::q( 'owner' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside. ?>
+					</select>
+				</label>
 				<label><?php esc_html_e( 'Site', 'vulnhub' ); ?>
 					<select name="location_id">
 						<option value=""><?php esc_html_e( 'All sites', 'vulnhub' ); ?></option>
@@ -1418,7 +1425,7 @@ final class VulnHub_Dash_App {
 		 */
 		$vh_tab       = in_array( self::q( 'tab' ), array( 'products', 'vuln_assets' ), true ) ? self::q( 'tab' ) : 'findings';
 		$vh_tab_carry = self::current_filters( array(
-			'search', 'patch_available', 'ticketed', 'os_eol', 'support', 'severity', 'asset_type', 'team_id', 'department',
+			'search', 'patch_available', 'ticketed', 'os_eol', 'support', 'severity', 'asset_type', 'team_id', 'department', 'owner',
 			'age', 'overdue', 'life', 'product', 'pkind', 'zone', 'platform', 'sev_not', 'route',
 			'delivery', 'poc', 'expo', 'hosting', 'asset', 'state', 'orderby', 'order', 'location_id',
 			'fix', 'comp', 'excepted',
@@ -1716,7 +1723,7 @@ final class VulnHub_Dash_App {
 			 * servers threw the libcurl part away.
 			 */
 			self::hidden_filters(
-				array( 'search', 'fix', 'comp', 'excepted', 'patch_available', 'ticketed', 'os_eol', 'support', 'severity', 'asset_type', 'team_id', 'department', 'age', 'overdue', 'life' )
+				array( 'search', 'fix', 'comp', 'excepted', 'patch_available', 'ticketed', 'os_eol', 'support', 'severity', 'asset_type', 'team_id', 'department', 'owner', 'age', 'overdue', 'life' )
 			);
 			?>
 			<label><?php esc_html_e( 'Search', 'vulnhub' ); ?>
@@ -1811,6 +1818,11 @@ final class VulnHub_Dash_App {
 					</select>
 				</label>
 			<?php endif; ?>
+			<label><?php esc_html_e( 'Owner', 'vulnhub' ); ?>
+				<select name="owner">
+					<?php echo vh_owner_filter_options_html( self::q( 'owner' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside. ?>
+				</select>
+			</label>
 			<label><?php esc_html_e( 'Age', 'vulnhub' ); ?>
 				<select name="age">
 					<option value=""><?php esc_html_e( 'Any age', 'vulnhub' ); ?></option>
@@ -1853,7 +1865,7 @@ final class VulnHub_Dash_App {
 				<?php
 				$vh_pmax = max( 1, (int) $vh_prows[0]['assets'] );
 				$vh_pcar = self::current_filters( array(
-					'search', 'patch_available', 'ticketed', 'os_eol', 'severity', 'asset_type', 'team_id', 'department',
+					'search', 'patch_available', 'ticketed', 'os_eol', 'severity', 'asset_type', 'team_id', 'department', 'owner',
 					'age', 'overdue', 'life', 'zone', 'platform', 'sev_not', 'route', 'delivery',
 					'poc', 'expo', 'hosting', 'asset', 'state', 'fix', 'comp', 'excepted',
 				) );
@@ -2146,6 +2158,7 @@ final class VulnHub_Dash_App {
 			'asset_type'       => self::q( 'asset_type' ),
 			'team_id'          => self::qi( 'team_id' ),
 			'needs_user'       => self::q( 'needs_user' ),
+			'owner'            => vh_owner_filter( self::q( 'owner' ) ),
 			'coverage'         => $vh_merged['coverage'],
 			'agent'            => $vh_merged['agent'],
 			'agent_dark'       => $vh_merged['agent_dark'],
@@ -2794,6 +2807,7 @@ final class VulnHub_Dash_App {
 			'team_id'    => self::qi( 'team_id' ),
 			'asset_id'   => self::qi( 'asset' ),
 			'department' => self::q( 'department' ),
+			'owner'      => vh_owner_filter( self::q( 'owner' ) ),
 			'hosting'    => self::q( 'hosting' ),
 			'search'     => self::q( 'search' ),
 			'overdue'    => self::q( 'overdue' ),
@@ -3845,7 +3859,7 @@ final class VulnHub_Dash_App {
 						printf(
 							/* translators: 1: assets with a named owner, 2: user-bound assets still missing one. */
 							esc_html__( '%1$s have a named owner; %2$s still need one.', 'vulnhub' ),
-							'<strong>' . esc_html( number_format_i18n( (int) $vh_own['assets_owned'] ) ) . '</strong>',
+							'<a href="' . esc_url( self::page_url( 'assets', array( 'owner' => 'has' ) ) ) . '"><strong>' . esc_html( number_format_i18n( (int) $vh_own['assets_owned'] ) ) . '</strong></a>',
 							'<a href="' . esc_url( self::page_url( 'assets', array( 'needs_user' => '1' ) ) ) . '">' . esc_html( number_format_i18n( (int) $vh_own['users_missing'] ) ) . '</a>'
 						);
 						?>
@@ -4003,7 +4017,7 @@ final class VulnHub_Dash_App {
 				 * comparison screen, and must survive Apply -- which is exactly
 				 * what being left out of this list does for them.
 				 */
-				array( 'search', 'asset_type', 'team_id', 'coverage', 'agent', 'agent_dark', 'dropped', 'defender', 'known', 'life', 'needs_user', 'location_id', 'hosting', 'aws' )
+				array( 'search', 'asset_type', 'team_id', 'coverage', 'agent', 'agent_dark', 'dropped', 'defender', 'known', 'life', 'owner', 'location_id', 'hosting', 'aws' )
 			);
 			?>
 			<label><?php esc_html_e( 'Search', 'vulnhub' ); ?>
@@ -4169,9 +4183,11 @@ final class VulnHub_Dash_App {
 					<?php endforeach; ?>
 				</select>
 			</label>
-			<label class="vh-check">
-				<input type="checkbox" name="needs_user" value="1" <?php checked( self::q( 'needs_user' ), '1' ); ?>>
-				<?php esc_html_e( 'Missing a user', 'vulnhub' ); ?>
+			<label>
+				<span><?php esc_html_e( 'Owner', 'vulnhub' ); ?></span>
+				<select name="owner">
+					<?php echo vh_owner_filter_options_html( self::q( 'owner' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside. ?>
+				</select>
 			</label>
 			<button class="vh-btn"><?php esc_html_e( 'Apply', 'vulnhub' ); ?></button>
 			<a class="vh-btn vh-btn--ghost" href="<?php echo esc_url( self::page_url( 'assets' ) ); ?>"><?php esc_html_e( 'Reset', 'vulnhub' ); ?></a>
@@ -4250,6 +4266,13 @@ final class VulnHub_Dash_App {
 		} elseif ( '' !== $vh_missing ) {
 			/* translators: %s: one or more source systems. */
 			$vh_chips['missing'] = sprintf( __( 'Not in %s', 'vulnhub' ), $vh_missing );
+		}
+
+		// "Missing a user" arrives from the owner summary and older links:
+		// user-bound devices (workstations, mobiles) with no named owner. It
+		// has no control of its own since Owner became a dropdown.
+		if ( '1' === self::q( 'needs_user' ) ) {
+			$vh_chips['needs_user'] = __( 'User devices missing a user', 'vulnhub' );
 		}
 
 		$vh_loc = self::qi( 'location_id' );

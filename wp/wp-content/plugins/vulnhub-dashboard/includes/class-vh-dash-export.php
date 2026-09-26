@@ -1006,6 +1006,7 @@ final class VulnHub_Dash_Export {
 				// EC2 scope (vulnhub-aws): the export holds what the screen does.
 				'aws'                 => $merged['aws'],
 				'needs_user'          => self::get( 'needs_user' ),
+				'owner'               => vh_owner_filter( self::get( 'owner' ) ),
 				'primary_source'      => self::get( 'primary_source' ),
 				'operating_system'    => self::get( 'operating_system' ),
 				'patch_group'         => self::get( 'patch_group' ),
@@ -1073,6 +1074,7 @@ final class VulnHub_Dash_Export {
 				'asset_type'      => self::get( 'asset_type' ),
 				'team_id'         => self::get_int( 'team_id' ),
 				'department'      => self::get( 'department' ),
+				'owner'           => vh_owner_filter( self::get( 'owner' ) ),
 				'hosting'         => self::get( 'hosting' ),
 				'location_id'     => self::get( 'location_id' ),
 				'search'          => self::get( 'search' ),
@@ -1406,6 +1408,7 @@ final class VulnHub_Dash_Export {
 				'asset_type'      => self::get( 'asset_type' ),
 				'team_id'         => self::get_int( 'team_id' ),
 				'department'      => self::get( 'department' ),
+				'owner'           => vh_owner_filter( self::get( 'owner' ) ),
 				'hosting'         => self::get( 'hosting' ),
 				'location_id'     => self::get( 'location_id' ),
 				'search'          => self::get( 'search' ),

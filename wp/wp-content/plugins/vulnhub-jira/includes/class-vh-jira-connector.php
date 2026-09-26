@@ -1307,12 +1307,17 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 	 * current status and on what the connecting account is permitted to do, so
 	 * this is always asked live rather than guessed from a status name.
 	 *
-	 * Each transition carries the fields its screen makes **required**.
-	 * Optional ones are dropped: a form that asks for everything a Jira screen
-	 * could hold is a worse version of Jira. Anything required that cannot be
-	 * rendered honestly -- a cascading select, an array of components -- is
-	 * reported in `unsupported`, and the caller refuses the move and sends the
-	 * person to Jira rather than posting a guess.
+	 * Each transition carries the fields on its screen that can be filled in
+	 * honestly -- text, multi-line text, a single-choice select -- each marked
+	 * `required` as Jira reports it. Optional ones are offered too, because
+	 * Jira's own flag is not the whole truth: a workflow *validator* can demand
+	 * a field the screen calls optional (resolution notes and a cause on a
+	 * service-desk resolve are the common case), and the only way to satisfy
+	 * one from here is to have the field on the form. Anything *required* that
+	 * cannot be rendered honestly -- a cascading select, an array of
+	 * components -- is reported in `unsupported`, and the caller refuses the
+	 * move and sends the person to Jira rather than posting a guess; an
+	 * optional one is simply left off.
 	 *
 	 * @return array{ok:bool,message:string,transitions:array<int,array<string,mixed>>}
 	 */
@@ -1356,23 +1361,26 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 			$unsupported = array();
 
 			foreach ( (array) ( $raw['fields'] ?? array() ) as $id => $field ) {
-				if ( empty( $field['required'] ) ) {
-					continue;
-				}
 				// Jira fills these itself on a transition; asking is noise.
 				if ( in_array( (string) $id, array( 'summary', 'issuetype', 'project', 'reporter' ), true ) ) {
 					continue;
 				}
 
-				$shape = $this->transition_field( (string) $id, (array) $field );
+				$required = ! empty( $field['required'] );
+				$shape    = $this->transition_field( (string) $id, (array) $field );
 
 				if ( null === $shape ) {
-					$unsupported[] = (string) ( $field['name'] ?? $id );
+					if ( $required ) {
+						$unsupported[] = (string) ( $field['name'] ?? $id );
+					}
 					continue;
 				}
 
-				$fields[] = $shape;
+				$fields[] = $shape + array( 'required' => $required );
 			}
+
+			// Required first, in Jira's own order within each group.
+			usort( $fields, static fn( $a, $b ) => (int) $b['required'] <=> (int) $a['required'] );
 
 			$out[] = array(
 				'id'           => (string) $raw['id'],
@@ -1429,8 +1437,14 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 			return array( 'id' => $id, 'name' => $name, 'kind' => 'select', 'options' => $options );
 		}
 
+		// A multi-line text field takes a document (ADF) on the v3 API, not a
+		// plain string -- sending a string is refused.
+		if ( 'string' === $type && str_ends_with( (string) ( $field['schema']['custom'] ?? '' ), ':textarea' ) ) {
+			return array( 'id' => $id, 'name' => $name, 'kind' => 'textarea' );
+		}
+
 		if ( in_array( $type, array( 'string', 'number' ), true ) && '' === $items ) {
-			return array( 'id' => $id, 'name' => $name, 'kind' => 'string' );
+			return array( 'id' => $id, 'name' => $name, 'kind' => 'number' === $type ? 'number' : 'string' );
 		}
 
 		return null;
@@ -1502,6 +1516,10 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 		foreach ( (array) $chosen['fields'] as $field ) {
 			$value = trim( (string) ( $values[ (string) $field['id'] ] ?? '' ) );
 
+			if ( '' === $value && empty( $field['required'] ) ) {
+				continue; // Optional and left blank: not sent, so Jira keeps what it has.
+			}
+
 			if ( '' === $value ) {
 				return array(
 					'ok'      => false,
@@ -1526,6 +1544,20 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 				}
 
 				$fields[ (string) $field['id'] ] = array( 'id' => $value );
+				continue;
+			}
+
+			if ( 'textarea' === (string) $field['kind'] ) {
+				$fields[ (string) $field['id'] ] = VulnHub_Jira_Adf::from_editable( $value );
+				continue;
+			}
+
+			if ( 'number' === (string) $field['kind'] ) {
+				if ( ! is_numeric( $value ) ) {
+					/* translators: %s: field name. */
+					return array( 'ok' => false, 'message' => sprintf( __( '%s must be a number.', 'vulnhub' ), (string) $field['name'] ) );
+				}
+				$fields[ (string) $field['id'] ] = 0 + $value;
 				continue;
 			}
 

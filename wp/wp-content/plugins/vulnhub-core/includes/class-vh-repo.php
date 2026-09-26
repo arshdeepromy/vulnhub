@@ -947,7 +947,24 @@ final class Repo {
 			$row['software_json'] = (string) wp_json_encode( $data['software'] );
 		}
 		if ( isset( $data['raw'] ) ) {
-			$row['raw_json'] = (string) wp_json_encode( $data['raw'] );
+			/*
+			 * Merged by feed, never replaced. Every feed files its raw record
+			 * under its own key (tenable, plerion, intune, cmdb, cloud), and
+			 * whichever wrote last used to overwrite the whole column: a
+			 * posture sync after a Tenable sync erased the Tenable block, and
+			 * with it the agent evidence, so 62 machines with a live agent read
+			 * "Agent required". A feed now replaces only its own keys.
+			 */
+			$raw = is_array( $data['raw'] ) ? $data['raw'] : array();
+
+			if ( $existing ) {
+				$old = json_decode( (string) $wpdb->get_var( $wpdb->prepare( "SELECT raw_json FROM {$table} WHERE id = %d", (int) $existing['id'] ) ), true ); // phpcs:ignore WordPress.DB.PreparedSQL
+				if ( is_array( $old ) ) {
+					$raw = array_merge( $old, $raw );
+				}
+			}
+
+			$row['raw_json'] = (string) wp_json_encode( $raw );
 		}
 
 		/*
@@ -2460,6 +2477,13 @@ final class Repo {
 		}
 		if ( ! empty( $args['unowned'] ) ) {
 			$where[] = 'owner_person_id = 0 AND team_id = 0';
+		}
+		// The Owner filter: a named owner (a person) or not.
+		$owner_filter = vh_owner_filter( $args['owner'] ?? '' );
+		if ( 'has' === $owner_filter ) {
+			$where[] = 'owner_person_id > 0';
+		} elseif ( 'none' === $owner_filter ) {
+			$where[] = 'owner_person_id = 0';
 		}
 		if ( ! empty( $args['needs_user'] ) ) {
 			$types   = "'" . implode( "','", array_map( 'esc_sql', vh_user_bound_asset_types() ) ) . "'";
@@ -4122,6 +4146,12 @@ final class Repo {
 			$where[]  = 'a.owner_person_id = %d';
 			$params[] = (int) $args['owner_person_id'];
 			$need_a   = true;
+		}
+		// The Owner filter, on the finding's asset.
+		$owner_filter = vh_owner_filter( $args['owner'] ?? '' );
+		if ( '' !== $owner_filter ) {
+			$where[] = 'has' === $owner_filter ? 'a.owner_person_id > 0' : 'a.owner_person_id = 0';
+			$need_a  = true;
 		}
 		if ( ! empty( $args['asset_type'] ) ) {
 			$where[]  = 'a.asset_type = %s';

@@ -7,7 +7,18 @@
 	var meta    = document.querySelector( '[data-vh-net-meta]' );
 	if ( ! acctSel || ! map ) { return; }
 	if ( ! CFG.accounts.length ) { map.innerHTML = '<div class="vh-panel"><p>No network data yet. Run the AWS integration sync, then reload.</p></div>'; return; }
-	CFG.accounts.forEach( function ( a ) { var o = document.createElement( 'option' ); o.value = a; o.textContent = a; acctSel.appendChild( o ); } );
+	var NAMES   = CFG.names || {};
+	var acctId  = document.querySelector( '[data-vh-net-account-id]' );
+	function acctName( a ) { return NAMES[ a ] || ''; }
+	// Named accounts first, alphabetically; unnamed ones after, by number.
+	CFG.accounts = CFG.accounts.slice().sort( function ( x, y ) {
+		var nx = acctName( x ), ny = acctName( y );
+		if ( nx && ny ) { return nx.localeCompare( ny ); }
+		if ( nx || ny ) { return nx ? -1 : 1; }
+		return x.localeCompare( y );
+	} );
+	CFG.accounts.forEach( function ( a ) { var o = document.createElement( 'option' ); o.value = a; o.textContent = acctName( a ) || a; o.title = a; acctSel.appendChild( o ); } );
+	function showAcctId() { if ( acctId ) { acctId.textContent = acctName( acctSel.value ) ? acctSel.value : ''; } }
 
 	var GRAPH = null;
 
@@ -481,8 +492,9 @@
 		Object.keys( v || {} ).forEach( function ( id ) { var o = document.createElement( 'option' ); o.value = id; o.textContent = ( v[ id ] && v[ id ] !== id ? v[ id ] + ' ' : '' ) + '(' + id + ')'; vpcSel.appendChild( o ); } );
 	}
 
-	acctSel.addEventListener( 'change', function () { vpcSel.innerHTML = '<option value="">All VPCs</option>'; fetchGraph(); } );
+	acctSel.addEventListener( 'change', function () { showAcctId(); vpcSel.innerHTML = '<option value="">All VPCs</option>'; fetchGraph(); } );
 	vpcSel.addEventListener( 'change', fetchGraph );
 	acctSel.value = CFG.accounts[0];
+	showAcctId();
 	fetchGraph();
 }() );

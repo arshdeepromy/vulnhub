@@ -769,17 +769,23 @@ both write to somebody else's ticket.
   on what the connecting account may do. `GET /vulnhub/v1/tickets/{id}/transitions`
   (filter `vulnhub_ticket_transitions`) asks Jira on open, so nothing is
   guessed from a status name — and the round trip stays off the page load.
-- **Required fields are built from Jira's own answer.** The read expands
-  `transitions.fields`, keeps only what that screen makes `required`, and drops
-  the ones Jira fills itself (`summary`, `issuetype`, `project`, `reporter`).
+- **Fields are built from Jira's own answer.** The read expands
+  `transitions.fields` and keeps every field the transition screen shows that
+  can be rendered honestly, required ones first (marked `*`), dropping the ones
+  Jira fills itself (`summary`, `issuetype`, `project`, `reporter`). Optional
+  fields are shown too because a workflow *validator* can demand a field the
+  screen calls optional (e.g. resolution notes and a cause on Resolve) — Jira
+  only says so with a 400 after the POST. Blank optional fields are not sent.
+  Kinds: select (`allowedValues`, sent as `{id}`), text, number, and textarea
+  (custom `…:textarea`, sent as an ADF document via `VulnHub_Jira_Adf`).
   A field with `allowedValues` becomes a select of exactly those values — this
   is how a Close screen that demands a resolution gets the real resolution
   list rather than a guess.
-- **What cannot be rendered honestly is refused, not hidden.** A cascading
-  select, or an array-valued field like components, lands in `unsupported`:
+- **What cannot be rendered honestly is refused, not hidden.** A *required*
+  cascading select, or an array-valued field like components, lands in `unsupported`:
   the transition is still offered, then declined with the reason and a pointer
   to Jira. Hiding it would read as "Jira will not allow this move", which is a
-  different and untrue message.
+  different and untrue message. An optional unrenderable field is skipped.
 - **The browser is not trusted.** `apply_transition()` re-reads the offered set
   before writing: it is the only way to know the transition is still valid and
   how to shape each value, and a workflow can move under a form that has been
@@ -857,7 +863,7 @@ of its own (`VulnHub_Dash_Ticket_Signals`). Four signals, open tickets only:
 | Signal | When | Shown as |
 |---|---|---|
 | **Mentioned you** | a comment @mentions your Jira account, or writes your name, and you have not commented since | violet `@ Mentioned you` tag, violet row edge, bell |
-| **Your reply** | the newest comment that is a person talking is somebody else's, on a ticket you raised, are assigned, have commented on or were mentioned on | amber tag, amber edge, bell |
+| **Your reply** | somebody @mentioned you or wrote your name in a comment since you last commented; your next comment clears it. The newest comment merely being someone else's (routing notes, status updates) does not count | amber tag, amber edge, bell |
 | **Assigned to you** | the Jira assignee is your account | `Yours` tag, accent edge, bell |
 | **Chase** | past its due date (end of the day, site time) *after* an updated list was sent | the row glows red, with `N days over` and `list sent …` |
 
@@ -1012,6 +1018,19 @@ outstanding on that ticket: its open findings count as done in
 rather than folding them into "fixed"), they show under a *Set aside* tab
 instead of Open, and they leave the updated list. The denominators do not
 change. Fixed findings on a set-aside asset stay Fixed.
+
+**What set aside means for verification.** The Tenable verifier
+(`check_ticket()`) skips findings on set-aside assets: they are not judged,
+not stamped, and never reopened, so a machine taken off the ticket cannot
+hold its close at *Still detected*. The verdict is taken over what is left,
+and the headline says how many were not counted; a ticket whose every asset
+is set aside verifies as confirmed. Setting assets aside (or taking them
+back) fires `vulnhub_ticket_aside_changed( $ticket_id, $reason, $asset_ids )`;
+the Tenable ticket check answers it by queueing a check of that ticket with
+no scan (trigger `aside`), so the Verification column updates within a
+minute or two. Checked on a resolved ticket with 2 of its assets out of
+scope: *Still detected* became *Verified fixed* ("all 7 findings are
+confirmed remediated ... 4 findings on assets set aside are not counted").
 
 **Checked** on a 1,318-finding ticket, inside a rolled-back transaction:
 two assets set aside moved findings done 651 -> 655 (4 set aside) and assets

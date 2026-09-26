@@ -242,6 +242,7 @@ final class VH_EOS_View {
 			'eol'       => self::one_of( self::q( 'eol' ), array_keys( self::eol_filters() ) ),
 			'search'    => self::q( 'search' ),
 			'team'      => $team,
+			'owner'     => vh_owner_filter( self::q( 'owner' ) ),
 			'site'      => $site,
 			'life'      => self::q( 'life' ),
 		);
@@ -277,6 +278,7 @@ final class VH_EOS_View {
 			'eol_status'  => $f['eol'],
 			'search'      => $f['search'],
 			'team_id'     => (int) $f['team'],
+			'owner'       => $f['owner'],
 			// The repository names this one after the column it filters.
 			'location_id' => (int) $f['site'],
 			'life'        => $f['life'],
@@ -778,7 +780,7 @@ final class VH_EOS_View {
 		<form class="vh-filters" method="get">
 			<?php
 			self::hidden_filters(
-				array( 'coverage', 'state', 'timeframe', 'tier', 'rag', 'project', 'search', 'team', 'team_id', 'site', 'location_id', 'life' )
+				array( 'coverage', 'state', 'timeframe', 'tier', 'rag', 'project', 'search', 'team', 'team_id', 'owner', 'site', 'location_id', 'life' )
 			);
 			?>
 			<label><?php esc_html_e( 'Search', 'vulnhub' ); ?>
@@ -854,6 +856,12 @@ final class VH_EOS_View {
 							<?php echo esc_html( (string) $vh_t['name'] ); ?>
 						</option>
 					<?php endforeach; ?>
+				</select>
+			</label>
+
+			<label><?php esc_html_e( 'Owner', 'vulnhub' ); ?>
+				<select name="owner">
+					<?php echo vh_owner_filter_options_html( (string) $f['owner'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside. ?>
 				</select>
 			</label>
 
