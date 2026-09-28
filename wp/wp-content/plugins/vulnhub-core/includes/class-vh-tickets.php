@@ -531,6 +531,72 @@ final class Tickets {
 	}
 
 	/**
+	 * A ticket that was closed has been reopened.
+	 *
+	 * The mirror of `mark_closed()`, and it was missing: a verdict outlived
+	 * the closure that justified it. A ticket verified "still detected" while
+	 * it was closed, then reopened and worked on, went on being counted under
+	 * *Closed but still detected* -- a tile whose entire meaning is "closed"
+	 * -- and the only way out was closing it again.
+	 *
+	 * The verdict is dropped rather than recomputed. A ticket that is open
+	 * again is not awaiting verification and has not failed one; it is simply
+	 * being worked, which is what `not_required` means everywhere else. The
+	 * closure stamp goes with it, because `remote_closed_at` means "closed
+	 * since", not "was closed once" -- the audit trail keeps the history.
+	 */
+	public static function mark_reopened( int $ticket_id ): void {
+		global $wpdb;
+
+		$ticket = self::get( $ticket_id );
+
+		if ( ! $ticket ) {
+			return;
+		}
+
+		$was = (string) $ticket['verification_state'];
+
+		$wpdb->update(
+			vh_table( 'tickets' ),
+			array(
+				'verification_state' => self::VERIFY_NOT_REQUIRED,
+				'verification_note'  => '',
+				'verified_at'        => null,
+				'remote_closed_at'   => null,
+				'updated_at'         => vh_now(),
+			),
+			array( 'id' => $ticket_id )
+		);
+
+		// The findings mark_closed() parked for verification come back too.
+		$wpdb->query(
+			$wpdb->prepare(
+				'UPDATE ' . vh_table( 'findings' ) . " f
+				 INNER JOIN " . vh_table( 'ticket_findings' ) . ' tf ON tf.finding_id = f.id
+				 SET f.verification_state = %s, f.updated_at = %s
+				 WHERE tf.ticket_id = %d',
+				'',
+				vh_now(),
+				$ticket_id
+			)
+		);
+
+		vulnhub()->logger->audit(
+			'ticket.reopened',
+			sprintf(
+				/* translators: 1: ticket key, 2: the verdict that was dropped. */
+				__( 'Ticket %1$s was reopened; its closure verdict (%2$s) no longer applies.', 'vulnhub' ),
+				$ticket['external_key'] ?? (string) $ticket_id,
+				self::verification_labels()[ $was ] ?? $was
+			),
+			'ticket',
+			$ticket_id,
+			array( 'was' => $was ),
+			'info'
+		);
+	}
+
+	/**
 	 * Record the outcome of a verification pass.
 	 *
 	 * @param array<string,mixed> $detail Extra context for the audit log.

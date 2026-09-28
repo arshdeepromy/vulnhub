@@ -1112,6 +1112,20 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 			);
 		}
 
+		if ( ! $is_done && $was_done ) {
+			// Reopened. Drop the closure verdict with the closure -- see
+			// Tickets::mark_reopened().
+			\VulnHub\Core\Tickets::mark_reopened( (int) $row['id'] );
+
+			$this->log(
+				sprintf(
+					'%s reopened in Jira as "%s" — closure verdict dropped.',
+					$normalised['external_key'],
+					$normalised['status']
+				)
+			);
+		}
+
 		if ( $is_done && ! $was_done ) {
 			++$this->counts['closed'];
 
@@ -2038,6 +2052,10 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 
 		if ( 'done' === $normalised['status_category'] && ! $was_done ) {
 			\VulnHub\Core\Tickets::mark_closed( (int) $ticket['id'], $normalised['resolution'] );
+		} elseif ( 'done' !== $normalised['status_category'] && $was_done ) {
+			// The same inverse as the poll: Verify is the other way a
+			// reopening reaches us, and it has to agree with the poll.
+			\VulnHub\Core\Tickets::mark_reopened( (int) $ticket['id'] );
 		}
 
 		$said = '';
