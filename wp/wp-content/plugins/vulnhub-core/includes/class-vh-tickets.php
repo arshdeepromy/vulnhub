@@ -63,6 +63,23 @@ final class Tickets {
 					'resolved' => 'tenable_agent',
 					'scope'    => true,
 				),
+				/*
+				 * Installed, and stopped talking.
+				 *
+				 * Not the same request as "get an agent onto these", and it
+				 * was being filed as one: an agent ticket is met the moment
+				 * Tenable holds an agent for the asset, and a dark agent still
+				 * counts as one -- so a ticket about twenty machines whose
+				 * agents have gone quiet opened at twenty of twenty done and
+				 * closed itself. The ask here is the check-in, so that is what
+				 * is tested.
+				 */
+				'tenable_agent_dark'     => array(
+					'label'    => __( 'Tenable agent went dark', 'vulnhub' ),
+					'help'     => __( 'The agent is installed but has stopped reporting. Met once Tenable sees it check in again.', 'vulnhub' ),
+					'resolved' => 'tenable_agent_dark',
+					'scope'    => true,
+				),
 				'defender_coverage'      => array(
 					'label'    => __( 'Defender onboarding', 'vulnhub' ),
 					'help'     => __( 'Get the Defender sensor onto these assets. Met once Defender reports the asset onboarded.', 'vulnhub' ),
@@ -125,6 +142,7 @@ final class Tickets {
 		return array(
 			'open'     => array( 'label' => __( 'Still outstanding', 'vulnhub' ), 'tone' => 'bad' ),
 			'resolved' => array( 'label' => __( 'Done', 'vulnhub' ), 'tone' => 'good' ),
+			'aside'    => array( 'label' => __( 'Set aside', 'vulnhub' ), 'tone' => 'neutral' ),
 			'retired'  => array( 'label' => __( 'No longer matters', 'vulnhub' ), 'tone' => 'neutral' ),
 			'removed'  => array( 'label' => __( 'Gone from inventory', 'vulnhub' ), 'tone' => 'neutral' ),
 		);
@@ -633,15 +651,22 @@ final class Tickets {
 	 * ask anything else of. Then out of service: a decommissioned machine is
 	 * not a Tenable gap any more, it is a machine that no longer matters --
 	 * except on a clean-up ticket, where leaving service is the whole ask.
+	 *
+	 * `$as` is the alias of a joined ticket_aside row, when the caller has
+	 * one. Set aside comes last of all the verdicts, so it only ever replaces
+	 * `open`: an asset somebody set aside and that has since been done reads
+	 * as done, because it is. Without the join the expression is exactly what
+	 * it always was.
 	 */
-	public static function outcome_sql( string $kind, string $ta = 'ta', string $a = 'a' ): string {
+	public static function outcome_sql( string $kind, string $ta = 'ta', string $a = 'a', string $as = '' ): string {
 		$in_service = "'" . implode( "','", array_map( 'esc_sql', vh_in_service_statuses() ) ) . "'";
 		$test       = (string) ( self::kinds()[ $kind ]['resolved'] ?? '' );
+		$aside      = '' !== $as ? "WHEN {$as}.asset_id IS NOT NULL THEN 'aside' " : '';
 
 		if ( 'cleanup' === $test ) {
 			return "CASE WHEN {$a}.id IS NULL THEN 'resolved'
 				WHEN {$a}.lifecycle_status NOT IN ({$in_service}) THEN 'resolved'
-				ELSE 'open' END";
+				{$aside}ELSE 'open' END";
 		}
 
 		$irrelevant = "{$a}.lifecycle_status NOT IN ({$in_service})";
@@ -663,6 +688,16 @@ final class Tickets {
 				$irrelevant .= " OR {$a}.agent_coverage_state IN ('" . esc_sql( Agent_Coverage::NOT_POSSIBLE ) . "','" . esc_sql( Agent_Coverage::OUT_OF_SCOPE ) . "')";
 				$met         = "{$a}.agent_coverage_state = '" . esc_sql( Agent_Coverage::AGENT ) . "'";
 				break;
+			/*
+			 * Met by a check-in, not by the agent's existence. An agent that
+			 * has been uninstalled since is still not reporting, so it stays
+			 * open rather than passing for done -- getting it back is the
+			 * same job by a different route.
+			 */
+			case 'tenable_agent_dark':
+				$irrelevant .= " OR {$a}.agent_coverage_state IN ('" . esc_sql( Agent_Coverage::NOT_POSSIBLE ) . "','" . esc_sql( Agent_Coverage::OUT_OF_SCOPE ) . "')";
+				$met         = "{$a}.agent_status = 'on'";
+				break;
 			case 'defender':
 				$irrelevant .= " OR {$a}.defender_coverage_state IN ('" . esc_sql( Defender_Coverage::OUT_OF_SCOPE ) . "','" . esc_sql( Defender_Coverage::OTHER_DEVICE ) . "')";
 				$met         = "{$a}.defender_coverage_state IN (" . Defender_Coverage::covered_sql() . ')';
@@ -677,7 +712,7 @@ final class Tickets {
 		return "CASE WHEN {$a}.id IS NULL THEN 'removed'
 			WHEN {$irrelevant} THEN 'retired'
 			WHEN {$met} THEN 'resolved'
-			ELSE 'open' END";
+			{$aside}ELSE 'open' END";
 	}
 
 	/**
@@ -798,6 +833,12 @@ final class Tickets {
 	 *
 	 * Only assets the ticket actually covers are touched, so a stale page or
 	 * a hand-made request cannot mark a machine on a ticket it is not on.
+	 * "Covers" means either way a ticket can hold an asset: through the
+	 * findings it raised (a vulnerability ticket) or through its own asset
+	 * list (a coverage, CMDB, Intune or clean-up ticket). Asking only the
+	 * findings, as this used to, meant a scope ticket could never set
+	 * anything aside -- there were no findings to match, so every request
+	 * changed nothing and said so.
 	 *
 	 * @param int[] $asset_ids Assets.
 	 * @return int Assets changed.
@@ -811,7 +852,18 @@ final class Tickets {
 		}
 
 		$in      = implode( ',', $ids );
-		$covered = array_map( 'intval', (array) $wpdb->get_col( $wpdb->prepare( 'SELECT DISTINCT f.asset_id FROM ' . vh_table( 'ticket_findings' ) . ' tf INNER JOIN ' . vh_table( 'findings' ) . " f ON f.id = tf.finding_id WHERE tf.ticket_id = %d AND f.asset_id IN ({$in})", $ticket_id ) ) ); // phpcs:ignore WordPress.DB -- ints only.
+		$covered = array_map(
+			'intval',
+			(array) $wpdb->get_col(
+				$wpdb->prepare(
+					'SELECT DISTINCT f.asset_id FROM ' . vh_table( 'ticket_findings' ) . ' tf INNER JOIN ' . vh_table( 'findings' ) . " f ON f.id = tf.finding_id WHERE tf.ticket_id = %d AND f.asset_id IN ({$in})
+					 UNION
+					 SELECT DISTINCT ta.asset_id FROM " . vh_table( 'ticket_assets' ) . " ta WHERE ta.ticket_id = %d AND ta.asset_id IN ({$in})",
+					$ticket_id,
+					$ticket_id
+				)
+			)
+		); // phpcs:ignore WordPress.DB -- ints only.
 		if ( ! $covered ) {
 			return 0;
 		}
@@ -857,6 +909,17 @@ final class Tickets {
 		}
 
 		if ( $n > 0 ) {
+			/*
+			 * A scope ticket is judged from asset rows this portal already
+			 * holds -- no scanner, no Jira -- so its verdict is redone here
+			 * and now rather than queued. Queuing it was the bug: a ticket
+			 * whose last outstanding assets had just been set aside went on
+			 * reading "Awaiting verification" until a background job that
+			 * may be minutes or hours behind got to it, which is exactly the
+			 * moment somebody is looking at the screen.
+			 */
+			self::verify_scope( $ticket_id );
+
 			/**
 			 * Assets were set aside on a ticket, or taken back. What the
 			 * ticket's verification said may no longer hold; a scanner
@@ -890,13 +953,14 @@ final class Tickets {
 		global $wpdb;
 
 		$out = array_fill_keys( array_keys( self::outcomes() ), 0 );
-		$sql = self::outcome_sql( (string) $ticket['kind'] );
+		$sql = self::outcome_sql( (string) $ticket['kind'], 'ta', 'a', 'tas' );
 
 		$rows = (array) $wpdb->get_results(
 			$wpdb->prepare(
 				"SELECT {$sql} AS outcome, COUNT(*) AS n
 				 FROM " . vh_table( 'ticket_assets' ) . ' ta
 				 LEFT JOIN ' . vh_table( 'assets' ) . ' a ON a.id = ta.asset_id
+				 LEFT JOIN ' . vh_table( 'ticket_aside' ) . ' tas ON tas.ticket_id = ta.ticket_id AND tas.asset_id = ta.asset_id
 				 WHERE ta.ticket_id = %d
 				 GROUP BY outcome', // phpcs:ignore WordPress.DB.PreparedSQL
 				(int) $ticket['id']
@@ -914,24 +978,171 @@ final class Tickets {
 	}
 
 	/**
-	 * A page of a ticket's assets: the snapshot beside the asset as it is now.
+	 * The FROM and WHERE every read of a ticket's assets shares, so the page,
+	 * its "select all matching" and its counts cannot disagree about which
+	 * assets a filter means.
 	 *
-	 * @param array<string,mixed> $args outcome, limit, offset.
-	 * @return array{rows:array<int,array<string,mixed>>,total:int}
+	 * LOCATE, not LIKE: a literal % in the string would be read as a wpdb
+	 * placeholder.
+	 *
+	 * @param array<string,mixed> $args outcome, search.
+	 * @return array{0:string,1:string,2:array<int,mixed>} Outcome SQL, from+where, params.
 	 */
-	public static function assets_for( array $ticket, array $args = array() ): array {
-		global $wpdb;
+	private static function assets_query( array $ticket, array $args ): array {
+		$sql = self::outcome_sql( (string) $ticket['kind'], 'ta', 'a', 'tas' );
 
-		$sql    = self::outcome_sql( (string) $ticket['kind'] );
-		$from   = ' FROM ' . vh_table( 'ticket_assets' ) . ' ta LEFT JOIN ' . vh_table( 'assets' ) . ' a ON a.id = ta.asset_id WHERE ta.ticket_id = %d';
-		$params = array( (int) $ticket['id'] );
+		$from = ' FROM ' . vh_table( 'ticket_assets' ) . ' ta'
+			. ' LEFT JOIN ' . vh_table( 'assets' ) . ' a ON a.id = ta.asset_id'
+			. ' LEFT JOIN ' . vh_table( 'ticket_aside' ) . ' tas ON tas.ticket_id = ta.ticket_id AND tas.asset_id = ta.asset_id'
+			. ' WHERE ta.ticket_id = %d';
 
+		$params  = array( (int) $ticket['id'] );
 		$outcome = (string) ( $args['outcome'] ?? '' );
+		$search  = trim( (string) ( $args['search'] ?? '' ) );
 
 		if ( isset( self::outcomes()[ $outcome ] ) ) {
 			$from    .= " AND ({$sql}) = %s";
 			$params[] = $outcome;
 		}
+
+		if ( '' !== $search ) {
+			$from    .= ' AND ( LOCATE(%s, ta.hostname) > 0 OR LOCATE(%s, COALESCE(a.ipv4, \'\')) > 0 OR LOCATE(%s, COALESCE(ta.asset_type, \'\')) > 0 )';
+			$params[] = $search;
+			$params[] = $search;
+			$params[] = $search;
+		}
+
+		return array( $sql, $from, $params );
+	}
+
+	/**
+	 * Judge a scope ticket from its own assets, and record the verdict.
+	 *
+	 * A scope ticket covers no findings, so the closure check that reads
+	 * Tenable has nothing to read: whether the ask has been met is a question
+	 * about asset rows this portal already holds. Nothing here calls a scanner
+	 * or a ticketing system, which is why it can run inline the moment
+	 * something changes the answer.
+	 *
+	 * Until this existed, nothing ever moved a scope ticket off `pending`:
+	 * `mark_closed()` set it when the ticket closed in Jira and only the
+	 * Tenable verifier -- which skips asset tickets -- ever wrote a verdict.
+	 * So every closed coverage, CMDB, Intune or clean-up ticket sat on
+	 * "Awaiting verification" for good, however done it was.
+	 *
+	 * An open ticket gets a progress line and no verdict: a ticket nobody has
+	 * closed cannot fail a closure check.
+	 *
+	 * @return array<string,mixed>|null The summary, or null if this is not a
+	 *                                  scope ticket or it covers no assets.
+	 */
+	public static function verify_scope( int $ticket_id ): ?array {
+		$ticket = self::get( $ticket_id );
+
+		if ( ! $ticket || (int) $ticket['asset_count'] < 1 ) {
+			return null;
+		}
+
+		$counts = self::asset_outcomes( $ticket );
+		$total  = (int) $counts['total'];
+
+		if ( $total < 1 ) {
+			return null;
+		}
+
+		$key   = (string) $ticket['external_key'] ?: '#' . $ticket_id;
+		$done  = (int) $counts['resolved'];
+		$open  = (int) $counts['open'];
+		$gone  = (int) $counts['retired'] + (int) $counts['removed'];
+		$aside = (int) $counts['aside'];
+
+		$summary = array(
+			'state'    => 'progress',
+			'resolved' => 'done' === (string) $ticket['status_category'],
+			'fixed'    => $done,
+			'open'     => $open,
+			'unknown'  => 0,
+			'aside'    => $aside,
+			'headline' => sprintf(
+				/* translators: 1: done, 2: total, 3: outstanding, 4: no longer relevant, 5: set aside. */
+				__( '%1$d of %2$d assets done, %3$d still outstanding, %4$d no longer relevant, %5$d set aside.', 'vulnhub' ),
+				$done,
+				$total,
+				$open,
+				$gone,
+				$aside
+			),
+		);
+
+		if ( ! $summary['resolved'] ) {
+			self::set_last_check( $ticket_id, $summary );
+
+			return $summary;
+		}
+
+		if ( 0 === $open ) {
+			$summary['state']    = self::VERIFY_CONFIRMED;
+			$summary['headline'] = $aside > 0
+				? sprintf(
+					/* translators: 1: ticket key, 2: done, 3: total, 4: set aside. */
+					__( '%1$s verified: %2$d of %3$d assets are done and %4$d were set aside, so nothing on it is outstanding.', 'vulnhub' ),
+					$key,
+					$done,
+					$total,
+					$aside
+				)
+				: sprintf(
+					/* translators: 1: ticket key, 2: total assets. */
+					__( '%1$s verified: none of its %2$d assets is outstanding.', 'vulnhub' ),
+					$key,
+					$total
+				);
+		} else {
+			/*
+			 * Closed, but the thing it asked for has not happened on every
+			 * asset. The same verdict a finding ticket gets when the scanner
+			 * still sees the vulnerability: closed is not the same as done,
+			 * and the list says which assets.
+			 */
+			$summary['state']    = self::VERIFY_STILL_OPEN;
+			$summary['headline'] = sprintf(
+				/* translators: 1: ticket key, 2: outstanding, 3: total. */
+				__( '%1$s was closed, but %2$d of its %3$d assets still need it.', 'vulnhub' ),
+				$key,
+				$open,
+				$total
+			);
+		}
+
+		self::record_verification(
+			$ticket_id,
+			(string) $summary['state'],
+			(string) $summary['headline'],
+			array(
+				'source'   => 'assets',
+				'done'     => $done,
+				'open'     => $open,
+				'retired'  => $gone,
+				'aside'    => $aside,
+				'total'    => $total,
+			)
+		);
+
+		self::set_last_check( $ticket_id, $summary );
+
+		return $summary;
+	}
+
+	/**
+	 * A page of a ticket's assets: the snapshot beside the asset as it is now.
+	 *
+	 * @param array<string,mixed> $args outcome, search, limit, offset.
+	 * @return array{rows:array<int,array<string,mixed>>,total:int}
+	 */
+	public static function assets_for( array $ticket, array $args = array() ): array {
+		global $wpdb;
+
+		list( $sql, $from, $params ) = self::assets_query( $ticket, $args );
 
 		$total = (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*)' . $from, ...$params ) ); // phpcs:ignore WordPress.DB.PreparedSQL
 
@@ -945,8 +1156,10 @@ final class Tickets {
 					a.id AS live_id, a.coverage_state AS now_coverage, a.defender_coverage_state AS now_defender,
 					a.lifecycle_status AS now_lifecycle, a.sources_json AS now_sources,
 					a.tenable_last_scan, a.defender_last_seen, a.ipv4,
+					a.agent_coverage_state AS now_agent, a.agent_status, a.agent_last_connect,
+					tas.reason AS aside_reason, tas.note AS aside_note, tas.set_at AS aside_at,
 					{$sql} AS outcome" . $from . '
-				 ORDER BY FIELD(outcome, \'open\', \'resolved\', \'retired\', \'removed\'), ta.hostname ASC
+				 ORDER BY FIELD(outcome, \'open\', \'resolved\', \'aside\', \'retired\', \'removed\'), ta.hostname ASC
 				 LIMIT %d OFFSET %d', // phpcs:ignore WordPress.DB.PreparedSQL
 				...array_merge( $params, array( $limit, $offset ) )
 			),
@@ -956,6 +1169,29 @@ final class Tickets {
 		return array(
 			'rows'  => $rows,
 			'total' => $total,
+		);
+	}
+
+	/**
+	 * Every asset id on a ticket that a filter matches, for "select all
+	 * matching" -- the ids only, so the page does not have to load rows it
+	 * will never draw.
+	 *
+	 * @param array<string,mixed> $args outcome, search.
+	 * @return int[]
+	 */
+	public static function asset_ids_for( array $ticket, array $args = array() ): array {
+		global $wpdb;
+
+		list( , $from, $params ) = self::assets_query( $ticket, $args );
+
+		return array_values(
+			array_filter(
+				array_map(
+					'intval',
+					(array) $wpdb->get_col( $wpdb->prepare( 'SELECT ta.asset_id' . $from . ' LIMIT 5000', ...$params ) ) // phpcs:ignore WordPress.DB.PreparedSQL
+				)
+			)
 		);
 	}
 

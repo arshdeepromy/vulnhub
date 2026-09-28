@@ -533,6 +533,8 @@ final class VulnHub_Jira_Ticketer {
 		$name = sprintf( 'assets-%s-%s.csv', strtolower( $key ), gmdate( 'Y-m-d' ) );
 		$done = (int) ( $counts['resolved'] ?? 0 );
 
+		$set_aside = (int) ( $counts['aside'] ?? 0 );
+
 		$default_note = sprintf(
 			/* translators: 1: file name, 2: done, 3: total. */
 			__( 'Refreshed list attached: %1$s. %2$d of %3$d now done; the file lists every asset this ticket was raised about, with where each one stands today. Earlier attachments are out of date.', 'vulnhub' ),
@@ -540,6 +542,20 @@ final class VulnHub_Jira_Ticketer {
 			$done,
 			$total
 		);
+
+		/*
+		 * Assets set aside stay in the file -- the ticket was raised about
+		 * them and dropping them silently would read as work that vanished --
+		 * but the note says how many, so the outstanding figure in the file
+		 * and the one on the portal cannot look like a disagreement.
+		 */
+		if ( $set_aside > 0 ) {
+			$default_note .= ' ' . sprintf(
+				/* translators: %d: assets set aside. */
+				_n( '%d asset is set aside and no longer counts as outstanding here.', '%d assets are set aside and no longer count as outstanding here.', $set_aside, 'vulnhub' ),
+				$set_aside
+			);
+		}
 
 		// Preview: return what will be sent and attach nothing.
 		if ( $preview ) {

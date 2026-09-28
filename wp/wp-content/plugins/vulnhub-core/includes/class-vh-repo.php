@@ -4053,6 +4053,30 @@ final class Repo {
 	 * @param array<string,mixed> $args Filters.
 	 * @return array{rows:array<int,array<string,mixed>>,total:int}
 	 */
+	/**
+	 * How many assets sit in a given set of lifecycle statuses.
+	 *
+	 * Used to say what a narrower lifecycle filter is leaving out. A count
+	 * with no scope beside it is the thing people re-derive by hand and
+	 * disagree about; a count whose scope silently differs from the
+	 * dashboard's is worse, because both look right.
+	 *
+	 * @param string[] $statuses Lifecycle statuses.
+	 */
+	public static function assets_in_lifecycles( array $statuses ): int {
+		global $wpdb;
+
+		$statuses = array_values( array_filter( array_map( 'strval', $statuses ) ) );
+
+		if ( ! $statuses ) {
+			return 0;
+		}
+
+		$in = "'" . implode( "','", array_map( 'esc_sql', $statuses ) ) . "'";
+
+		return (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . vh_table( 'assets' ) . " WHERE lifecycle_status IN ({$in})" ); // phpcs:ignore WordPress.DB
+	}
+
 	public static function findings( array $args = array() ): array {
 		global $wpdb;
 
@@ -4253,19 +4277,31 @@ final class Repo {
 		 *
 		 * `reportable` is the default the screen sends; `all` sends nothing.
 		 */
+		/*
+		 * The same scope, written once more as a literal for the age
+		 * sub-query below to reuse. It cannot borrow the WHERE clause: that
+		 * one carries a `%s` placeholder whose value sits at a fixed position
+		 * in $params, and splicing it into a sub-query would put the
+		 * placeholders out of order. Escaped, never interpolated raw.
+		 */
+		$life_scope = '';
+
 		if ( ! empty( $args['lifecycle'] ) ) {
 			$life = (string) $args['lifecycle'];
 
 			if ( 'reportable' === $life ) {
-				$where[] = 'a.lifecycle_status IN (' . vh_reportable_sql() . ')';
-				$need_a  = true;
+				$where[]    = 'a.lifecycle_status IN (' . vh_reportable_sql() . ')';
+				$life_scope = 'la.lifecycle_status IN (' . vh_reportable_sql() . ')';
+				$need_a     = true;
 			} elseif ( 'in_service_all' === $life ) {
-				$where[] = 'a.lifecycle_status IN (' . vh_in_service_sql() . ')';
-				$need_a  = true;
+				$where[]    = 'a.lifecycle_status IN (' . vh_in_service_sql() . ')';
+				$life_scope = 'la.lifecycle_status IN (' . vh_in_service_sql() . ')';
+				$need_a     = true;
 			} elseif ( 'all' !== $life && isset( vh_lifecycle_statuses()[ $life ] ) ) {
-				$where[]  = 'a.lifecycle_status = %s';
-				$params[] = $life;
-				$need_a   = true;
+				$where[]    = 'a.lifecycle_status = %s';
+				$params[]   = $life;
+				$life_scope = "la.lifecycle_status = '" . esc_sql( $life ) . "'";
+				$need_a     = true;
 			}
 		}
 		if ( isset( $args['location_id'] ) && '' !== $args['location_id'] ) {
@@ -4448,9 +4484,23 @@ final class Repo {
 					$having .= sprintf( ' AND MIN(first_found) >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d DAY)', (int) $bands[ $band ]['to'] );
 				}
 
+				/*
+				 * Aged within the same lifecycle scope the list is showing.
+				 * Without this the oldest instance could be one on a retired
+				 * machine that the list itself excludes -- so a vulnerability
+				 * would be "over 90 days" here and "30-90 days" on the
+				 * dashboard table, which ages it inside the scope. No case in
+				 * this estate today; the two definitions simply must not be
+				 * allowed to drift.
+				 */
+				$life_join = '' !== $life_scope
+					? ' INNER JOIN ' . vh_table( 'assets' ) . " la ON la.id = asset_id AND {$life_scope}"
+					: '';
+
 				// Measured at 66 ms against 228,728 findings: the grouped
 				// subquery runs once and the optimiser joins its ~11k rows.
 				$age_join = " INNER JOIN ( SELECT vuln_id, severity FROM {$f}"
+					. $life_join
 					. " WHERE state IN ('open','reopened') AND exception_id = 0"
 					. " GROUP BY vuln_id, severity HAVING {$having} ) age"
 					. " ON age.vuln_id = f.vuln_id AND age.severity = f.severity";

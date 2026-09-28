@@ -1,5 +1,10 @@
 /* Topbar notification bell */
-.vh-bell { position: fixed; top: 14px; right: 18px; z-index: 300; }
+/* The avatar sits in the corner at right: 18px, so the bell sits beside it.
+   Set here rather than in app-redesign.css because this file is enqueued
+   after it and would win anyway -- one file owning one control beats two
+   files disagreeing about it. */
+.vh-bell { position: fixed; top: 14px; right: 66px; z-index: 300; }
+@media (max-width: 768px) { .vh-bell { top: 10px; right: 62px; } }
 .vh-bell__btn { position: relative; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 11px;
 	background: var( --vh-panel, #0f172a ); border: 1px solid rgba( 148, 163, 184, .28 ); color: inherit; cursor: pointer;
 	box-shadow: 0 10px 30px -14px rgba( 0, 0, 0, .7 ); transition: border-color .16s ease, transform .16s ease; }

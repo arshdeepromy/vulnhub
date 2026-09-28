@@ -16,8 +16,11 @@ OIDC device-authorization flow:
 
 1. `register_client` → `start_device_authorization` returns a `verificationUri`
    the operator opens and approves in the browser.
-2. The portal polls `create_token`; on approval it stores the access + refresh
-   token (`class-vh-aws-sso.php`, `class-vh-aws-sso-auth.php`).
+2. The pending device code is held in a transient; once the operator has
+   approved, **Complete** calls `create_token` (an `authorization_pending`
+   answer just says "not approved yet") and stores the access + refresh token
+   as the encrypted connector secret `sso_token` (`class-vh-aws-sso.php`,
+   `class-vh-aws-sso-auth.php`).
 3. `sso_token()` refreshes silently when it is within 300 s of expiry and
    persists the new token; the card shows a **live expiry countdown**
    (`data-vh-sso-exp`) so the operator knows when to re-authenticate.
@@ -32,11 +35,13 @@ after-loop counter ran.
 ## What the capture stores
 
 `VulnHub_AWS_Network::capture()` deletes the account+region slice and re-inserts
-it, into four tables:
+it, into four tables. For nodes it deletes only rows with `source = 'aws'`, so
+nodes imported from the posture inventory survive (see *Where the middle of the
+diagram comes from*).
 
 | Table | Holds |
 |---|---|
-| `..._aws_net_nodes` | instances (with name tag, private/public IP, subnet, VPC, state, SG ids), plus vpc / igw / nat / tgw / tgw-attach / pcx / **eni / eip / elb** nodes |
+| `..._aws_net_nodes` | instances (with name tag, private/public IP, subnet, VPC, state, SG ids), plus vpc / subnet / igw / nat / tgw / tgw-attach / pcx / **eni / eip / elb** / vpce nodes |
 | `..._aws_net_sgs` | security groups |
 | `..._aws_net_rules` | SG rules (direction, protocol, port range, source) |
 | `..._aws_net_routes` | route-table entries (dest CIDR → target type/id) |
@@ -112,7 +117,9 @@ Two more facts, both for `VulnHub_AWS_Exposure` (see `docs/ATTACK-PATHS.md`,
 
 Builds the tiered picture the screen draws. Resources come from the Plerion
 inventory table (`..._cloud_resources`) and are **enriched** by joining back to
-the AWS capture and the asset store:
+the AWS capture and the asset store. Nothing in the current code refreshes that
+table (see `docs/PLERION.md`), so its rows are only as fresh as whatever last
+wrote them:
 
 - **EC2**: Plerion stores the instance as a PRN in `resource_id` and the `i-…`
   id in `name`; we bridge on the `i-…` id to pull the real **Name tag, IPs,
@@ -210,7 +217,10 @@ the account-level lanes plus per-host SG ports are what the data supports.
 The account map answers *how is this account wired*. This answers the question
 an estate of dozens of accounts actually raises: **which way does traffic go,
 and what stands in it.** `?tab=estate`, built by
-`VulnHub_AWS_Network::estate_flow()` and served by `GET vulnhub-aws/v1/topology`.
+`VulnHub_AWS_Network::estate_flow( $env )` and served by
+`GET vulnhub-aws/v1/topology?env=prod|nonprod` (`Caps::VIEW`; anything else, or
+nothing, means all environments). The page's segment bar sets `?env=` the same
+way (see *Production and non-production are drawn separately*).
 
 It is a flowchart, not a tree. A tree answers "what is under here" one branch
 at a time, which is the wrong question for a network: nobody wants to know what
@@ -516,6 +526,10 @@ keeps a neighbouring account's capture from deleting them (`capture()` now
 clears only its own rows), and it is the honest label — an inventory record,
 not a live read. Accounts the AWS capture already reads are skipped, because a
 live read beats an inventory and importing both would draw each node twice.
+It reads Plerion load balancers, transit gateways, auto-scaling groups and
+instances (`PLERION_NET_TYPES`). **Neither sync calls it** — it runs only when
+invoked by hand (`wp eval 'VulnHub_AWS_Network::import_posture_network();'`),
+so the imported rows age until someone does.
 
 ### Production and non-production are drawn separately
 
@@ -550,6 +564,41 @@ card is opened, because both move the boxes the lines are tied to. Below 760px
 the bands stack and the wires are hidden — a connector drawn between two cards
 in a single column says nothing the order does not.
 
+## Without SSO: the AWS accounts list
+
+SSO takes precedence once someone has signed in. Until then the connector reads
+the rows on the **AWS accounts** portal section (`aws-accounts`, Manage
+capability; `VulnHub_AWS_Admin`), stored in `{prefix}vulnhub_aws_accounts`. Each
+row is either `role` (an assumed role with an external id) or `keys`, and
+records what its last sync managed to read per data type rather than one
+pass/fail — on a large estate the useful failure is "these three accounts cannot
+see their load balancers". Secrets go through the core settings encryption,
+never into the table. With no rows, the single-account fields on the connector
+card are used.
+
+- **Setup template.** `GET vulnhub-aws/v1/cloudformation-template` (Manage)
+  downloads `vulnhub-aws-readonly.yaml`, built by `VulnHub_AWS_Setup` from the
+  same action list the connector documents, so the two cannot drift. It is
+  served rather than linked from S3 because quick-create needs a public
+  bucket, and a private install has none.
+- **Reachability.** Per account, `VulnHub_AWS_Reachability` walks the chain —
+  a security group admitting the internet, a subnet routing to an internet
+  gateway, and an address to arrive on, or an internet-facing balancer — into
+  `{prefix}vulnhub_aws_exposure`. `apply_to_assets()` matches rows to assets on
+  `aws_instance_id`, stores the ids in `vulnhub_aws_reachable`, and rebuilds
+  the threat exposure. It does not model NACLs or paths through peering/TGW,
+  so it errs towards over-reporting.
+- **Amazon Inspector** (`use_inspector`, on by default): when its EC2 scanning is
+  on, its reachability findings are used instead, since it evaluates the paths
+  above properly.
+- **Resource Explorer** (`use_explorer`, `explorer_region`,
+  `explorer_view_arn`): an optional organisation-wide *inventory* from one
+  central account. It lists what exists; it does not read rules or routes.
+
+Account names from any source (the SSO account list, Plerion) are announced on
+the `vulnhub_aws_account_names` action and remembered in the option of the same
+name by `VulnHub_AWS_Account_Names`.
+
 ## What the capture calls, and what a denied call looks like
 
 Every reader is one signed Query-API call through `VulnHub_AWS_Client::query()`:
@@ -557,6 +606,7 @@ Every reader is one signed Query-API call through `VulnHub_AWS_Client::query()`:
 | Reader | Service | Action |
 |---|---|---|
 | `capture_instances()` | ec2 | `DescribeInstances` |
+| `capture_containers()` | ec2 | `DescribeVpcs`, `DescribeSubnets` — the VPC and subnet nodes and their CIDRs |
 | `capture_security_groups()` | ec2 | `DescribeSecurityGroups` |
 | `capture_infra()` | ec2 | `DescribeInternetGateways`, `DescribeNatGateways`, `DescribeTransitGateways`, `DescribeVpcPeeringConnections`, `DescribeTransitGatewayVpcAttachments` |
 | `capture_routes()` | ec2 | `DescribeRouteTables` |
@@ -585,9 +635,237 @@ before believing the screen — run the action through `query()` with
 zero objects. A reader that records why it read nothing is the obvious
 improvement here and is not built yet.
 
+## Serverless entry points
+
+Everything above reasons about exposure the way a network does: an instance,
+its network interface, its security groups, a route out. A Lambda function has
+none of those, so `rebuild_exposure()` — which walks the assets table and
+scores each row on EC2/ENI/SG/route/balancer evidence — answers *not reachable*
+about a function that anyone on the internet can invoke. It is not a bug in the
+rule; a function is simply not the kind of thing that rule describes. The
+dashboard's "0 directly accessible" was therefore true and useless at the same
+time.
+
+`VulnHub_AWS_Serverless` (`class-vh-aws-serverless.php`) is the other half of
+the answer, and it keeps its own tables:
+
+| Table | Holds |
+|---|---|
+| `{prefix}vulnhub_aws_serverless` | one row per *door*: an API Gateway method, a function URL, or a function resource-policy statement, with the function it lands on |
+| `{prefix}vulnhub_aws_serverless_runs` | one row per account and region read, with what was counted and what was refused |
+
+It owns them the "Variant A" way (`private const DB_VERSION`, its own option,
+an early-return guard, `update_option( ..., false )`) like
+`class-vh-aws-cost-store.php`. **Do not put any of this in
+`vh_vulnhub_asset_exposure`:** that table is keyed by `assets.id` and silently
+discards a row that is not an asset, so every function would vanish without an
+error.
+
+### The readers
+
+Unlike the network capture these are signed REST GETs, not Query-API calls, so
+they go through `VulnHub_AWS_Client::get()` (added for this) rather than
+`query()`.
+
+| Reader | Calls |
+|---|---|
+| `read_rest()` | `GET /restapis`, then per API `GET /restapis/{id}/stages` and `GET /restapis/{id}/resources?embed=methods` |
+| `read_http()` | `GET /v2/apis`, then per API `GET .../routes` and `GET .../integrations` |
+| `read_functions()` | paged `GET /2015-03-31/functions/`, then per function `GET /2021-10-31/functions/{name}/url` and `GET /2015-03-31/functions/{name}/policy` |
+
+Three shapes in the v1 API cost real time to discover, so they are worth
+stating plainly:
+
+- **v1 answers in HAL.** The collection is under `_embedded.item`, not `item`.
+  Reading `item` off the top level — which is what every other AWS list
+  suggests — finds nothing at all and reports the account as clean.
+- **A collection of one comes back unwrapped**, as the object itself rather
+  than a list of one. `hal_items()` handles both.
+- **`?embed=methods` does not fill `resourceMethods`.** The methods arrive
+  under the resource's own `_embedded['resource:methods']`, and each method
+  carries its integration under `_embedded['method:integration']`.
+  `embedded_methods()` reads that, which is also what lets a whole API be read
+  in two calls instead of one per method.
+
+That last point matters because the API Gateway control plane throttles at a
+handful of requests a second per account and answers the rest with
+`429 Too Many Requests`. `patient_get()` waits a throttle out (0.6s, 1.5s,
+3.5s) rather than recording it, because a lost method list would be reported as
+an account with no open routes.
+
+### What counts as open
+
+`route_row()` opens a route only when every link holds: the method's
+`authorizationType` is `NONE`, no API key is required, the API's endpoint
+configuration is not `PRIVATE`, `disableExecuteApiEndpoint` is not set, and a
+stage is deployed. `wide_open()` opens a function policy statement only when
+the principal is `*` and the statement carries no `Condition`. Anything else is
+counted in `guarded()` by what it asks for, so the page can say how much was
+looked at rather than only what was found.
+
+`runtime_state()` marks a function's runtime `deprecated`, `current` or
+`unknown` against a conservative list behind the `vulnhub_lambda_dead_runtimes`
+filter — conservative because calling a supported runtime dead is a false alarm
+somebody has to disprove.
+
+### The page and the widget
+
+`VulnHub_AWS_Serverless_Page` registers the `serverless` view
+(`/internet-facing-functions/`) and the `aws_serverless` dashboard widget in the
+`exposure` group. The widget's headline number is a `stat_tile()` with an
+`href`, so the count is the link into the drill-down.
+
+The list is collapsed: one row per function carrying its name, account, region
+and chips, opening to the detail below. *Expand all* and *Collapse all* sit
+above it, and a `#fn-<key>` link (the widget's, and the coverage table's) opens
+that card.
+
+Each function on the page gets: its account name and id, region, runtime and
+support state, last-modified date, execution role, whether it has an inventory
+record (almost never — and the page says why rather than leaving a blank), every
+door into it, the posture vendor's findings **attributed to the vendor**, a
+left-to-right topology from the internet through each door to the function, its
+role and the data stores it reaches, and exploitation and mitigation notes
+generated from that row's own facts.
+
+Two honesty rules hold throughout:
+
+- **The vendor's vulnerability count is the vendor's.** The posture feed
+  carries no CVE at all (0 of ~2,300 rows contain `CVE-`), so there is nothing
+  to match against Tenable, nothing to put in a patch group and no fixed
+  version to quote. The page says so next to the number instead of implying we
+  verified it.
+- **The last column is only drawn when the feed has a path graph.**
+  `reaches()` reads `raw_json.attackPaths.nodes[].isDataSource` and nothing
+  else; where there is no graph the diagram says *not established* rather than
+  inferring a bucket from the role name. A plausible-looking data store in a
+  diagram is worse than a blank one, because somebody acts on it.
+
+### Domain names
+
+`VulnHub_AWS_Domains` (`class-vh-aws-domains.php`) is the shared store for
+"what is this called and what stands in front of it". Two tables:
+`{prefix}vulnhub_aws_domains`, one row per name-to-target mapping, and
+`{prefix}vulnhub_aws_domain_runs`, one row per account, region and source so a
+refusal is never mistaken for an absence.
+
+| Source | Reader | Scope |
+|---|---|---|
+| `apigw` | `capture_apigw()` | API Gateway custom domain names and their base-path mappings, per account and region |
+| `route53` | `capture_dns()` | Hosted zones and their A/AAAA/CNAME records, per account (the service is global) |
+| `zonefile` | `VulnHub_Domain_Import::import_zone_dir()` | Operator-supplied zone files, for the authoritative DNS that is not in AWS |
+
+Both AWS readers hang off the SSO sync loop beside the network and serverless
+captures. Route 53 answers XML, not JSON, which is why the client grew
+`get_xml()`; `json_decode` on its body returns null and a good response reads
+as a failure.
+
+Every target runs through `classify()`, which ties a name to a resource only
+when the address or hostname it resolves to is one we hold: the public
+addresses on `net_nodes` (Elastic IPs, interfaces, instances), load balancer
+DNS names, `execute-api` hostnames, CloudFront and S3. Cross-account on
+purpose -- a zone in one account routinely names an address in another.
+
+**What this cannot see.** Route 53 covers only the zones hosted in the
+accounts the login can read. The authoritative public DNS may live on-premises,
+at a registrar or behind a CDN, and those names appear only if somebody
+imports the zone files. The page says so rather than presenting the list as
+complete.
+
+### Edge WAF coverage
+
+`VulnHub_Domain_Import` (`class-vh-domain-import.php`) also imports a CDN
+hostname export into `{prefix}vulnhub_waf_coverage`: one row per hostname,
+whether a security configuration covers it, and which policy. That is the only
+record of what is actually protected, and no AWS API knows it.
+
+Two readers join the three sources:
+
+- `dangling()` -- zone records whose target is an AWS-shaped hostname we do not
+  hold. The classic dangling record: the resource was deleted and the name was
+  left behind. Deliberately a *candidate* list; proving a name is dead needs a
+  resolution this system does not perform.
+- `unprotected()` -- names that reach something of ours that serves the web,
+  from the internet, and are not covered by the edge WAF. Two tests earn their
+  place here, both added after a first run that would have been useless:
+  **internal or not** (most names point at an internal-only balancer, which an
+  edge firewall has nothing to do with) and **web or not** (a network balancer
+  on tcp/22 is SFTP, and a *web* application firewall cannot protect it). A
+  balancer qualifies on its listeners, a machine on a security group opening
+  80 or 443 to the whole internet, an API Gateway inherently.
+
+**Data hygiene.** These imports carry real hostnames and real addresses. They
+belong in the database and nowhere else -- never in a fixture, a doc, a test or
+a commit message (`CLAUDE.md`).
+
+### How the topology is drawn
+
+Five columns -- source, first hop, affected hop, its permissions, what it
+reaches -- on a 1560-unit viewBox, one box 96 units tall per hop. Each box
+carries a line icon of ours (globe, gateway arch, lambda, key, and a bucket,
+database, queue or lock for the data store, chosen by the store's kind), drawn
+on a 24x24 grid and stroked in that hop's colour from CSS, so the picture
+follows the light and dark themes. No vendor image files ship with the plugin.
+
+SVG text neither wraps nor clips itself, so `node()` measures instead: a name
+takes up to two lines, broken on spaces and also after `-`, `_`, `.` and `/`
+(a function name is one long token -- breaking it by character count gives
+`retailer-css-bookings-f / n-dev`), and the detail lines are cut on a word
+boundary. Widths are estimated from the font size rather than real font
+metrics, which the server does not have; the whole text block is clipped to
+its box as a backstop, and every box carries a `<title>` with the untruncated
+value. Ids for the clip paths and the arrow marker come from a per-page
+counter, because a page draws one of these per function and a repeated id
+would point every arrow on the page at the first marker.
+
+Below 1080px the wrapper scrolls rather than shrinking the labels further;
+that is the page's only horizontal scroller and it is deliberate.
+
+### Wiring
+
+`vulnhub-aws.php` requires the class, installs it on `init` priority 5, and
+`VulnHub_AWS_Serverless_Page::init()` registers the view and widget. The
+capture runs inside the connector's `sync_via_sso()` loop beside
+`VulnHub_AWS_Network::capture()`, per account and region, and `capture()`
+deletes the scope's rows only after its readers have returned — so a refused
+call leaves the last good picture standing rather than emptying the page.
+
+
 ## Verifying
 
 `./lint.sh`; drive it per `docs/BROWSER-PASS.md` (mint a cookie, load
 `/cloud-network/`, pick an account). Exercise `arch_graph()` directly with
 `wp eval-file` against the live DB — never copy real account ids, hostnames or
 peering names into the tree (`CLAUDE.md`, data hygiene).
+
+## The service catalogue
+
+`vulnhub_service_catalog`: one row per public hostname, saying what it is —
+system, component, environment, purpose, architecture. Operator-supplied, like
+the zone files; nothing discovers it. `VulnHub_Domain_Import::import_catalog_tsv()`
+reads a tab-separated file, `catalog()` returns it keyed by hostname (read once
+per request, not once per name).
+
+**Why it exists.** Everything else in the plugin reads machines: a name resolves
+to a load balancer in an account, which carries a policy or does not. None of it
+can say the name is a market-integration gateway, or that it is the
+pre-production one — and that is the difference between "71 hostnames have no
+WAF policy" and a sentence somebody can act on.
+
+**Environment is the load-bearing field.** It decides whether a missing WAF
+policy is a finding or a note, and it used to be guessed from the spelling of
+the name. Where the catalogue states it, that wins; where it does not, the old
+regex still runs, and `env_known` records which of the two answers a row got so
+the page can say so rather than implying equal confidence. Measured on the
+current data the two agree on the 71 uncovered names — the guess was right this
+time, which is not the same as being reliable, and the earlier Akamai work
+already found two production-shaped names pointed at a dev identity pool.
+
+**The file lives outside the git checkout** (`~/vulnhub-dns-import/apps.tsv`)
+and is fed to the importer through the container's /tmp, because it is a list of
+real hostnames and real system names and this repository is public. Nothing from
+it is committed.
+
+Surfaced on Internet exposure: an environment chip on each card, the system,
+component and purpose above the hop chain, the documented architecture under it,
+the count in the sources note, and the production split in the WAF-gap block.

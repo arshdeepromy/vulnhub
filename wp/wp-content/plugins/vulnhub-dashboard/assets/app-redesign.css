@@ -394,6 +394,24 @@ a.vh-segbars__seg:hover, a.vh-segbars__seg:focus-visible { outline: 2px solid va
  */
 .vh-w__head { z-index: 3; }
 
+/* The refresh button sits beside the export menu and matches its target. */
+.vh-w__refresh {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0;
+  background: none; border: 1px solid transparent; border-radius: 7px;
+  color: var(--vh-muted); cursor: pointer;
+}
+.vh-w__refresh svg { width: 15px; height: 15px; }
+.vh-w__refresh:hover { background: var(--vh-neutral-bg); color: var(--vh-ink); border-color: var(--vh-line); }
+.vh-w__refresh[disabled] { cursor: progress; }
+.vh-w.is-refreshing .vh-w__refresh svg { animation: vh-w-spin .8s linear infinite; transform-origin: 50% 50%; }
+.vh-w.is-refreshing .vh-w__body { opacity: .55; transition: opacity .15s ease; }
+@keyframes vh-w-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .vh-w.is-refreshing .vh-w__refresh svg { animation: none; }
+}
+
 .vh-w__menu { position: relative; flex: 0 0 auto; }
 .vh-w__menu > summary {
   display: inline-flex; align-items: center; justify-content: center;
@@ -513,7 +531,15 @@ a.vh-segbars__seg:hover, a.vh-segbars__seg:focus-visible { outline: 2px solid va
 }
 .vh-matrix__n:hover, .vh-matrix__n:focus-visible { text-decoration: underline; }
 .vh-matrix__sub { display: block; margin-top: 2px; font-size: 11.5px; color: var(--vh-muted); }
-.vh-matrix__move { vertical-align: middle; white-space: nowrap; }
+.vh-matrix__move { vertical-align: top; white-space: nowrap; }
+/* The movement figure is a number in a column of numbers now, not a pill:
+   colour carries the direction, the sub-line carries the make-up. */
+.vh-matrix__move--good { color: var(--vh-good); }
+.vh-matrix__move--bad { color: var(--vh-bad); }
+.vh-matrix__move--flat { color: var(--vh-muted); }
+/* The number stays on one line; its make-up may wrap, because
+   "14,839 fixed, 9,100 resurfaced" does not fit a fixed column. */
+.vh-matrix__move .vh-matrix__sub { white-space: normal; }
 .vh-matrix__foot {
 	display: flex;
 	justify-content: space-between;
@@ -623,10 +649,21 @@ a.vh-stack__seg:hover, a.vh-stack__seg:focus-visible { outline: 2px solid var(--
 .vh-prodrow__name:hover { color: var(--vh-link); text-decoration: underline; }
 .vh-prodrow__nums { margin-left: auto; color: var(--vh-ink-2); font-size: 12.5px; white-space: nowrap; }
 .vh-prodrow__nums strong { color: var(--vh-ink); }
+/*
+ * The evidence cell on a findings table: the package and version found, then
+ * the version that fixes it underneath. Two lines, because run together on
+ * one they read as a single nonsensical version string.
+ */
+.vh-evi { display: block; }
+.vh-evi .vh-meta { display: block; margin-top: 2px; }
+
 .vh-prodrow__bar { position: relative; height: 8px; margin-top: 6px; border-radius: 999px;
   background: var(--vh-neutral-bg); overflow: hidden; }
+/* Solid, not a blue-to-orange gradient: since the bar splits into app update
+   (series 1) and bundled component (series 2), a row with nothing bundled
+   fading into the bundled colour read as a split that is not there. */
 .vh-prodrow__bar > span { position: absolute; inset: 0 auto 0 0; border-radius: 999px;
-  background: linear-gradient(90deg, var(--vh-series-1), var(--vh-series-2)); }
+  background: var(--vh-series-1); }
 .vh-prodico { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 9px;
   display: grid; place-items: center; color: #fff; box-shadow: var(--vh-shadow); }
 .vh-prodico svg { width: 22px; height: 22px; fill: #fff; }
@@ -782,9 +819,38 @@ body.vh-chrome-rail:not(.vh-login-body) { padding-left: 64px; }
   margin-top: auto; margin-left: 0; width: 100%; }
 .vh-topbar .vh-topbar__end .vh-chip { display: none; }            /* sample-data chip: not in the rail */
 .vh-topbar .vh-nav__link--admin { width: 44px; height: 44px; }
-/* account dropdown opens to the right of the rail, not off the bottom */
-.vh-topbar .vh-account { position: relative; }
-.vh-topbar .vh-account__menu { position: absolute; left: calc(100% + 10px); bottom: 0; margin: 0; }
+/* ------------------------------------------------------------------
+   The account button leaves the foot of the rail and sits in the top
+   right corner beside the bell, which notify.css already fixes there.
+   Everything that is not one of the daily screens now lives behind it,
+   so it has to be where somebody looks for a profile menu rather than
+   at the bottom of a column of section icons.
+   ------------------------------------------------------------------ */
+.vh-topbar .vh-account,
+.vh-account { position: fixed; top: 14px; right: 18px; z-index: 301; }
+/* The bell's own offset lives in notify.css, which loads after this file. */
+.vh-account > summary { list-style: none; cursor: pointer; }
+.vh-account > summary::-webkit-details-marker { display: none; }
+.vh-account > summary::marker { content: ''; }
+.vh-topbar .vh-account__menu,
+.vh-account__menu {
+  position: absolute; left: auto; right: 0; top: calc(100% + 8px); bottom: auto;
+  margin: 0; min-width: 232px; z-index: 301;
+}
+.vh-account__item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 9px; margin: 1px 0; width: 100%;
+  border: 0; border-radius: 8px; background: none;
+  font: inherit; font-size: 13px; text-align: left; text-decoration: none;
+  color: var(--vh-ink-2); cursor: pointer;
+}
+.vh-account__item svg { width: 16px; height: 16px; flex: 0 0 auto; }
+.vh-account__item:hover { background: var(--vh-neutral-bg); color: var(--vh-ink); }
+.vh-account__item.is-active { color: var(--vh-link-hover); }
+.vh-account__rule { display: block; height: 1px; margin: 6px 2px; background: var(--vh-line); }
+.vh-account__name, .vh-account__mail { margin: 0 2px; padding: 0 7px; }
+.vh-account__name { margin-top: 2px; }
+.vh-account__mail { margin-bottom: 6px; }
 
 /* ============================================================
    Status left-border accents. The design defines .vh-tile--critical etc. with
@@ -818,6 +884,9 @@ body.vh-chrome-rail:not(.vh-login-body) { padding-left: 64px; }
   .vh-topbar .vh-nav__link { width: 40px; height: 40px; flex: 0 0 auto; }
   .vh-topbar .vh-topbar__end { flex-direction: row; margin-top: 0; margin-left: auto; width: auto; flex: 0 0 auto; }
   .vh-topbar .vh-account__menu { left: auto; right: 0; bottom: auto; top: calc(100% + 8px); margin: 0; }
+  /* The rail is a sticky top bar at this width; the avatar and bell stay
+     pinned to the corner above it. */
+  .vh-account { top: 10px; right: 14px; }
   .vh-main { padding: 16px 14px 24px; }
   .vh-page-head h1 { font-size: 22px; }
   /* tables and wide blocks scroll inside their own frame, never the page */
@@ -938,6 +1007,10 @@ body.vh-chrome-rail:not(.vh-login-body) { padding-left: 64px; }
 		white-space: normal;
 	}
 	.vh-tablewrap--cards > table.vh-table > tbody > tr > td:last-child { border-bottom: 0; }
+
+	/* The pick box is a control, not a field: no fixed width, no centring
+	   once the row has restacked into a card. */
+	.vh-tablewrap--cards > table.vh-table > tbody > tr > td.vh-tf-pickcol { width: auto; text-align: left; }
 
 	/* The column name, from the header, printed above each value. */
 	.vh-tablewrap--cards > table.vh-table > tbody > tr > td[data-th]::before {
@@ -3160,6 +3233,8 @@ dialog.vh-ask::backdrop { background: rgba(4, 8, 18, .6); }
 /* Ticket page: findings filters, columns, group by asset. */
 .vh-tf-bar { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px 16px; margin: 0 0 12px; }
 .vh-tf-bar .vh-segbar { margin: 0; }
+/* The ticket-assets tab filters with outcome chips rather than a segbar. */
+.vh-tf-bar .vh-chips { margin: 0; }
 .vh-seg__n { opacity: .75; font-variant-numeric: tabular-nums; margin-left: 4px; }
 .vh-tf-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .vh-tf-tools label { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--vh-ink-2); }
@@ -3196,3 +3271,6 @@ dialog.vh-ask::backdrop { background: rgba(4, 8, 18, .6); }
 .vh-tf-pickcol { width: 32px; text-align: center; }
 .vh-tf-aside { display: inline-block; margin-left: 6px; vertical-align: middle; }
 .vh-chip--muted { background: var(--vh-surface-2, rgba(127,127,127,.12)); color: var(--vh-ink-2, inherit); }
+
+/* Cost: the two halves of one page. */
+.vh-costtabs { margin: 0 0 14px; }

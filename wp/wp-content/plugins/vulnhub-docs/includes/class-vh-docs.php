@@ -63,6 +63,9 @@ final class VulnHub_Docs {
 			'menu'  => __( 'Docs', 'vulnhub' ),
 			// An open book.
 			'icon'  => 'M4 5a2 2 0 012-2h5v16H6a2 2 0 00-2 2zM20 5a2 2 0 00-2-2h-5v16h5a2 2 0 012 2z',
+			// The account menu, not the rail: read when you need it, not
+			// one of the screens somebody works from.
+			'account' => true,
 		);
 
 		return $views;

@@ -101,7 +101,7 @@ final class VulnHub_Dash_Widgets {
 
 		$w['severity_age'] = array(
 			'label'   => __( 'Vulnerabilities by severity and age', 'vulnhub' ),
-			'summary' => __( 'Each vulnerability counted once and aged by its oldest open instance, with the asset findings behind it.', 'vulnhub' ),
+			'summary' => __( 'Each vulnerability counted once and aged by its oldest open instance, on assets in the reporting scope, with the asset findings behind it.', 'vulnhub' ),
 			'group'   => 'exposure',
 			'depends' => array( 'findings', 'assets' ),
 			'width'   => 12,
@@ -1393,9 +1393,102 @@ final class VulnHub_Dash_Widgets {
 		);
 	}
 
+	/**
+	 * A stamp for the code that draws one widget: the plugin version and the
+	 * modification time of the file its render callback lives in.
+	 *
+	 * The epoch answers "have the numbers moved". Nothing answered "has the
+	 * markup changed", and the cache serves a stale entry while cron
+	 * re-renders behind the reader -- so after a deploy the old markup was
+	 * served from the transient, and the only thing that would replace it was
+	 * a cron job. With a busy queue that is not minutes, it is hours: change
+	 * a widget, reload, and see the previous version with no way to tell
+	 * whether the change worked. The comment above store() already claimed
+	 * "the only person who ever renders a widget on the request path is the
+	 * first one after a deploy"; this is what makes that true.
+	 *
+	 * Reflection, not a hard-coded file, because a widget's render callback
+	 * can come from any plugin that registered one.
+	 */
+	private static function render_stamp( string $id ): string {
+		static $cache = array();
+
+		if ( isset( $cache[ $id ] ) ) {
+			return $cache[ $id ];
+		}
+
+		$stamp  = VULNHUB_DASH_VERSION;
+		$render = self::all()[ $id ]['render'] ?? null;
+
+		try {
+			if ( is_array( $render ) && 2 === count( $render ) ) {
+				$file = ( new ReflectionMethod( $render[0], (string) $render[1] ) )->getFileName();
+			} elseif ( is_string( $render ) && function_exists( $render ) ) {
+				$file = ( new ReflectionFunction( $render ) )->getFileName();
+			} else {
+				$file = '';
+			}
+
+			$mtime = $file ? @filemtime( $file ) : 0; // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+
+			if ( $mtime ) {
+				$stamp .= '.' . $mtime;
+			}
+		} catch ( ReflectionException $e ) {
+			// Unreadable callback: the version alone still busts on release.
+			$stamp = VULNHUB_DASH_VERSION;
+		}
+
+		$cache[ $id ] = $stamp;
+
+		return $stamp;
+	}
+
 	/** The cache key for one widget. See the host note above. */
 	private static function cache_key( string $id ): string {
-		return 'vh_w_' . md5( $id . '|' . get_locale() . '|' . home_url() );
+		return 'vh_w_' . md5( $id . '|' . get_locale() . '|' . home_url() . '|' . self::render_stamp( $id ) );
+	}
+
+	/**
+	 * Throw one widget's cached markup away and build it again, now.
+	 *
+	 * The board is deliberately slow to change: markup is cached, a bust only
+	 * marks it stale, and the re-render is a cron job behind the reader. That
+	 * is right for a dashboard nobody is watching and wrong for the moment
+	 * somebody is -- data landed, or a number is being argued with, and the
+	 * honest answer is "read it again". There was no way to say that short of
+	 * waiting out the cache or flushing every widget on the site.
+	 *
+	 * It re-reads the database. It does not run a connector sync: the numbers
+	 * come back as fresh as the last sync left them, and saying otherwise
+	 * would promise an hour of Tenable in a button press.
+	 *
+	 * @return string|null The new markup, or null if there is no such widget.
+	 */
+	public static function refresh_now( string $id ): ?string {
+		$all = self::all();
+		$def = $all[ $id ] ?? null;
+
+		if ( ! $def || empty( $def['render'] ) || ! is_callable( $def['render'] ) ) {
+			return null;
+		}
+
+		delete_transient( self::cache_key( $id ) );
+
+		// The queued-refresh lock too, or a widget refreshed by hand inside
+		// the lock's five minutes could not queue a background re-render
+		// afterwards.
+		delete_transient( 'vh_wref_' . md5( $id . '|' . home_url() ) );
+
+		ob_start();
+		call_user_func( $def['render'] );
+		$html = (string) ob_get_clean();
+
+		if ( self::ttl() > 0 ) {
+			self::store( $id, $html );
+		}
+
+		return $html;
 	}
 
 	/** Write rendered markup, stamped with the epoch it was true for. */
@@ -1546,6 +1639,31 @@ final class VulnHub_Dash_Widgets {
 		}
 
 		echo '</div>';
+
+		/*
+		 * Refresh this one widget.
+		 *
+		 * Hidden until app.js unhides it, like the drag handle: with no
+		 * JavaScript it could do nothing, and a control that cannot work
+		 * should not be offered. The title says what it does and does not do
+		 * -- re-reads the database, does not sync a connector -- because
+		 * "Refresh" on a security dashboard reads as "go and ask Tenable".
+		 */
+		printf(
+			'<button type="button" class="vh-w__refresh" data-vh-widget-refresh="%1$s" hidden aria-label="%2$s" title="%3$s">'
+			. '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" focusable="false">'
+			. '<path d="M20 12a8 8 0 1 1-2.4-5.7M20 3.5V8h-4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
+			. '</svg></button>',
+			esc_attr( $id ),
+			esc_attr(
+				sprintf(
+					/* translators: %s: widget name. */
+					__( 'Refresh %s', 'vulnhub' ),
+					(string) $def['label']
+				)
+			),
+			esc_attr__( 'Read this widget again from the database now. It does not run a connector sync.', 'vulnhub' )
+		);
 
 		if ( $exports ) {
 			/*
@@ -3516,7 +3634,8 @@ final class VulnHub_Dash_Widgets {
 			return null;
 		}
 
-		$sql = "SELECT product, product_slug, product_kind, component_class, assets, findings, bundles
+		$sql = "SELECT product, product_slug, product_kind, component_class, assets, findings,
+				     bundled_findings, bundled_assets, app_assets, bundles
 			      FROM {$table} WHERE scope = %s ORDER BY rank_in_scope ASC";
 		$args = array( $scope );
 
@@ -3527,9 +3646,21 @@ final class VulnHub_Dash_Widgets {
 
 		$rows = (array) $wpdb->get_results( $wpdb->prepare( $sql, ...$args ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 
+		/*
+		 * A schema upgrade that has not run yet (the split columns arrived in
+		 * v39) makes this SELECT fail. Falling back to the live aggregate is
+		 * the honest answer: the widget is a little slower for one request and
+		 * shows the same numbers, rather than going empty until somebody loads
+		 * an admin page.
+		 */
+		if ( '' !== (string) $wpdb->last_error ) {
+			return null;
+		}
+
 		foreach ( $rows as $i => $row ) {
-			$rows[ $i ]['assets']   = (int) $row['assets'];
-			$rows[ $i ]['findings'] = (int) $row['findings'];
+			foreach ( array( 'assets', 'findings', 'bundled_findings', 'bundled_assets', 'app_assets' ) as $num ) {
+				$rows[ $i ][ $num ] = (int) ( $row[ $num ] ?? 0 );
+			}
 		}
 
 		return $rows;
@@ -3575,7 +3706,7 @@ final class VulnHub_Dash_Widgets {
 			$params = array();
 
 			foreach ( array_values( $rows ) as $rank => $row ) {
-				$values[] = '(%s,%s,%s,%s,%s,%d,%d,%s,%d,%s)';
+				$values[] = '(%s,%s,%s,%s,%s,%d,%d,%d,%d,%d,%s,%d,%s)';
 				array_push(
 					$params,
 					(string) $scope,
@@ -3585,6 +3716,9 @@ final class VulnHub_Dash_Widgets {
 					(string) $row['component_class'],
 					(int) $row['assets'],
 					(int) $row['findings'],
+					(int) ( $row['bundled_findings'] ?? 0 ),
+					(int) ( $row['bundled_assets'] ?? 0 ),
+					(int) ( $row['app_assets'] ?? 0 ),
 					(string) ( $row['bundles'] ?? '' ),
 					$rank + 1,
 					$now
@@ -3597,7 +3731,7 @@ final class VulnHub_Dash_Widgets {
 				$wpdb->query(
 					$wpdb->prepare(
 						"INSERT INTO {$table}
-						 (scope,product,product_slug,product_kind,component_class,assets,findings,bundles,rank_in_scope,computed_at)
+						 (scope,product,product_slug,product_kind,component_class,assets,findings,bundled_findings,bundled_assets,app_assets,bundles,rank_in_scope,computed_at)
 						 VALUES " . implode( ',', $values ), // phpcs:ignore
 						...$params
 					)
@@ -3690,6 +3824,21 @@ final class VulnHub_Dash_Widgets {
 		$is_bundled = "v.product_kind IN ( 'library', 'os_package' ) AND f.bundle_app <> ''";
 
 		/*
+		 * Within a row, which findings are the product's own update and which
+		 * are components shipped inside it. Repo::bundled_sql() is the same
+		 * rule the `comp` filter and the By-product bar on the vulnerabilities
+		 * list split on, so the widget's two segments, that page's two
+		 * segments and the filtered list all agree -- a row reading "5,611
+		 * bundled" there cannot read as one solid bar here.
+		 *
+		 * Narrower than $is_bundled above, and deliberately so: that one
+		 * decides which product a finding is *attributed* to (a library goes
+		 * to the app carrying it), this one decides whether the fix is the
+		 * app's own update or a file it ships.
+		 */
+		$is_comp = 'CASE WHEN ' . \VulnHub\Core\Repo::bundled_sql( 'f', 'v' ) . ' THEN 1 ELSE 0 END';
+
+		/*
 		 * The CASE is resolved in an inner query and grouped in the outer one.
 		 * Grouping straight on a CASE alias that reads the same columns let
 		 * MariaDB collapse distinct groups together (app A's findings landed
@@ -3707,9 +3856,13 @@ final class VulnHub_Dash_Widgets {
 			"SELECT product, product_slug, product_kind, component_class,
 				COUNT(DISTINCT asset_id) AS assets,
 				COUNT(*) AS findings,
+				SUM(is_comp) AS bundled_findings,
+				COUNT(DISTINCT CASE WHEN is_comp = 1 THEN asset_id END) AS bundled_assets,
+				COUNT(DISTINCT CASE WHEN is_comp = 0 THEN asset_id END) AS app_assets,
 				GROUP_CONCAT(DISTINCT bundled_lib ORDER BY bundled_lib SEPARATOR ', ') AS bundles
 			 FROM (
 				SELECT f.asset_id,
+					{$is_comp} AS is_comp,
 					CASE WHEN {$is_bundled} THEN f.bundle_app      ELSE v.product END        AS product,
 					CASE WHEN {$is_bundled} THEN f.bundle_app_slug ELSE v.product_slug END   AS product_slug,
 					CASE WHEN {$is_bundled} AND v.product_kind = 'os_package' THEN 'os_package'
@@ -3918,6 +4071,83 @@ final class VulnHub_Dash_Widgets {
 		return '<span class="vh-kind vh-kind--' . esc_attr( $kind ) . '">' . esc_html( $label ) . '</span>';
 	}
 
+	/**
+	 * A product row's bar and, when the row carries both, the two counts
+	 * under it: the product's own update and the components shipped inside
+	 * it. The same split the By-product tab on the vulnerabilities list
+	 * draws, kept here so the widget, the Products page and that tab cannot
+	 * drift apart -- Microsoft Office reading 478 app findings beside 5,611
+	 * bundled ones there and one solid bar here was the same row telling two
+	 * different stories.
+	 *
+	 * Each count links to exactly its own findings (`comp`), so the segment,
+	 * the list it opens and the export from that list agree by construction.
+	 * A row with nothing bundled keeps the plain single bar: two segments
+	 * where one is the whole width says "there is a split here" when there
+	 * is not.
+	 *
+	 * @param array<string,mixed> $row Product row from product_rows().
+	 * @param int                 $pct Bar width, 0-100, against the top row.
+	 * @param string              $url The row's findings URL, unsplit.
+	 */
+	public static function product_split_html( array $row, int $pct, string $url ): string {
+		$findings = (int) ( $row['findings'] ?? 0 );
+		$bundled  = (int) ( $row['bundled_findings'] ?? 0 );
+		$app      = max( 0, $findings - $bundled );
+
+		if ( $bundled <= 0 || $app <= 0 ) {
+			return '<div class="vh-prodrow__bar"><span style="width:' . (int) $pct . '%"></span></div>';
+		}
+
+		$bundled_pct = round( 100 * $bundled / max( 1, $findings ), 2 );
+
+		$out = '<div class="vh-prodrow__bar vh-prodrow__bar--split" role="img" aria-label="'
+			. esc_attr(
+				sprintf(
+					/* translators: 1: app findings, 2: bundled findings. */
+					__( '%1$s app-update findings, %2$s bundled library or file findings', 'vulnhub' ),
+					number_format_i18n( $app ),
+					number_format_i18n( $bundled )
+				)
+			) . '">'
+			. '<span style="width:' . (int) $pct . '%">'
+			. '<i class="vh-pseg vh-pseg--app" style="width:' . esc_attr( (string) ( 100 - $bundled_pct ) ) . '%"></i>'
+			. '<i class="vh-pseg vh-pseg--bundled" style="width:' . esc_attr( (string) $bundled_pct ) . '%"></i>'
+			. '</span></div>';
+
+		$out .= '<div class="vh-prodrow__split">'
+			. '<a class="vh-prodrow__part vh-prodrow__part--app" href="' . esc_url( add_query_arg( 'comp', 'app', $url ) ) . '">'
+			. sprintf(
+				/* translators: 1: assets, 2: findings. */
+				esc_html__( 'App update: %1$s assets · %2$s findings', 'vulnhub' ),
+				esc_html( number_format_i18n( (int) ( $row['app_assets'] ?? 0 ) ) ),
+				esc_html( number_format_i18n( $app ) )
+			)
+			. '</a>'
+			. '<a class="vh-prodrow__part vh-prodrow__part--bundled" href="' . esc_url( add_query_arg( 'comp', 'bundled', $url ) ) . '">'
+			. sprintf(
+				/* translators: 1: assets, 2: findings. */
+				esc_html__( 'Bundled library or file: %1$s assets · %2$s findings', 'vulnhub' ),
+				esc_html( number_format_i18n( (int) ( $row['bundled_assets'] ?? 0 ) ) ),
+				esc_html( number_format_i18n( $bundled ) )
+			)
+			. '</a></div>';
+
+		return $out;
+	}
+
+	/**
+	 * The legend the split bar needs, once per list.
+	 */
+	public static function product_split_legend(): string {
+		return '<p class="vh-sub vh-prodlegend">'
+			. '<span class="vh-prodlegend__key vh-prodlegend__key--app"></span>'
+			. esc_html__( 'App update: the product\'s own vulnerabilities, fixed by updating it', 'vulnhub' )
+			. '<span class="vh-prodlegend__key vh-prodlegend__key--bundled"></span>'
+			. esc_html__( 'Bundled library or file: shipped inside the app, fixed only when its vendor ships a build carrying it', 'vulnhub' )
+			. '</p>';
+	}
+
 	public static function render_product_exposure(): void {
 		$rows = self::product_rows();
 		if ( ! $rows ) {
@@ -3958,7 +4188,7 @@ final class VulnHub_Dash_Widgets {
 					esc_html( number_format_i18n( (int) $r['findings'] ) )
 				)
 				. '</span></div>';
-			echo '<div class="vh-prodrow__bar"><span style="width:' . (int) $pct . '%"></span></div>';
+			echo self::product_split_html( $r, $pct, $url ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside.
 
 			// When this row is an application carrying vulnerable libraries, say
 			// which ones and what to do about it -- that is the actionable line.
@@ -3977,12 +4207,13 @@ final class VulnHub_Dash_Widgets {
 		}
 		echo '</ul>';
 		echo '<p class="vh-sub">' . esc_html__( 'Ranked by in-scope assets affected. A bundled library is attributed to the app that ships it, from its install path. Select a row for the findings behind it.', 'vulnhub' ) . '</p>';
+		echo self::product_split_legend(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside.
 		echo '<p class="vh-prodlist__more"><a class="vh-btn vh-btn--ghost vh-btn--sm" href="' . esc_url( VulnHub_Dash_Portal::portal_url( 'products' ) ) . '">' . esc_html__( 'View all products', 'vulnhub' ) . '</a></p>';
 	}
 
 	public static function data_product_exposure(): array {
 		return array(
-			'headers' => array( __( 'Product', 'vulnhub' ), __( 'Class', 'vulnhub' ), __( 'Kind', 'vulnhub' ), __( 'Vulnerable assets', 'vulnhub' ), __( 'Open findings', 'vulnhub' ) ),
+			'headers' => array( __( 'Product', 'vulnhub' ), __( 'Class', 'vulnhub' ), __( 'Kind', 'vulnhub' ), __( 'Vulnerable assets', 'vulnhub' ), __( 'Open findings', 'vulnhub' ), __( 'App update', 'vulnhub' ), __( 'Bundled', 'vulnhub' ) ),
 			'rows'    => array_map(
 				static fn( array $r ): array => array(
 					(string) $r['product'],
@@ -3990,6 +4221,8 @@ final class VulnHub_Dash_Widgets {
 					(string) $r['product_kind'],
 					(int) $r['assets'],
 					(int) $r['findings'],
+					(int) $r['findings'] - (int) ( $r['bundled_findings'] ?? 0 ),
+					(int) ( $r['bundled_findings'] ?? 0 ),
 				),
 				self::product_rows( 100 )
 			),
@@ -4240,7 +4473,9 @@ final class VulnHub_Dash_Widgets {
 		global $wpdb;
 
 		$f     = vh_table( 'findings' );
+		$a     = vh_table( 'assets' );
 		$bands = Repo::age_bands();
+		$scope = vh_reportable_sql();
 
 		/*
 		 * Collapse to one row per vulnerability first, then bucket. Doing it
@@ -4258,6 +4493,20 @@ final class VulnHub_Dash_Widgets {
 		 * and the cell stopped agreeing with its own link. The finding's own
 		 * severity is what every other screen filters on, so it wins.
 		 */
+		/*
+		 * Only assets in the reporting scope (`vh_reportable_statuses()`, the
+		 * platform's own Reporting scope setting -- in service and unknown by
+		 * default, never spare, in stock, planned, retired or missing).
+		 *
+		 * The table had no lifecycle filter at all, and its correctness rode
+		 * on the archive sweep: findings on assets that leave the estate get
+		 * state 'archived' and fall out of the state filter. That is invisible
+		 * and nothing catches a sweep that misses one -- and it does: 165 open
+		 * findings sat on spare and planned machines the day this was added.
+		 * Worse, every count here links to the vulnerability list, which
+		 * filters by scope itself and defaults to `reportable`, so the cell
+		 * and the list it opened were answering different questions.
+		 */
 		$rows = (array) $wpdb->get_results(
 			"SELECT o.severity AS severity,
 				CASE
@@ -4269,10 +4518,12 @@ final class VulnHub_Dash_Widgets {
 				COUNT(DISTINCT o.vuln_id) AS vulns,
 				SUM(o.findings) AS findings
 			 FROM (
-				SELECT vuln_id, severity, MIN(first_found) AS oldest, COUNT(*) AS findings
-				FROM {$f}
-				WHERE state IN ('open','reopened') AND exception_id = 0
-				GROUP BY vuln_id, severity
+				SELECT f.vuln_id, f.severity, MIN(f.first_found) AS oldest, COUNT(*) AS findings
+				FROM {$f} f
+				INNER JOIN {$a} a ON a.id = f.asset_id
+				WHERE f.state IN ('open','reopened') AND f.exception_id = 0
+				  AND a.lifecycle_status IN ({$scope})
+				GROUP BY f.vuln_id, f.severity
 			 ) o
 			 GROUP BY severity, band", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			ARRAY_A
@@ -4291,15 +4542,41 @@ final class VulnHub_Dash_Widgets {
 				'slug'     => $slug,
 				'label'    => (string) $meta['label'],
 				'bands'    => $blank,
-				'movement' => (int) ( $movement[ $slug ] ?? 0 ),
+				'movement' => (array) ( $movement[ $slug ] ?? array(
+					'resurfaced'          => 0,
+					'fixed'               => 0,
+					'net'                 => 0,
+					'resurfaced_findings' => 0,
+					'fixed_findings'      => 0,
+					'net_findings'        => 0,
+				) ),
 			);
 		}
+
+		/*
+		 * Anything that lands in no column is counted, not dropped.
+		 *
+		 * `outcome` can come back as `unknown` -- a vulnerability whose every
+		 * open instance has no first-seen date -- and there is no column for
+		 * it, so those rows used to vanish between the query and the table
+		 * and the three columns quietly stopped summing to the estate. None
+		 * in this data today, which is exactly when a silent drop gets
+		 * written and forgotten. The foot says so when there are any.
+		 */
+		$undated = array( 'vulns' => 0, 'findings' => 0 );
 
 		foreach ( $rows as $row ) {
 			$slug = (string) $row['severity'];
 			$band = (string) $row['band'];
 
+			// Informational: no row in this table, by design.
+			if ( ! isset( $out[ $slug ] ) ) {
+				continue;
+			}
+
 			if ( ! isset( $out[ $slug ]['bands'][ $band ] ) ) {
+				$undated['vulns']    += (int) $row['vulns'];
+				$undated['findings'] += (int) $row['findings'];
 				continue;
 			}
 
@@ -4309,20 +4586,41 @@ final class VulnHub_Dash_Widgets {
 			);
 		}
 
-		$totals = array( 'bands' => $blank, 'movement' => 0 );
+		$totals = array(
+			'bands'    => $blank,
+			'movement' => array(
+				'resurfaced'          => 0,
+				'fixed'               => 0,
+				'net'                 => 0,
+				'resurfaced_findings' => 0,
+				'fixed_findings'      => 0,
+				'net_findings'        => 0,
+			),
+		);
 
 		foreach ( $out as $row ) {
 			foreach ( $row['bands'] as $band => $cell ) {
 				$totals['bands'][ $band ]['vulns']    += $cell['vulns'];
 				$totals['bands'][ $band ]['findings'] += $cell['findings'];
 			}
-			$totals['movement'] += (int) $row['movement'];
+
+			foreach ( array( 'resurfaced', 'fixed', 'net', 'resurfaced_findings', 'fixed_findings', 'net_findings' ) as $part ) {
+				$totals['movement'][ $part ] += (int) $row['movement'][ $part ];
+			}
 		}
 
 		return array(
-			'bands'  => $bands,
-			'rows'   => array_values( $out ),
-			'totals' => $totals,
+			'bands'   => $bands,
+			'rows'    => array_values( $out ),
+			'totals'  => $totals,
+			'undated' => $undated,
+			// When these numbers were read. The markup is cached for up to an
+			// hour and served stale beyond that while a background job
+			// re-renders, so a cell can trail the list it links to -- which
+			// is how a board ends up arguing with a screen. A printed time
+			// settles it. Absolute, not "5 minutes ago": a relative phrase
+			// freezes at render and starts lying the moment it is cached.
+			'as_of'   => vh_now(),
 		);
 	}
 
@@ -4335,27 +4633,51 @@ final class VulnHub_Dash_Widgets {
 	 * needs a previous import to compare against, which is what the note
 	 * under the table says.
 	 *
-	 * @return array<string,int> Severity slug => net movement.
+	 * Counted in both units, like every other cell in this table: distinct
+	 * vulnerabilities for the figure, asset findings for the line under it.
+	 * The halves are kept too -- a lone "-586" cannot tell you whether 586
+	 * things were fixed or 631 were fixed and 45 came back, and those are
+	 * different weeks -- but they belong in the cell's tooltip rather than in
+	 * the place every other column uses for asset findings, which is what
+	 * made this column read differently from its neighbours.
+	 *
+	 * @return array<string,array{resurfaced:int,fixed:int,net:int,resurfaced_findings:int,fixed_findings:int,net_findings:int}> By severity slug.
 	 */
 	private static function severity_movement(): array {
 		global $wpdb;
 
-		$f = vh_table( 'findings' );
+		$f     = vh_table( 'findings' );
+		$a     = vh_table( 'assets' );
+		$scope = vh_reportable_sql();
 
+		// Same scope as the counts it sits beside: a movement figure that
+		// included machines the counts leave out would explain a change in
+		// them that never happened.
 		$rows = (array) $wpdb->get_results(
-			"SELECT severity,
-				COUNT(DISTINCT CASE WHEN state = 'reopened' THEN vuln_id END) AS resurfaced,
-				COUNT(DISTINCT CASE WHEN state = 'fixed' THEN vuln_id END) AS fixed
-			 FROM {$f}
-			 WHERE exception_id = 0
-			 GROUP BY severity", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			"SELECT f.severity AS severity,
+				COUNT(DISTINCT CASE WHEN f.state = 'reopened' THEN f.vuln_id END) AS resurfaced,
+				COUNT(DISTINCT CASE WHEN f.state = 'fixed' THEN f.vuln_id END) AS fixed,
+				SUM(f.state = 'reopened') AS resurfaced_findings,
+				SUM(f.state = 'fixed') AS fixed_findings
+			 FROM {$f} f
+			 INNER JOIN {$a} a ON a.id = f.asset_id
+			 WHERE f.exception_id = 0
+			   AND a.lifecycle_status IN ({$scope})
+			 GROUP BY f.severity", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			ARRAY_A
 		);
 
 		$out = array();
 
 		foreach ( $rows as $row ) {
-			$out[ (string) $row['severity'] ] = (int) $row['resurfaced'] - (int) $row['fixed'];
+			$out[ (string) $row['severity'] ] = array(
+				'resurfaced'          => (int) $row['resurfaced'],
+				'fixed'               => (int) $row['fixed'],
+				'net'                 => (int) $row['resurfaced'] - (int) $row['fixed'],
+				'resurfaced_findings' => (int) $row['resurfaced_findings'],
+				'fixed_findings'      => (int) $row['fixed_findings'],
+				'net_findings'        => (int) $row['resurfaced_findings'] - (int) $row['fixed_findings'],
+			);
 		}
 
 		return $out;
@@ -4369,10 +4691,35 @@ final class VulnHub_Dash_Widgets {
 	 * @return string
 	 */
 	private static function severity_age_url( string $severity, string $band ): string {
-		$args = array( 'state' => 'open_any' );
+		/*
+		 * The cell's own filters travel with it, rather than relying on the
+		 * list's defaults happening to match.
+		 *
+		 * `life=reportable` is what the table counts; the list defaults to it
+		 * too, but a default is invisible -- the Lifecycle control looked
+		 * unset and the obvious conclusion was that the list was showing
+		 * everything. `excepted=exclude` is a real difference: this table has
+		 * always left accepted risk out and the list leaves it in (dimmed),
+		 * so the two disagreed by however many exceptions were open. None
+		 * here today; it would have been a silent gap the day somebody
+		 * accepted one.
+		 */
+		$args = array(
+			'state'    => 'open_any',
+			'life'     => 'reportable',
+			'excepted' => 'exclude',
+		);
 
 		if ( '' !== $severity ) {
 			$args['severity'] = $severity;
+		} else {
+			/*
+			 * The Total row is the four severity rows added up, and this
+			 * table has no informational row -- so its link has to say so or
+			 * it opens a longer list than the number it came from. That was
+			 * 907 extra rows in the 30-90 day column.
+			 */
+			$args['sev_not'] = 'info';
 		}
 		if ( '' !== $band ) {
 			$args['age'] = $band;
@@ -4457,7 +4804,7 @@ final class VulnHub_Dash_Widgets {
 								</td>
 							<?php endforeach; ?>
 							<td class="vh-matrix__move">
-								<?php echo self::movement_pill( (int) $row['movement'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+								<?php echo self::movement_cell( (array) $row['movement'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 							</td>
 						</tr>
 					<?php endforeach; ?>
@@ -4483,7 +4830,7 @@ final class VulnHub_Dash_Widgets {
 								</td>
 							<?php endforeach; ?>
 							<td class="vh-matrix__move">
-								<?php echo self::movement_pill( (int) $data['totals']['movement'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+								<?php echo self::movement_cell( (array) $data['totals']['movement'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 							</td>
 						</tr>
 					</tfoot>
@@ -4491,7 +4838,29 @@ final class VulnHub_Dash_Widgets {
 			</div>
 
 			<p class="vh-matrix__foot">
-				<span><?php esc_html_e( 'Movement is vulnerabilities that resurfaced minus those fixed, within the data loaded so far.', 'vulnhub' ); ?></span>
+				<span>
+					<?php
+					printf(
+						/* translators: %s: date and time the table was counted. */
+						esc_html__( 'Counted %s from the data held then; accepted risk and informational findings are not included.', 'vulnhub' ),
+						esc_html( wp_date( 'j M Y, H:i', (int) strtotime( (string) ( $data['as_of'] ?? vh_now() ) . ' UTC' ) ) )
+					);
+					?>
+				</span>
+				<?php if ( (int) ( $data['undated']['findings'] ?? 0 ) > 0 ) : ?>
+					<span>
+						<?php
+						printf(
+							/* translators: 1: vulnerabilities, 2: asset findings. */
+							esc_html__( '%1$s vulnerabilities (%2$s asset findings) have no first-seen date and are in no column.', 'vulnhub' ),
+							esc_html( number_format_i18n( (int) $data['undated']['vulns'] ) ),
+							esc_html( number_format_i18n( (int) $data['undated']['findings'] ) )
+						);
+						?>
+					</span>
+				<?php endif; ?>
+				<span><?php esc_html_e( 'Movement is what resurfaced minus what was fixed, within the data loaded so far: vulnerabilities in the figure, asset findings in the line beneath it, the same two units as every other column. Hover for the fixed and resurfaced halves.', 'vulnhub' ); ?></span>
+				<span><?php esc_html_e( 'Assets outside the reporting scope — retired, spare, in stock, planned, missing — are left out, as they are on the vulnerability list.', 'vulnhub' ); ?></span>
 				<span><?php esc_html_e( 'Click any count to filter the vulnerability list.', 'vulnhub' ); ?></span>
 			</p>
 		</div>
@@ -4499,24 +4868,53 @@ final class VulnHub_Dash_Widgets {
 	}
 
 	/**
-	 * The green-down / red-up pill in the movement column.
+	 * The movement column: the net as the cell's number, with what it is made
+	 * of underneath -- the same shape as every other cell in this table,
+	 * where a big figure sits above the smaller one it is built from.
 	 *
 	 * Down is good here, which is the opposite of most trend indicators, so
 	 * the arrow and the colour have to agree or the table reads backwards.
 	 *
-	 * @param int $n Net movement.
+	 * @param array{resurfaced:int,fixed:int,net:int} $m Movement.
 	 * @return string
 	 */
-	private static function movement_pill( int $n ): string {
-		if ( 0 === $n ) {
-			return '<span class="vh-move vh-move--flat">' . esc_html__( 'no change', 'vulnhub' ) . '</span>';
-		}
+	private static function movement_cell( array $m ): string {
+		$net      = (int) ( $m['net'] ?? 0 );
+		$net_find = (int) ( $m['net_findings'] ?? 0 );
+
+		$tone = 0 === $net ? 'flat' : ( $net < 0 ? 'good' : 'bad' );
+		$mark = 0 === $net ? '' : ( $net < 0 ? '&darr;&nbsp;' : '&uarr;&nbsp;' );
+
+		/*
+		 * Same two lines as every other cell: distinct vulnerabilities above,
+		 * the asset findings behind them below. The sub-line carries its own
+		 * sign rather than borrowing the arrow, because the two units can
+		 * move in opposite directions -- one vulnerability coming back across
+		 * forty machines outweighs three that went away from one.
+		 */
+		$sub = sprintf(
+			/* translators: %s: net change in asset findings, signed. */
+			__( 'on %s asset findings', 'vulnhub' ),
+			( $net_find > 0 ? '+' : ( $net_find < 0 ? '−' : '' ) ) . number_format_i18n( abs( $net_find ) )
+		);
+
+		// The make-up stays one hover away rather than crowding the column.
+		$title = sprintf(
+			/* translators: 1: vulnerabilities fixed, 2: resurfaced, 3: asset findings fixed, 4: asset findings resurfaced. */
+			__( '%1$s vulnerabilities fixed and %2$s resurfaced, across %3$s asset findings fixed and %4$s resurfaced.', 'vulnhub' ),
+			number_format_i18n( (int) ( $m['fixed'] ?? 0 ) ),
+			number_format_i18n( (int) ( $m['resurfaced'] ?? 0 ) ),
+			number_format_i18n( (int) ( $m['fixed_findings'] ?? 0 ) ),
+			number_format_i18n( (int) ( $m['resurfaced_findings'] ?? 0 ) )
+		);
 
 		return sprintf(
-			'<span class="vh-move vh-move--%s">%s%s</span>',
-			$n < 0 ? 'good' : 'bad',
-			$n < 0 ? '&darr;&nbsp;' : '&uarr;&nbsp;',
-			esc_html( ( $n > 0 ? '+' : '' ) . number_format_i18n( $n ) )
+			'<span class="vh-matrix__n vh-matrix__move--%1$s" title="%5$s">%2$s%3$s</span><span class="vh-matrix__sub" title="%5$s">%4$s</span>',
+			esc_attr( $tone ),
+			$mark,
+			esc_html( ( $net > 0 ? '+' : '' ) . number_format_i18n( $net ) ),
+			esc_html( $sub ),
+			esc_attr( $title )
 		);
 	}
 
@@ -4536,7 +4934,12 @@ final class VulnHub_Dash_Widgets {
 			);
 		}
 
+		// The two halves get their own columns, as each band's asset findings
+		// do: a copied table should carry what is on screen.
 		$headers[] = __( 'Movement', 'vulnhub' );
+		$headers[] = __( 'Movement (asset findings)', 'vulnhub' );
+		$headers[] = __( 'Movement (fixed)', 'vulnhub' );
+		$headers[] = __( 'Movement (resurfaced)', 'vulnhub' );
 		$out       = array();
 
 		foreach ( $data['rows'] as $row ) {
@@ -4547,7 +4950,10 @@ final class VulnHub_Dash_Widgets {
 				$line[] = (string) $cell['findings'];
 			}
 
-			$line[] = (string) $row['movement'];
+			$line[] = (string) $row['movement']['net'];
+			$line[] = (string) $row['movement']['net_findings'];
+			$line[] = (string) $row['movement']['fixed'];
+			$line[] = (string) $row['movement']['resurfaced'];
 			$out[]  = $line;
 		}
 
@@ -4558,7 +4964,10 @@ final class VulnHub_Dash_Widgets {
 			$line[] = (string) $cell['findings'];
 		}
 
-		$line[] = (string) $data['totals']['movement'];
+		$line[] = (string) $data['totals']['movement']['net'];
+		$line[] = (string) $data['totals']['movement']['net_findings'];
+		$line[] = (string) $data['totals']['movement']['fixed'];
+		$line[] = (string) $data['totals']['movement']['resurfaced'];
 		$out[]  = $line;
 
 		return array(

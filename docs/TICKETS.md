@@ -27,8 +27,9 @@ and whether the finding is on a ticket (`ticket_id > 0`).
 - **Controls:**
   - Severity checkboxes: `cov_c`, `cov_h`, `cov_m`, `cov_l`, plus `cov=1`.
     The default is critical and high.
-  - Patch: `cov_patch` = `direct` (Patch available), `app` (Update the app that
-    ships it), `no` (No fix) or `both` (All). `yes`, from before the split,
+  - Patch: `cov_patch` = `direct` (Patch available), `app` (Update the app:
+    the vulnerable component ships inside another application), `no` (No fix)
+    or `both` (All, the default). `yes`, from before the split,
     still means either fix.
   - Operating system: `cov_os` = `any`, `eol` or `supported`. This is whether
     the host's OS is past vendor support (`Eol::eol_os_asset_ids()`). For
@@ -366,10 +367,19 @@ The findings table under a vulnerability ticket used to be one fixed list
 cut at 200 rows with no pager -- a 572-finding ticket showed 200 and said
 nothing -- in five fixed columns, with no owner detail.
 
-- **Where each stands**: All / Open / Reopened / Fixed, and *Resolved: out of
-  service* when any asset has left service, each with its count (`fstate`).
-  The counts add up to the ticket's total and Fixed matches the progress
-  bar.
+- **Where each stands**: All / **Outstanding** / Open / Reopened / Fixed, and
+  *Resolved: out of service* and *Set aside* when any asset is in those
+  states, each with its count (`fstate`). Every count except Outstanding is
+  one `shown` value and they add up to the ticket's total; Fixed matches the
+  progress bar.
+  - **Outstanding is open and reopened together** (`fstate=outstanding`, added
+    2026-09-28), because that is the question a remediation ticket exists to
+    answer and it was the one view the page could not give: All folds the
+    fixed ones back in, and Open and Reopened are two halves of one list. A
+    reopened finding is outstanding work by any reading; the split matters
+    when you are asking why, not what. A tab may stand for several states
+    (`$covers` in `render_findings()`), so the counter adds a row to every tab
+    that covers it.
 - **Search** across host, vulnerability, owner, email, department, team,
   address and AWS instance name (`fq`).
 - **Group by asset** (`fgroup=asset`): one row per machine with its owner and
@@ -454,9 +464,12 @@ text, labels, file names and request metadata:
 - **Labels** are neutral:
   - finding tickets: severity, asset type, `exploit-available`
   - asset tickets: the request type
-- **Attachments** are named `findings-<date>.csv` or `assets-<kind>-<date>.csv`.
-- **The optional web link** (off unless *Link tickets back* is set) is titled
-  *Remediation record*.
+- **Attachments** are named `findings-<date>.csv` or `assets-<kind>-<date>.csv`
+  when raised, and `open-findings-<key>-<date>.csv` (or
+  `open-findings-<key>-<n>-assets-<date>.csv` for selected assets) or
+  `assets-<key>-<date>.csv` when an updated list is sent.
+- **The web link** back to the record (the *Links to VulnHub* setting,
+  `link_back`, on by default) is titled *Remediation record*.
 - **Requests to Atlassian** carry the generic User-Agent
   `VulnHub_Jira_Client::USER_AGENT` rather than core's default, which names the
   product and its maintainer. The multipart boundary is neutral too.
@@ -465,6 +478,43 @@ The name of the OAuth app registered in the Atlassian developer console is set
 there, not here, and shows under the connecting person's Connected apps.
 
 Internal notification emails are not sent to Jira and are unaffected.
+
+## Request types
+
+| Kind | Met when |
+|---|---|
+| `vulnerability` | never automatically — verified against the scanner |
+| `tenable_coverage` | Tenable holds a record of the asset |
+| `tenable_agent` | Tenable reports an agent on the asset |
+| `tenable_agent_dark` | the agent **checks in again** (`agent_status = 'on'`) |
+| `defender_coverage` | Defender reports the asset onboarded |
+| `cmdb_gap` / `intune_gap` | the source reports the asset |
+| `cleanup` | the asset is out of service or gone |
+| `other` | never automatically |
+
+**Why `tenable_agent_dark` exists** (added 2026-09-28). An agent ticket is met
+the moment Tenable holds an agent for the asset — and an agent that has gone
+quiet still *is* one. So a ticket raised about twenty machines whose agents had
+stopped reporting opened at "20 of 20 assets done" and would have closed itself
+on the first check. The ask on that ticket is the check-in, so that is what the
+new kind tests; the same twenty assets read 19 outstanding under it.
+
+Two details worth keeping:
+
+- **An uninstalled agent stays open.** If the agent is gone rather than quiet,
+  the asset is still not reporting, so it does not pass for done — getting it
+  back is the same job by a different route. Only agent-out-of-scope and
+  out-of-service leave the count, as they do for the plain agent kind.
+- **The raise dialog guesses it from the filter.** `agent=dark_14` merges into
+  `agent_dark`, which is read *before* the plain `agent` test in
+  `guess_kind()` — otherwise the dark filter falls through to `tenable_agent`
+  and the ticket opens fully met, which is exactly how the first one was
+  raised.
+
+Agent tickets (both kinds) get an extra **Agent** column on their asset table:
+Reporting / Dark / the coverage state, with when the agent last connected. The
+coverage columns answer the wrong question on these tickets — every asset on
+one is scanned and has an agent, which is why it was raised.
 
 ## Outcomes
 
@@ -482,7 +532,13 @@ row. The checks run in this order:
    - `defender_coverage`: the Defender state is in `Defender_Coverage::covered_states()`.
    - `cmdb_gap` / `intune_gap`: the source is in `sources_json` (checked with
      `LOCATE`, never `LIKE '%…%'`).
-4. **Still outstanding:** none of the above.
+4. **Set aside:** somebody set this asset aside on this ticket (see *Choosing
+   assets on a ticket*). Last of the verdicts on purpose, so it only ever
+   replaces *Still outstanding* -- an asset set aside that has since been done
+   reads as Done, because it is. The join is optional: `outcome_sql()` takes
+   the `ticket_aside` alias as a fourth argument and, without it, is exactly
+   the expression it always was.
+5. **Still outstanding:** none of the above.
 
 `cleanup` turns this around: gone or out of service *is* the ask, so both count
 as Done. `other` has no test, so its assets are never marked Done automatically.
@@ -492,11 +548,19 @@ linking to `&outcome=`, and a table of every asset with its state then and now.
 Outcomes are always calculated at read time, never stored, so they follow the
 latest sync without a job to keep them current.
 
+Above the table: the outcome chips (`&outcome=`, *Set aside* among them once
+there is one) and a **search** over host name, IP and asset type (`&aq=`,
+matched with `LOCATE`, never `LIKE '%…%'`). Both narrow the same query --
+`Tickets::assets_query()` is shared by the page, the counts and *Select all N
+matching*, so a filter cannot mean one thing in the table and another in the
+selection. The search form is a GET form, so every filter it must keep travels
+as a hidden field: a GET form discards the query string of its own action.
+
 ## Remediation progress: the bar under every ticket
 
 A verification verdict is a snapshot — it says what the scanner held at the
 moment somebody asked. The finding rows are refreshed by every sync. The two
-drift apart the moment a sync lands after a check, and they did: SD-1234 read
+drift apart the moment a sync lands after a check, and they did: ABC-123 read
 *"Tenable shows 3 of 10 findings fixed, 7 not rescanned"* directly above a table
 showing all ten `fixed`. Both were true, of different days — the check ran the
 evening the ticket was raised, before the hosts had been rescanned; the sync two
@@ -702,7 +766,7 @@ never launched twice. The steps are:
       reopened.
 
    Step 2 used to sit *below* step 3, which made it unreachable for any ticket
-   closed after its fix had already been confirmed. SD-1234 closed with ten
+   closed after its fix had already been confirmed. ABC-123 closed with ten
    findings Tenable had marked FIXED, with dates, and every one came back
    "remediation is unproven" — purely because no scan had happened in the
    hours between the last sync and somebody pressing Close. Requiring a further
@@ -758,6 +822,73 @@ and neither is reliable:
 A check does not write to Jira itself. Whether a verification comments on or
 reopens an issue is still the Jira connector's own setting.
 
+## Verifying a scope ticket
+
+`Tickets::verify_scope( $id )` judges an asset-list ticket from its own assets
+and records the verdict. It calls no scanner and no ticketing system -- whether
+a machine reached the CMDB is a question about rows this portal already holds
+-- so it runs inline, the moment something changes the answer.
+
+- **Open ticket:** a progress line only (`state = progress`). A ticket nobody
+  has closed cannot fail a closure check.
+- **Closed, nothing outstanding:** *Verified fixed*. Assets set aside count
+  towards that, and the headline says how many, so the verdict never looks
+  like it came from nowhere.
+- **Closed, assets still outstanding:** *Still detected* -- closed is not the
+  same as done, and the outcome chips say which assets.
+
+It runs from three places: `set_aside()` (inline, on every change), the ticket
+check job's asset branch, and the hourly closure pass.
+
+**This is why a closed scope ticket used to sit on "Awaiting verification" for
+ever.** `mark_closed()` set `pending`, and the only thing that ever wrote a
+verdict was the Tenable verifier, which skips asset tickets -- so nothing could
+move it. Worse, the hourly pass did reach `check_ticket()` for those tickets,
+where the answer would have been "covers no findings, so there is nothing to
+re-check": *Cannot verify* on a ticket that was perfectly verifiable.
+`verify_ticket()` now routes them to `verify_scope()` before that, and without
+the settling delay, which exists to let a scan land and there is no scan here.
+
+**A finding ticket whose every asset is set aside** takes a matching shortcut:
+`VulnHub_Tenable_Verifier::all_aside_verdict()` records *Verified fixed*
+("every asset on it has been set aside") with no Tenable call at all, since
+there is nothing left to judge. `check_ticket()` takes it before the export and
+scan-time lookup, and `on_aside_changed()` takes it instead of queueing a job
+-- so a *Closed but still detected* ticket clears the instant its last
+outstanding assets are set aside, rather than when a background job gets round
+to it. That mattered: the queue is one worker shared with the syncs, and a
+backlog of half an hour is ordinary.
+
+## Closure verification, and writing the verdict back to Jira
+
+Besides the checks above, a closed ticket is verified by an hourly pass on
+`vulnhub_verify_closures` (core's scheduler dispatches it; nothing needs
+pressing):
+
+- **Tenable decides** (`VulnHub_Tenable_Verifier::run()`, priority 10). It
+  takes up to 25 tickets awaiting verification
+  (`Tickets::awaiting_verification()`), and checks each once it is ready: from
+  the start of its due date in site time, or, with no due date,
+  `vh_verification_delay_hours()` after it closed (platform option
+  `auto_verify_hours`, default 24, capped at 720). The check itself is the
+  same `check_ticket()` as Verify.
+- **Jira is told** (`VulnHub_Jira_Reopener`, priority 20, and again after any
+  successful Tenable or Jira sync and on the automation tick). It looks at the
+  newest 40 Jira tickets carrying a *still detected* or *verified fixed*
+  verdict and answers each verdict once, keyed by `verified_at` in the Jira
+  connector setting `verdicts_seen` (the newest 500 are kept):
+  - **Still detected**, when **Reopen tickets** (`reopen_on_recurrence`,
+    default on) is set: a comment listing up to 20 findings still reported,
+    then a move back to an open status. Transition ids are read live and an
+    *in progress* target is preferred over *to do*, because the work has been
+    attempted once. With no such transition the comment still stands. Audited
+    as `ticket.reopened`.
+  - **Verified fixed**, when **Verification comments** (`comment_on_verify`,
+    default on) is set: a comment saying the scanner confirms the findings are
+    remediated.
+  - A comment Jira refuses is not marked answered, so the next pass tries it
+    again.
+
 ## Changing a ticket's status without leaving VulnHub
 
 **Change status** sits beside Status on the ticket page, for Jira-backed
@@ -769,6 +900,13 @@ both write to somebody else's ticket.
   on what the connecting account may do. `GET /vulnhub/v1/tickets/{id}/transitions`
   (filter `vulnhub_ticket_transitions`) asks Jira on open, so nothing is
   guessed from a status name — and the round trip stays off the page load.
+  A transition Jira reports with `isAvailable: false` is not offered.
+- **The move** is `POST` to the same route (filter
+  `vulnhub_apply_ticket_transition`) with `transition`, `fields[<id>]` and an
+  optional `note`, which is posted as a comment with the move. A textarea
+  field is typed in the same markup as the description edit and read back
+  with `VulnHub_Jira_Adf::from_editable()`; a number field that is not
+  numeric is refused.
 - **Fields are built from Jira's own answer.** The read expands
   `transitions.fields` and keeps every field the transition screen shows that
   can be rendered honestly, required ones first (marked `*`), dropping the ones
@@ -836,11 +974,19 @@ the same component is rendered inline on the ticket page — from one function
     somebody else's comment, for at most five minutes.
 - **Replying:** `POST` the same route (filter `vulnhub_post_ticket_comment`,
   `can_raise`), with `body` and `public`.
-  - **An internal note is the default, everywhere.** A reply notifies whoever
-    raised the request and cannot be taken back, so the quiet option is the
-    one a misclick lands on: the radio is checked, an absent `public`
-    parameter means internal, and the box changes colour before Post is
-    pressed when it is set to reply.
+  - **The reply box defaults to a reply to the customer** (changed 2026-09-28,
+    by request; it used to default to an internal note). Answering whoever
+    raised the ticket is what the box is used for, and having to move the
+    radio every time invited the opposite mistake -- a reply written and then
+    posted where only agents could read it. The public radio is checked, the
+    box is warm-bordered and the hint says the customer will be notified, from
+    first paint: `comments_body()` renders the `is-public` class itself rather
+    than waiting for a change event. The dialog on the list is one dialog for
+    every ticket, so opening it resets the radio, the hint, the text and the
+    status line back to that default.
+  - **The API default is still an internal note.** An absent `public`
+    parameter means internal, because that guards a caller that says nothing
+    -- the reply box always says which it is.
   - **Visibility needs the service desk API.** Only
     `POST /servicedeskapi/request/{key}/comment` can say whether the customer
     sees it; a comment added through the issue API is public. So every comment
@@ -863,7 +1009,7 @@ of its own (`VulnHub_Dash_Ticket_Signals`). Four signals, open tickets only:
 | Signal | When | Shown as |
 |---|---|---|
 | **Mentioned you** | a comment @mentions your Jira account, or writes your name, and you have not commented since | violet `@ Mentioned you` tag, violet row edge, bell |
-| **Your reply** | somebody @mentioned you or wrote your name in a comment since you last commented; your next comment clears it. The newest comment merely being someone else's (routing notes, status updates) does not count | amber tag, amber edge, bell |
+| **Waiting on your reply** | exactly when *Mentioned you* is set: somebody @mentioned you or wrote your name in a comment since you last commented; your next comment clears it. The newest comment merely being someone else's (routing notes, status updates) does not count | its own `Waiting on your reply` chip and an amber bell entry; on the row the violet mention tag stands for both |
 | **Assigned to you** | the Jira assignee is your account | `Yours` tag, accent edge, bell |
 | **Chase** | past its due date (end of the day, site time) *after* an updated list was sent | the row glows red, with `N days over` and `list sent …` |
 
@@ -976,9 +1122,10 @@ fixed keep their scheduled `next_check`.
 The ticket findings table shows a **Last seen** column with both sources
 ("Tenable 3h ago · Defender 2 weeks ago"), from `tenable_last_scan` and
 `defender_last_seen` (added to `Tickets::findings_for`). A finding whose asset the
-CMDB no longer has in service (`lifecycle_status <> 'in_service'`) reads as
-**resolved · out of service** — the machine is gone, so it cannot carry a live
-finding.
+CMDB no longer has in service reads as **resolved · out of service** — the
+machine is gone, so it cannot carry a live finding. (Since changed: this first
+compared to the literal `in_service`; it now uses `vh_in_service_statuses()` /
+`vh_in_service_sql()`, see *In service means the in-service set* above.)
 
 ## By department tab
 
@@ -989,7 +1136,15 @@ scanner reports it fixed **or** the asset is out of service.
 
 ## Choosing assets on a ticket, and setting them aside
 
-On a vulnerability ticket's findings, grouped by asset:
+Both kinds of ticket can do this. A vulnerability ticket sets aside an asset
+among its findings; a scope ticket (coverage, agent, Defender, CMDB, Intune,
+clean-up, other) sets aside an asset on its own list. The endpoint, the table
+and the reasons are the same for both, and one piece of JavaScript drives both
+bars -- only the confirm wording differs, because what leaves the outstanding
+column differs (`data-aside-why` / `data-aside-back` on the bar, defaulting to
+the findings wording).
+
+### On a vulnerability ticket's findings, grouped by asset
 
 - **Owner** filter beside Group: *Any owner / Has an owner / No owner*
   (`fowner`). It narrows the population, so the tab counts follow it; search
@@ -1006,13 +1161,50 @@ On a vulnerability ticket's findings, grouped by asset:
 - **Set aside for this ticket**, reason *Resolved* or *Out of scope*, with an
   optional note; *Take back* undoes it. `POST /vulnhub/v1/tickets/{id}/aside`
   (`asset_ids`, `reason`, `note`; empty reason takes back), raise-level
-  permission. Stored in `ticket_aside` (schema v37): one row per ticket and
+  permission. Stored in `ticket_aside` (added in schema v37): one row per ticket and
   asset, with who and when -- the same machine is untouched on every other
   ticket. Only assets the ticket covers are accepted. Audited as
   `ticket.aside_set` / `ticket.aside_cleared`. Nothing is sent to Jira.
 
-**What set aside means for the numbers.** An asset set aside stops being
-outstanding on that ticket: its open findings count as done in
+### On a scope ticket's assets
+
+The same bar above the assets table (`can_set_aside()` -- the ticket-raising
+capability, and deliberately not `can_transition()`: a list raised by hand
+still has to be clearable without an ITSM plugin offering status moves).
+Checkbox per row, one for the page, *Select all N matching* over every asset
+the outcome chip and the search match -- not just the fifty on the page, or the
+page size quietly becomes the unit of work.
+
+There is no *Send an updated list for selected*: the scope-ticket attachment is
+rebuilt from the whole ticket, and `asset_ids` means nothing on that path.
+
+`Tickets::set_aside()` accepts an asset the ticket covers **either** way it can
+hold one -- through its findings, or through `ticket_assets`. Asking only the
+findings, as it used to, meant a scope ticket could never set anything aside:
+there were no findings to match, so the request changed nothing and said so.
+
+**What set aside means for the numbers on a scope ticket.** The asset's outcome
+becomes *Set aside* instead of *Still outstanding*, so the tile, the chip and
+the bar all drop it and the rest of the ticket can be cleared and closed. It is
+counted separately, never folded into "no longer relevant": that verdict is the
+estate drifting, this one is a person's decision. The *No longer matters* tile
+adds them in and says so in its meta line; the progress bar reads "N no longer
+relevant · N set aside"; the Tenable ticket check's headline names them, so its
+five numbers still add to the total. The asset itself is untouched, and
+untouched on every other ticket.
+
+**What set aside means for verification on a scope ticket.** The verdict is
+redone inline (see *Verifying a scope ticket*): set the last outstanding assets
+aside on a closed ticket and it reads *Verified fixed* on the next paint, not
+after a background job.
+
+The refreshed list sent to Jira still **lists** set-aside assets -- the ticket
+was raised about them, and dropping them silently reads as work that vanished
+-- but the note says how many are set aside, so the file and the portal cannot
+look like they disagree.
+
+**What set aside means for the numbers.** On a vulnerability ticket, an asset
+set aside stops being outstanding on that ticket: its open findings count as done in
 `Tickets::progress()` (reported separately as `findings_aside` /
 `assets_aside`, and the bar says "findings done ... includes N set aside"
 rather than folding them into "fixed"), they show under a *Set aside* tab
@@ -1026,14 +1218,52 @@ hold its close at *Still detected*. The verdict is taken over what is left,
 and the headline says how many were not counted; a ticket whose every asset
 is set aside verifies as confirmed. Setting assets aside (or taking them
 back) fires `vulnhub_ticket_aside_changed( $ticket_id, $reason, $asset_ids )`;
-the Tenable ticket check answers it by queueing a check of that ticket with
-no scan (trigger `aside`), so the Verification column updates within a
-minute or two. Checked on a resolved ticket with 2 of its assets out of
+the Tenable ticket check (`on_aside_changed()`) answers it by queueing a
+check of that ticket with no scan (trigger `aside`), so the Verification
+column updates within a minute or two. It does so only for a finding ticket
+with a Jira key while the Tenable connector is enabled; scope tickets have no
+verifier verdict to redo. Checked on a resolved ticket with 2 of its assets out of
 scope: *Still detected* became *Verified fixed* ("all 7 findings are
 confirmed remediated ... 4 findings on assets set aside are not counted").
+
+**Checked** (2026-09-28) on the three tickets that were stuck: a closed CMDB-gap
+ticket with 3 assets done and 2 set aside went from *Awaiting verification* --
+where it had sat since it closed a week earlier -- to *Verified fixed*, and two
+*Closed but still detected* vulnerability tickets whose every asset had been set
+aside went to *Verified fixed* with no Tenable call. Awaiting verification and
+Closed but still detected both read 0 afterwards. In a rolled-back transaction,
+taking one asset back flipped the CMDB ticket to *Still detected* ("1 of its 5
+assets still need it") and setting it aside again flipped it back.
+
+**Checked** on a 29-asset agent ticket (2026-09-28): two assets set aside moved
+Still outstanding 29 -> 27 and put 2 under *Set aside*, with the tile meta and
+the progress bar both naming them; taking them back restored 29. An asset not on
+the ticket was refused. A three-character host-name search narrowed the table
+and *Select all N matching* to the same single row. A vulnerability ticket's aside round trip was unchanged
+(`findings_aside` 0 -> 1 -> 0).
 
 **Checked** on a 1,318-finding ticket, inside a rolled-back transaction:
 two assets set aside moved findings done 651 -> 655 (4 set aside) and assets
 clear 55 -> 57; an asset not on the ticket was refused; the rollback left no
 rows. The selected-assets preview for three assets listed 10 findings, equal
 to a direct count of their open findings on the ticket.
+
+## The REST routes, in one place
+
+All under `/vulnhub/v1`, registered in core (`class-vh-rest.php`) and answered
+through filters, so core names no ticketing system. A filtered route that
+nobody answers returns 409 ("No ticketing integration is active").
+
+| Route | Permission | Filter |
+|---|---|---|
+| `GET /tickets` | view | `Tickets::query()` directly |
+| `POST /tickets` (send a reviewed `draft`) | raise | `vulnhub_create_ticket` |
+| `POST /tickets/draft` | raise | `vulnhub_draft_ticket` |
+| `POST /tickets/check`, `GET /tickets/check/{job}` | raise | `vulnhub_start_ticket_check`, `vulnhub_ticket_check_status` |
+| `POST /tickets/{id}/refresh` | raise | `vulnhub_refresh_ticket` (no button calls it today; the Verify job refreshes through the same filter) |
+| `POST /tickets/{id}/attachment` | raise | `vulnhub_refresh_ticket_attachment` |
+| `POST /tickets/{id}/aside` | raise | none: `Tickets::set_aside()` |
+| `GET` / `POST /tickets/{id}/transitions` | raise | `vulnhub_ticket_transitions`, `vulnhub_apply_ticket_transition` |
+| `GET` / `POST /tickets/{id}/comments` | view / raise | `vulnhub_ticket_comments`, `vulnhub_post_ticket_comment` |
+
+*View* is `vulnhub_view`; *raise* is `vulnhub_raise_ticket` (`Caps::RAISE_TICKET`).

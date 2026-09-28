@@ -198,8 +198,13 @@
 
 	/* ---------------------------------------------------------------
 	 * Line-chart crosshair
+	 *
+	 * Bound per chart rather than delegated, so anything that replaces a
+	 * widget's markup has to say so: vh:widget-refreshed carries the new
+	 * body and this binds the charts inside it.
 	 * ------------------------------------------------------------- */
-	document.querySelectorAll( '[data-vh-chart="line"]' ).forEach( function ( svg ) {
+	function bindLineCharts( root ) {
+	( root || document ).querySelectorAll( '[data-vh-chart="line"]' ).forEach( function ( svg ) {
 		var crosshair = svg.querySelector( '.vh-crosshair' );
 
 		svg.querySelectorAll( '.vh-hit' ).forEach( function ( hit ) {
@@ -226,6 +231,12 @@
 				hideTip();
 			} );
 		} );
+	} );
+	}
+
+	bindLineCharts( document );
+	document.addEventListener( 'vh:widget-refreshed', function ( event ) {
+		bindLineCharts( event.detail && event.detail.root ? event.detail.root : document );
 	} );
 
 	/* ---------------------------------------------------------------
@@ -3270,6 +3281,23 @@ document.addEventListener( 'click', function ( e ) {
 		}
 
 		box.setAttribute( 'data-vh-comments-for', String( id ) );
+
+		// One dialog serves every ticket, so it still holds whatever the last
+		// one was set to. Put it back to the default -- reply to customer --
+		// and to an empty box, so the next ticket starts where the page says
+		// it does.
+		var pub = box.querySelector( 'input[type=radio][value=public]' );
+		var int_ = box.querySelector( 'input[type=radio][value=internal]' );
+		var hint = box.querySelector( '[data-vh-comment-hint]' );
+		var body = box.querySelector( '[data-vh-comment-body]' );
+		var note = box.querySelector( '[data-vh-comment-status]' );
+		if ( pub ) { pub.checked = true; }
+		if ( int_ ) { int_.checked = false; }
+		if ( hint ) { hint.textContent = 'The person who raised this will be notified and can read it.'; }
+		if ( body ) { body.value = ''; }
+		if ( note ) { note.textContent = ''; }
+		box.classList.add( 'is-public' );
+
 		if ( ! dlg.open ) { dlg.showModal(); }
 
 		wire( box, id );
@@ -3715,9 +3743,15 @@ document.addEventListener( 'click', function ( e ) {
 		var sel   = bar.querySelector( '[data-vh-aside-reason]' );
 		var label = sel.options[ sel.selectedIndex ] ? sel.options[ sel.selectedIndex ].text : reason;
 		var n     = list.length + ( 1 === list.length ? ' asset' : ' assets' );
+		// What actually leaves the outstanding column differs by ticket: the
+		// findings on an asset there, the whole asset on a scope ticket. The
+		// bar says which; the findings tab sends nothing and keeps the
+		// wording it always had.
+		var why   = bar.dataset.asideWhy || 'Their open findings stop counting as outstanding on this ticket only, and leave its updated list. Nothing is sent to Jira. You can take them back.';
+		var back  = bar.dataset.asideBack || 'Their open findings count as outstanding again.';
 		var ask   = reason
-			? 'Set ' + n + ' aside on this ticket as "' + label + '"?\n\nTheir open findings stop counting as outstanding on this ticket only, and leave its updated list. Nothing is sent to Jira. You can take them back.'
-			: 'Take ' + n + ' back into this ticket? Their open findings count as outstanding again.';
+			? 'Set ' + n + ' aside on this ticket as "' + label + '"?\n\n' + why
+			: 'Take ' + n + ' back into this ticket? ' + back;
 		if ( ! window.confirm( ask ) ) { return; }
 		status.textContent = 'Saving…';
 		window.wp.apiFetch( {
@@ -3738,4 +3772,140 @@ document.addEventListener( 'click', function ( e ) {
 	bar.querySelector( '[data-vh-aside-clear]' ).addEventListener( 'click', function () { aside( '' ); } );
 
 	sync();
+}() );
+
+/* ------------------------------------------------------------ refresh one widget.
+ *
+ * The board caches each widget's markup and serves it stale while a cron job
+ * re-renders behind the reader. That is right when nobody is watching and
+ * wrong when somebody is: a sync has just landed, or a number is being
+ * argued with, and the only ways to ask for it again were to wait out the
+ * cache or flush every widget on the site.
+ *
+ * The body is replaced, not the whole widget: the header carries the export
+ * menu and this button, and throwing those away mid-click is how a control
+ * stops responding to its own second press.
+ * --------------------------------------------------------------------- */
+( function () {
+	'use strict';
+
+	if ( ! window.wp || ! window.wp.apiFetch ) {
+		return;
+	}
+
+	// Rendered hidden by PHP: with JavaScript off this button could do
+	// nothing, and offering it would be a lie.
+	Array.prototype.forEach.call(
+		document.querySelectorAll( '[data-vh-widget-refresh]' ),
+		function ( button ) { button.hidden = false; }
+	);
+
+	document.addEventListener( 'click', function ( event ) {
+		var button = event.target.closest ? event.target.closest( '[data-vh-widget-refresh]' ) : null;
+
+		if ( ! button || button.disabled ) {
+			return;
+		}
+
+		var section = button.closest( '[data-vh-widget]' );
+		var body    = section ? section.querySelector( '.vh-w__body' ) : null;
+
+		if ( ! body ) {
+			return;
+		}
+
+		event.preventDefault();
+		button.disabled = true;
+		section.classList.add( 'is-refreshing' );
+		body.setAttribute( 'aria-busy', 'true' );
+
+		window.wp.apiFetch( {
+			path: '/vulnhub-dashboard/v1/widget/refresh',
+			method: 'POST',
+			data: { widget: button.getAttribute( 'data-vh-widget-refresh' ) }
+		} )
+			.then( function ( result ) {
+				if ( ! result || ! result.html ) {
+					return;
+				}
+
+				body.innerHTML = result.html;
+
+				// Anything bound at load inside the old markup went with it.
+				document.dispatchEvent( new CustomEvent( 'vh:widget-refreshed', {
+					detail: { id: result.widget, root: body }
+				} ) );
+			} )
+			.catch( function ( error ) {
+				// Said in the widget, where the press was, rather than in a
+				// corner of the page.
+				var note = document.createElement( 'p' );
+				note.className = 'vh-meta';
+				note.setAttribute( 'role', 'status' );
+				note.textContent = ( error && error.message ) || 'That widget did not refresh.';
+				body.appendChild( note );
+			} )
+			.then( function () {
+				button.disabled = false;
+				section.classList.remove( 'is-refreshing' );
+				body.removeAttribute( 'aria-busy' );
+			} );
+	} );
+}() );
+
+/* ------------------------------------------------------------ cost page tabs.
+ *
+ * Spend and savings are one page now. Both panels are rendered and only one is
+ * shown; switching is a class and a hidden attribute, so the browser's own
+ * back button and a deep link to either page still land where they used to.
+ * --------------------------------------------------------------------- */
+( function () {
+	'use strict';
+
+	document.addEventListener( 'click', function ( event ) {
+		var tab = event.target.closest ? event.target.closest( '[data-vh-costtab]' ) : null;
+
+		if ( ! tab ) {
+			return;
+		}
+
+		var want = tab.getAttribute( 'data-vh-costtab' );
+
+		Array.prototype.forEach.call( document.querySelectorAll( '[data-vh-costtab]' ), function ( other ) {
+			var on = other === tab;
+			other.classList.toggle( 'is-active', on );
+			other.setAttribute( 'aria-selected', on ? 'true' : 'false' );
+		} );
+
+		Array.prototype.forEach.call( document.querySelectorAll( '[data-vh-costpanel]' ), function ( panel ) {
+			panel.hidden = panel.getAttribute( 'data-vh-costpanel' ) !== want;
+		} );
+	} );
+}() );
+
+/* ---------------------------------------------------- the account menu's home.
+ *
+ * The rail carries `backdrop-filter: blur(14px)`, and a filtered element is a
+ * containing block for its `position: fixed` descendants -- so the avatar,
+ * fixed to `top: 14px; right: 18px`, pinned itself to the top right corner of
+ * the 64px rail instead of the screen, and grew a second home every time the
+ * rail hover-expanded to 224px.
+ *
+ * notify.js already does exactly this to the bell, for exactly this reason.
+ * Lifting the element to the body is the whole fix: the markup stays in the
+ * header where it belongs for a reader with no JavaScript, and the corner is
+ * a corner.
+ * --------------------------------------------------------------------- */
+( function () {
+	'use strict';
+
+	var account = document.querySelector( '.vh-account' );
+
+	if ( ! account || ! document.body ) {
+		return;
+	}
+
+	try {
+		document.body.appendChild( account );
+	} catch ( e ) {}
 }() );

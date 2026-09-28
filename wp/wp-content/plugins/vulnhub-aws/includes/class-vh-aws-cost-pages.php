@@ -43,18 +43,34 @@ final class VulnHub_AWS_Cost_Pages {
 	 * @return array<string,array<string,mixed>>
 	 */
 	public static function register_views( array $views ): array {
+		/*
+		 * One screen, two tabs.
+		 *
+		 * Spend and savings were two rail entries and two pages, and nobody
+		 * reads one without the other: the savings list is an argument about
+		 * the spend it came from. They are now one page with a tab strip, and
+		 * it lives in the account menu (`account => true`) rather than the
+		 * rail -- cost is a monthly errand, not one of the six screens
+		 * somebody works from daily.
+		 *
+		 * The savings view stays registered and hidden so its URL, its page
+		 * and anything bookmarked against it keep working; it renders the
+		 * same screen with the savings tab already open.
+		 */
 		$mine = array(
 			self::VIEW_COST    => array(
-				'title' => __( 'AWS Cost', 'vulnhub' ),
-				'slug'  => self::SLUG_COST,
-				'menu'  => __( 'AWS Cost', 'vulnhub' ),
-				'icon'  => 'M12 3v18M16 7.5c0-1.9-1.8-3-4-3s-4 1.1-4 3 1.8 2.6 4 3 4 1.2 4 3.1-1.8 3-4 3-4-1.1-4-3',
+				'title'   => __( 'AWS Cost', 'vulnhub' ),
+				'slug'    => self::SLUG_COST,
+				'menu'    => __( 'Cost and savings', 'vulnhub' ),
+				'icon'    => 'M12 3v18M16 7.5c0-1.9-1.8-3-4-3s-4 1.1-4 3 1.8 2.6 4 3 4 1.2 4 3.1-1.8 3-4 3-4-1.1-4-3',
+				'account' => true,
 			),
 			self::VIEW_SAVINGS => array(
-				'title' => __( 'Cost Savings', 'vulnhub' ),
-				'slug'  => self::SLUG_SAVINGS,
-				'menu'  => __( 'Cost Savings', 'vulnhub' ),
-				'icon'  => 'M4 17l5-5 4 4 7-8M14 8h6v6',
+				'title'  => __( 'Cost Savings', 'vulnhub' ),
+				'slug'   => self::SLUG_SAVINGS,
+				'menu'   => __( 'Cost Savings', 'vulnhub' ),
+				'icon'   => 'M4 17l5-5 4 4 7-8M14 8h6v6',
+				'hidden' => true,
 			),
 		);
 
@@ -116,8 +132,12 @@ final class VulnHub_AWS_Cost_Pages {
 		$v = static fn( string $f ): string => (string) ( @filemtime( VULNHUB_AWS_DIR . 'assets/' . $f ) ?: VULNHUB_AWS_VERSION ); // phpcs:ignore
 
 		wp_enqueue_style( 'vulnhub-aws-cost', VULNHUB_AWS_URL . 'assets/cost.css', array( 'vulnhub-app' ), $v( 'cost.css' ) );
-		$js = self::VIEW_COST === $view ? 'cost-dashboard.js' : 'cost-savings.js';
-		wp_enqueue_script( 'vulnhub-aws-cost', VULNHUB_AWS_URL . 'assets/' . $js, array(), $v( $js ), true );
+
+		// Both halves are on the page now, so both scripts load. Each binds
+		// to its own container and does nothing if that container is absent,
+		// which is what makes one page out of two possible at all.
+		wp_enqueue_script( 'vulnhub-aws-cost', VULNHUB_AWS_URL . 'assets/cost-dashboard.js', array(), $v( 'cost-dashboard.js' ), true );
+		wp_enqueue_script( 'vulnhub-aws-savings', VULNHUB_AWS_URL . 'assets/cost-savings.js', array( 'vulnhub-aws-cost' ), $v( 'cost-savings.js' ), true );
 		wp_localize_script(
 			'vulnhub-aws-cost',
 			'VH_AWS_COST',
@@ -162,13 +182,58 @@ final class VulnHub_AWS_Cost_Pages {
 	}
 
 	public static function render_cost(): void {
-		echo '<div class="vh-page-head vh-cost-head"><div>' . self::head_html( 'cost' ) . '</div>' . self::export_button( 'cost' ) . '</div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-		echo '<div class="vh-cost" data-vh-cost><p class="vh-sub vh-muted">' . esc_html__( 'Loading…', 'vulnhub' ) . '</p></div>';
+		self::render_both( 'cost' );
 	}
 
 	public static function render_savings(): void {
-		echo '<div class="vh-page-head vh-cost-head"><div>' . self::head_html( 'savings' ) . '</div>' . self::export_button( 'savings' ) . '</div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-		echo '<div class="vh-cost" data-vh-savings><p class="vh-sub vh-muted">' . esc_html__( 'Loading…', 'vulnhub' ) . '</p></div>';
+		// The old savings URL still answers; it opens on its own tab.
+		self::render_both( 'savings' );
+	}
+
+	/**
+	 * Spend and savings on one page, one tab open.
+	 *
+	 * Both panels are in the DOM from the start rather than fetched when a
+	 * tab is first opened: each is one REST call against a snapshot this
+	 * portal already holds, and a tab that pauses to load is a worse trade
+	 * than a second request nobody waits for.
+	 *
+	 * @param string $open Which tab starts open: 'cost' or 'savings'.
+	 */
+	private static function render_both( string $open ): void {
+		$tabs = array(
+			'cost'    => __( 'What it costs', 'vulnhub' ),
+			'savings' => __( 'What could be saved', 'vulnhub' ),
+		);
+
+		echo '<div class="vh-page-head vh-cost-head"><div>' . self::head_html( 'cost' ) . '</div>' . self::export_button( 'cost' ) . '</div>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+
+		echo '<div class="vh-segbar vh-costtabs" role="tablist" aria-label="' . esc_attr__( 'Cost sections', 'vulnhub' ) . '">';
+
+		foreach ( $tabs as $key => $label ) {
+			printf(
+				'<button type="button" class="vh-seg%1$s" role="tab" aria-selected="%2$s" aria-controls="vh-cost-%3$s" data-vh-costtab="%3$s">%4$s</button>',
+				$open === $key ? ' is-active' : '',
+				$open === $key ? 'true' : 'false',
+				esc_attr( $key ),
+				esc_html( $label )
+			);
+		}
+
+		echo '</div>';
+
+		printf(
+			'<section id="vh-cost-cost" role="tabpanel" data-vh-costpanel="cost"%s>',
+			'cost' === $open ? '' : ' hidden'
+		);
+		echo '<div class="vh-cost" data-vh-cost><p class="vh-sub vh-muted">' . esc_html__( 'Loading…', 'vulnhub' ) . '</p></div></section>';
+
+		printf(
+			'<section id="vh-cost-savings" role="tabpanel" data-vh-costpanel="savings"%s>',
+			'savings' === $open ? '' : ' hidden'
+		);
+		echo '<p class="vh-sub">' . esc_html__( 'Every suggestion below comes from measured AWS data, never from a rule of thumb. Accept or drop each one and the plan totals as you go.', 'vulnhub' ) . '</p>';
+		echo '<div class="vh-cost" data-vh-savings><p class="vh-sub vh-muted">' . esc_html__( 'Loading…', 'vulnhub' ) . '</p></div></section>';
 	}
 
 	/* ============================================================== REST */

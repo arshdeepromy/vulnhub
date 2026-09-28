@@ -1,0 +1,247 @@
+/**
+ * Internet exposure.
+ *
+ * Hangs off the app's tokens like every other page here; the soft ink is
+ * `--vh-muted`, never `--vh-ink-soft`, which no theme defines.
+ */
+
+.vh-ie-tabs {
+	margin: 4px 0 14px;
+}
+
+.vh-ie-filters {
+	margin-bottom: 10px;
+}
+
+/* ---- the name list ---------------------------------------------- */
+
+.vh-ie-card {
+	margin-bottom: 8px;
+}
+
+.vh-ie-card[open] {
+	margin-bottom: 18px;
+}
+
+/* A row in a list of hundreds should not lift as the pointer crosses it. */
+.vh-ie-card:hover {
+	transform: none;
+}
+
+.vh-ie-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 14px;
+	margin: 0;
+	padding: 2px 0;
+	cursor: pointer;
+	list-style: none;
+}
+
+.vh-ie-head::-webkit-details-marker {
+	display: none;
+}
+
+.vh-ie-card[open] > .vh-ie-head {
+	margin-bottom: 12px;
+	padding-bottom: 10px;
+	border-bottom: 1px solid var(--vh-line);
+}
+
+.vh-ie-head:focus-visible {
+	outline: 2px solid var(--vh-accent);
+	outline-offset: 4px;
+	border-radius: 8px;
+}
+
+.vh-ie-headline {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	min-width: 0;
+	margin-right: auto;
+}
+
+.vh-ie-name {
+	font-family: var(--vh-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+	font-size: 14px;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.vh-ie-head:hover .vh-ie-name {
+	color: var(--vh-link);
+}
+
+.vh-ie-reaches {
+	font-size: 12px;
+	color: var(--vh-muted);
+}
+
+.vh-ie-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+/* ---- the chain --------------------------------------------------- */
+
+.vh-ie-chain {
+	list-style: none;
+	margin: 0;
+	padding: 2px 0 2px 6px;
+}
+
+.vh-ie-hop {
+	position: relative;
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	padding: 0 0 16px 0;
+}
+
+/* The rail joining one hop to the next. Not drawn under the last, which
+   is what makes the chain read as ending rather than trailing off. */
+.vh-ie-hop:not(:last-child)::before {
+	content: "";
+	position: absolute;
+	left: 17px;
+	top: 34px;
+	bottom: 2px;
+	width: 2px;
+	border-radius: 2px;
+	background: var(--vh-line-strong);
+}
+
+.vh-ie-ico {
+	position: relative;
+	z-index: 1;
+	flex: 0 0 auto;
+	display: grid;
+	place-items: center;
+	width: 36px;
+	height: 36px;
+	border-radius: 10px;
+	background: var(--vh-raised-solid, var(--vh-surface));
+	border: 1px solid var(--vh-line);
+	color: var(--vh-muted);
+}
+
+.vh-ie-ico svg {
+	width: 20px;
+	height: 20px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.8;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.vh-ie-hop.is-ok .vh-ie-ico {
+	color: var(--vh-good, #4ade80);
+	border-color: color-mix(in srgb, var(--vh-good, #4ade80) 45%, transparent);
+}
+
+.vh-ie-hop.is-warn .vh-ie-ico {
+	color: var(--vh-warn, #f5b04a);
+	border-color: color-mix(in srgb, var(--vh-warn, #f5b04a) 45%, transparent);
+}
+
+.vh-ie-hop.is-bad .vh-ie-ico {
+	color: var(--vh-bad, #ff5a66);
+	border-color: color-mix(in srgb, var(--vh-bad, #ff5a66) 50%, transparent);
+}
+
+.vh-ie-hop__text {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	min-width: 0;
+	padding-top: 2px;
+}
+
+.vh-ie-hop__label {
+	font-size: 14px;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.vh-ie-hop__sub {
+	font-size: 13px;
+	color: var(--vh-ink-2, var(--vh-muted));
+	overflow-wrap: anywhere;
+}
+
+.vh-ie-hop__meta {
+	font-size: 12px;
+	color: var(--vh-muted);
+	overflow-wrap: anywhere;
+}
+
+/* The expand. Each hop arrives just after the one above it, so the chain
+   draws itself downward in the direction the traffic travels -- which is
+   the point being made, not decoration. */
+@keyframes vhIeHop {
+	from { opacity: 0; transform: translateY(-6px); }
+	to   { opacity: 1; transform: none; }
+}
+
+.vh-ie-card[open] .vh-ie-hop {
+	opacity: 0;
+	animation: vhIeHop .26s var(--vh-ease, cubic-bezier(.2, .7, .3, 1)) forwards;
+}
+
+.vh-ie-card[open] .vh-ie-hop:nth-child(1) { animation-delay: .02s; }
+.vh-ie-card[open] .vh-ie-hop:nth-child(2) { animation-delay: .08s; }
+.vh-ie-card[open] .vh-ie-hop:nth-child(3) { animation-delay: .14s; }
+.vh-ie-card[open] .vh-ie-hop:nth-child(4) { animation-delay: .20s; }
+.vh-ie-card[open] .vh-ie-hop:nth-child(5) { animation-delay: .26s; }
+.vh-ie-card[open] .vh-ie-hop:nth-child(6) { animation-delay: .32s; }
+.vh-ie-card[open] .vh-ie-hop:nth-child(n + 7) { animation-delay: .38s; }
+
+@media (prefers-reduced-motion: reduce) {
+	.vh-ie-card[open] .vh-ie-hop {
+		opacity: 1;
+		animation: none;
+	}
+}
+
+/* ---- gaps and sources -------------------------------------------- */
+
+.vh-ie-gap {
+	margin-bottom: 16px;
+}
+
+.vh-ie-clean {
+	color: var(--vh-good, #4ade80);
+}
+
+.vh-ie-mono {
+	font-family: var(--vh-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+	font-size: 12px;
+	overflow-wrap: anywhere;
+}
+
+.vh-ie-sources {
+	margin-top: 18px;
+}
+
+.vh-ie-pager {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin: 14px 0 4px;
+}
+
+.vh-ie-pager .is-active {
+	border-color: var(--vh-accent);
+	color: var(--vh-ink);
+}
+
+.vh-ie-pager__gap {
+	color: var(--vh-muted);
+	padding: 0 2px;
+}
+

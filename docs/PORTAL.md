@@ -75,12 +75,22 @@ viewBox) and optionally `hidden`.
 | products | `/products/` | hidden; reached from "View all" on the Exposure by product widget |
 | vendors | `/vendors/` | yes |
 | eol_plan | `/eol-plan/` | yes; contributed by vulnhub-eos |
-| sources | `/inventory-sources/` | yes; which register knows what, and what each is missing |
+| sources | `/inventory-sources/` | yes (menu label *Sources*); which register knows what, and what each is missing |
 | network | `/cloud-network/` | yes; contributed by vulnhub-aws — the live AWS topology. `?tab=estate` is the whole-estate flowchart (`&env=prod` / `&env=nonprod` draw one environment), `?tab=` anything else is one account |
+| awscost | `/aws-cost/` | yes (*AWS Cost*); contributed by vulnhub-aws, inserted after `network` — totals, trend, accounts, services, spikes; see `docs/AWS-COST.md` |
+| awssavings | `/aws-savings/` | yes (*Cost Savings*); contributed by vulnhub-aws — the confirmed / needs-confirmation suggestions and the running plan |
 | cspm | `/cloud-posture/` | yes; contributed by vulnhub-plerion |
+| alerts | `/alerts/` | yes; contributed by vulnhub-alerts (*Advisory alerts*) |
+| docs | `/docs/` | yes; contributed by vulnhub-docs |
+| departments | `/departments/` | hidden; contributed by vulnhub-departments, reached from the *Department exposure* widget |
 | appstream | `/appstream-cleanup/` | hidden; reached from the notifications bell |
 | admin | `/portal-admin/` | hidden; reached from the gear at the foot of the rail |
 | login | `/sign-in/` | hidden |
+
+The table is grouped for reading, not in menu order; the live order is below.
+To see exactly what is registered on an install, run
+`wp eval 'print_r( array_keys( vulnhub_dash_views() ) );'`; the option
+`vulnhub_dash_pages` maps each view to its page id.
 
 **Contributed views.** A plugin adds a screen the portal owns by filtering
 `vulnhub_dash_views` and answering `vulnhub_dash_render_view_<view>`. The
@@ -93,6 +103,7 @@ nav. Current users:
 - vulnhub-departments (`departments`, hidden)
 - vulnhub-eos (`eol_plan`) — the EOL remediation plan; see `docs/EOS.md`
 - vulnhub-aws (`network`) — the live AWS network topology; see `docs/AWS-NETWORK.md`
+- vulnhub-aws (`awscost`, `awssavings`) — the AWS cost snapshot and the savings plan; see `docs/AWS-COST.md`
 - vulnhub-plerion (`cspm` Cloud Posture); see `docs/PLERION.md`
 - vulnhub-tenable (`appstream`, hidden) — AppStream duplicate cleanup; see `docs/APPSTREAM.md`
 
@@ -101,8 +112,11 @@ view. Each entry takes `label`, `url`, an `icon` SVG path and `active`. Nothing
 in the product uses it today; it is there for pages built outside the portal.
 
 **Primary nav order today:** Dashboard, Vulnerabilities, Alerts, Cloud
-Posture, Assets, EOL plan, Inventory sources, Cloud Network, Tickets,
-Exceptions, Vendors, Docs, then the nav-extra links.
+Posture, Assets, EOL plan, Sources, Cloud Network, AWS Cost, Cost Savings,
+Tickets, Exceptions, Vendors, Docs, then the nav-extra links. Each
+contributor chooses its own position by where it inserts itself in the array
+(the AWS cost pair goes after `network`, alerts after `vulnerabilities`), so
+the order moves when a plugin is switched off.
 
 A *Cloud Exposure* view sat beside Cloud Posture until 23 September 2026. It
 was removed in favour of Cloud Network, which answers the same question from
@@ -128,16 +142,18 @@ across the portal:
   chip** saying what it means in words. A URL-only filter with no visible
   explanation is how a screen ends up lying about what it is showing.
 
-The assets list understands, beyond the obvious `search` / `type` / `team` /
-`site` / `life`:
+The assets list understands, beyond the obvious `search` / `asset_type` /
+`team_id` / `location_id` / `life` / `owner` (see `docs/FILTERS.md` §12):
 
 | Parameter | Means |
 |---|---|
-| `known=<src>`, `only:<src>`, `not:<src>` | one system at a time: known by, *solely* known by, or not known by |
+| `known=<src>`, `known=only:<src>`, `known=not:<src>` | one system at a time: known by, *solely* known by, or not known by |
 | `has=<a,b>` | known by **all** of these systems |
 | `missing=<a,b>` | known by **none** of these systems |
 | `hosting=<env>` | `aws`, `azure`, `gcp`, `cloud`, `onprem`, `enduser`, `unknown` — the same vocabulary the findings list uses |
-| `coverage`, `endpoint`, `primary_source`, `operating_system`, `patch_group`, `eol` | scan/EDR state and the dashboard's drill-downs |
+| `coverage`, `agent`, `defender`, `aws` | scan, agent and EDR state; several spellings merge into one select through `merged_asset_filters()` (`docs/FILTERS.md` §10) |
+| `needs_user=1` | user-bound devices with no named owner; shown as a chip now that Owner is a select |
+| `primary_source`, `operating_system`, `patch_group`, `eol` | the dashboard's drill-downs, each shown as a chip |
 
 `has` and `missing` are what make *"in Tenable, but missing from the CMDB"*
 expressible — one chip, two parameters, so removing the chip removes both
@@ -174,7 +190,8 @@ run, and `enduser` exists for the assets list, where it is the icon beside ~640
 hostnames and a filter value of its own.
 
 The vulnerabilities list has its own vocabulary, beyond `search` / `severity` /
-`team` / `department` / `age` / `life`:
+`asset_type` / `team_id` / `department` / `owner` / `age` / `overdue` / `life`
+/ `state`:
 
 | Parameter | Means |
 |---|---|
@@ -182,9 +199,10 @@ The vulnerabilities list has its own vocabulary, beyond `search` / `severity` /
 | `excepted=exclude\|only` | drop accepted risk from the list, or show only it |
 | `patch_available=direct\|app\|app_shipped\|app_waiting\|app_unknown\|1\|0`, `support=eol\|insupport` | the narrower questions: is there a direct patch, does the fix come through an update to the app that ships the component, either, or no fix; is the platform still supported |
 | `os_eol=yes\|no`, `ticketed=yes\|no` | the host's OS is past vendor support or not; the finding is on a ticket or not |
-| `hosting=<env>`, `platform=<os>` | the same environment vocabulary as the assets list; platform is windows / linux / macos |
+| `hosting=<env>`, `platform=<os>` | the same environment vocabulary as the assets list; platform is an `Os::platforms()` key (`windows`, `linux`, `macos`, `mobile`, `other`), passed to `Repo::findings()` as `os_platform` |
 | `product` + `pkind` | the product row that was clicked — **both parts**, because a slug alone is shared by the package and the application view of the same software |
-| `zone`, `route`, `delivery`, `poc`, `sev_not`, `asset` | URL-only drill-downs from the dashboard, each with a banner |
+| `comp=app\|bundled` | the finding is the application's own, or a bundled library it ships (`docs/FILTERS.md` §11) |
+| `zone`, `route`, `delivery`, `poc`, `expo`, `sev_not`, `asset` | URL-only drill-downs from the dashboard, each with a banner (`expo` is vulnhub-threat's "open to the internet and vulnerable on that port") |
 
 `fix` is the parameter name because **`action` belongs to WordPress**:
 `admin-post.php` dispatches on it, the export form posts there, and a filter of
@@ -198,8 +216,8 @@ screen without saying so.
 
 `?vuln=<id>` is not a third tab but a page of its own, and its **Affected
 assets** panel is the findings list scoped to that plugin. It understands
-`search`, `state`, `asset_type`, `team_id`, `department`, `location_id`,
-`hosting`, `ticketed`, `age`, `life` and `overdue` -- the device half of the
+`search`, `state`, `asset_type`, `team_id`, `department`, `owner`,
+`location_id`, `hosting`, `ticketed`, `age`, `life` and `overdue` -- the device half of the
 list's vocabulary. Severity, patch and action are the vulnerability's own and
 would answer nothing here.
 
@@ -233,6 +251,43 @@ ids are all known at once.
 
 ---
 
+## The rail, and what sits behind the avatar
+
+The left rail carries the screens somebody works from. Everything else lives
+in the account menu, behind the avatar in the top right corner beside the bell
+(2026-09-28).
+
+- A view opts in with **`'account' => true`** in its `vulnhub_dash_views`
+  entry. `render_nav()` skips those in the rail and collects them into the
+  menu with their own icon and label, so a plugin can put its screen there
+  without the dashboard knowing what it is. `'hidden' => true` still means
+  "nowhere in the chrome, but the page and URL work".
+- In the menu: the account-flagged views (**Cost and savings**, **Docs**),
+  **Administration** (MANAGE only), the **light/dark** switch, **Your profile
+  and sign-in**, **Sign out**.
+- The theme switch is a `<button data-vh-theme>`, and app.js binds that
+  delegated, so it works anywhere in the document. The menu stays open after
+  it: watching the page change under an open menu is the feedback.
+- `.vh-account` is `position: fixed` in the corner, and **app.js lifts it to
+  `document.body`** on load. It has to: the rail carries
+  `backdrop-filter: blur(14px)`, and a filtered element is the containing
+  block for its fixed descendants -- left in the header, the avatar pins to
+  the rail's corner, not the screen's, and moves again when the rail
+  hover-expands to 224px. notify.js does the same to the bell for the same
+  reason. The markup stays in the header so a reader with no JavaScript still
+  gets it.
+- The bell sits at `right: 66px` and the avatar at `right: 18px`. The bell's
+  offset is set in `notify.css`, which is enqueued *after* `app-redesign.css`
+  -- setting it in the earlier file loses silently. Below 768px, where the
+  rail becomes a sticky top bar, both stay pinned to the corner above it.
+
+**AWS Cost and Cost Savings are one page.** Nobody reads one without the
+other -- the savings list is an argument about the spend it came from -- so
+`aws-cost` renders both, with a segmented tab strip and both panels in the
+DOM. The savings view stays registered and hidden so its URL and page keep
+working; it renders the same screen with the savings tab open. Both scripts
+load on both; each binds to its own container.
+
 ## The shell
 
 ### Rail
@@ -265,8 +320,12 @@ to `document.body`, so no transformed ancestor can clip it; the dropdown is
 The feed is generic: any module adds an entry through the
 `vulnhub_notifications` filter — `{ id, severity, count, title, body, url }` —
 and the bell polls `GET vulnhub-dashboard/v1/notifications` every two minutes,
-summing `count` into the red badge. The first (and today only) contributor is
-the Tenable AppStream tool (`docs/APPSTREAM.md`). A notice with a `url` links
+summing `count` into the red badge. Two modules contribute today: the Tenable
+AppStream tool (`docs/APPSTREAM.md`) and `VulnHub_Dash_Ticket_Signals`, which
+adds the per-viewer ticket signals (mentioned you, your reply, assigned to you,
+chase, overdue) linking to `/tickets/?tfor=<signal>` (`docs/TICKETS.md`). The
+bell is `notify.js` / `notify.css`, enqueued on every portal view except
+sign-in. A notice with a `url` links
 to the screen that resolves it; the bell itself carries no capability, so each
 linked action re-checks its own.
 
@@ -338,6 +397,27 @@ seeded Elementor header is a horizontal row. Sign-in draws neither. See
   - Signing in sends them straight to the dashboard.
   - The `vh_from_portal` request flag, or a portal referer, keeps an admin-post handler's redirect in the portal rather than wp-admin (`keep_redirects_in_portal()`).
 
+### Sign-in
+
+`/sign-in/` is `VulnHub_Dash_Portal::render_login()`, a full-bleed scene with
+no rail. The form posts back to the same page with `log`, `pwd`,
+`rememberme`, `redirect_to` and the nonce `vh_login_nonce`
+(`vulnhub_portal_login`); `handle_login_post()` runs on `template_redirect`,
+calls `wp_signon()`, and on failure returns to sign-in with a plain,
+non-enumerating `vh_err` message. Because it goes through `wp_signon()`, the
+vulnhub-auth second factor still applies: its `wp_login` hook clears the
+fresh session and draws the challenge. The SSO button appears when a
+vulnhub-auth provider is active and starts at `wp-login.php` with that
+provider's start action.
+
+The screen's copy is filterable rather than templated, so a rebrand is not a
+code change: `vulnhub_portal_login_wordmark` (the word beside the mark),
+`vulnhub_portal_login_host` (an optional label under the card, empty by
+default so the deployment's hostname is never printed), the
+`vulnhub_portal_login_top` / `_bottom` actions inside the card, and the link
+targets `vulnhub_portal_request_access_url`, `vulnhub_portal_privacy_url`,
+`vulnhub_portal_terms_url` and `vulnhub_portal_status_url`.
+
 ---
 
 ## The admin shell
@@ -391,14 +471,17 @@ seeded Elementor header is a horizontal row. Sign-in draws neither. See
 
   | Group | Sections |
   |---|---|
-  | Data | Imports, Rules, Advisory feeds, Departments, Teams & SLAs, Threat context, Jira routing |
+  | Data | Imports, Rules, Advisory feeds, Departments, EOS remediation plan, Teams & SLAs, Threat context, Jira routing |
   | Integrations | Integrations, AWS accounts, and the mirrored Tenable, Intune, CMDB, Jira, Automation and Backup screens |
   | Platform | Admin overview, Your security, Authentication, End of life, People, AI access, Sync activity, Audit trail, Appearance, Settings, Documentation |
 
-  *Your security* is the one section every account can open: it is registered
-  at `vulnhub_view` by vulnhub-auth and shows the signed-in person their own
-  two-factor enrolment, recovery codes and remembered browsers. Everything else
-  in Platform needs a management capability.
+  *Your security* is registered at `vulnhub_view` by vulnhub-auth and shows the
+  signed-in person their own two-factor enrolment, recovery codes and
+  remembered browsers. It is not the only section a non-manager can open: *AI
+  access*, *Sync activity* and *Documentation* are also `vulnhub_view`, *Audit
+  trail* needs `vulnhub_view_audit`, and the mirrored Tenable, Intune, CMDB,
+  Jira and Automation screens take whatever capability their wp-admin page
+  declares (`vulnhub_view` today). Everything else needs `vulnhub_manage`.
 
 - **Styling:** core's `admin.css` is **not** loaded on the portal; only
   `admin.js` is. `app.css` recolours `table.widefat`. Nothing makes wp-admin
@@ -420,17 +503,17 @@ drops a handle WordPress has never heard of.
 | `vulnhub-app-redesign` | `assets/app-redesign.css` | depends on `vulnhub-app`: rail, layout, component supplements, admin shell, light theme |
 | `vulnhub-app` | `assets/app.js` | depends on `wp-api-fetch`; localised as `VulnHubApp` (`nonce`, `restRoot`, `i18n`) |
 | `vulnhub-motion` | `assets/vh-motion.js` | progressive motion layer |
+| `vulnhub-notify` | `assets/notify.css`, `assets/notify.js` | the notifications bell; every view except sign-in, localised as `VulnHubNotify` (`rest`, `nonce`) |
 | sign-in only | `login.css`, `login.js`, `attack-surface-bg.js`, Google Fonts (Space Grotesk, JetBrains Mono) | Elementor's frontend bundles are dequeued on sign-in, where they threw a ReferenceError |
 
 **Versions are the plugin version plus the file's mtime** (`asset_ver()`).
 Cloudflare caches CSS for hours, and a version that only moves on release
-served fresh markup styled by stale CSS. vulnhub-core and vulnhub-elementor's
-front-end stylesheet follow the same rule. **These do not yet**, and still
-enqueue with bare version constants: vulnhub-alerts, vulnhub-docs,
-vulnhub-backup, vulnhub-rules, vulnhub-import, vulnhub-threat, and the
-Elementor editor's copy of `app.css`. An edit to their CSS or JS can be
-invisible behind the CDN until the version constant moves. If a change "did
-not land", check the `?ver=` on the file in the network tab first.
+served fresh markup styled by stale CSS. Every plugin that ships front-end
+assets now follows the same rule (checked 2026-09-26: alerts, docs, backup,
+rules, import, threat, eos, aws, plerion, the Tenable AppStream screen,
+vulnhub-elementor, and the Elementor editor's copy of `app.css`). A new
+plugin has to do the same. If a change "did not land", check the `?ver=` on
+the file in the network tab first.
 
 **Theme.** Dark by default; `data-theme="light"` on `<html>` swaps the tokens.
 The choice is remembered in `localStorage['vh-theme']` and applied before first
@@ -483,7 +566,9 @@ Detail is in the handbook's *Widget framework* page. The short version:
 
 - **Registry.** `VulnHub_Dash_Widgets::all()` holds 38 widgets in core. Plugins
   add more on `vulnhub_dashboard_widgets`: attack paths (threat), servers by
-  hosting environment (hosting) and department exposure (departments). Each
+  hosting environment (hosting), department exposure (departments) and AWS
+  coverage (aws) -- 42 on this install. Plugins place their widget on the
+  default board through `vulnhub_dashboard_default_layout`. Each
   entry names a render callback, an optional `data` callback for CSV export,
   its group, its default width and the data sources it `depends` on. The
   registry is memoised per request, so hook it early.
@@ -491,11 +576,42 @@ Detail is in the handbook's *Widget framework* page. The short version:
   to 3, 4, 6, 8 or 12 columns, and unknown ids are dropped on save. Widgets
   added to the default layout later are appended to existing boards once
   (`vulnhub_dashboard_seen`).
-- **Caching.** Each widget's HTML is cached per host and locale: fresh for 15
-  minutes, served stale for up to 6 hours while a background refresh runs. A
+- **Caching.** Each widget's HTML is cached per host and locale: fresh for 55
+  minutes (`vulnhub_widget_cache_ttl`), served stale for up to 7 days
+  (`vulnhub_widget_stale_ttl`) while a background refresh runs. The data epoch
+  invalidates a widget as soon as its data moves, so the TTL only has to cover
+  numbers that age with the clock. A
   finished sync busts only the widgets fed by what that connector moved
   (`bust_for_connector()`). A warm job and an hourly cron re-render the board
   so nobody waits on a cold widget.
+- **Refresh one widget** (2026-09-28): a button in every widget header,
+  beside the export menu. `POST /vulnhub-dashboard/v1/widget/refresh` with the
+  widget id → `VulnHub_Dash_Widgets::refresh_now()` deletes that widget's
+  transient (and its queued-refresh lock, so a later stale read can still
+  queue), renders it, stores it fresh, and returns the markup; app.js swaps it
+  into `.vh-w__body`. Same capability as viewing the board -- it reads what
+  the person can already see and writes only that widget's cache entry.
+  - It **re-reads the database; it does not run a connector sync**, and the
+    button's title says so. "Refresh" on a security dashboard otherwise reads
+    as "go and ask Tenable", which would be an hour of work behind a click.
+  - The **body** is replaced, not the section: the header carries the export
+    menu and the button itself, and replacing those mid-click is how a control
+    stops answering its own second press.
+  - Swapping markup throws away anything bound at load inside it. The swap
+    fires `vh:widget-refreshed` with the new body, and the line-chart
+    crosshair (bound per chart, not delegated) binds again from it. Anything
+    else that binds inside a widget body must listen for that event.
+  - Rendered `hidden` and unhidden by app.js, like the drag handle: with
+    JavaScript off it could do nothing.
+- **The cache key carries a render stamp** (`render_stamp()`): the plugin
+  version plus the modification time of the file holding that widget's render
+  callback, found by reflection so a widget registered by another plugin gets
+  its own file. The epoch answers "have the numbers moved" and nothing
+  answered "has the markup changed", so after a deploy the stale entry was
+  served and only cron could replace it -- change a widget, reload, see the
+  previous version, with a backed-up queue meaning hours rather than minutes.
+  A code change now misses the cache outright, which is what the note above
+  `store()` always claimed: the first reader after a deploy renders, once.
 
 **What we can act on** (`action_by_environment`, `action_by_os`) are worth a
 note, because they are the two that answer "what do we do on Monday". One row
@@ -522,9 +638,6 @@ actionable segment renders as a sliver against them.
 
 ### REST: `vulnhub-dashboard/v1`
 
-- `GET /notifications` — the topbar-bell feed: `apply_filters( 'vulnhub_notifications', [] )`
-  flattened to `{ items, count }`. Read-only, `Caps::VIEW`.
-
 Every route requires a logged-in user with `vulnhub_view`.
 
 | Route | Purpose |
@@ -534,6 +647,7 @@ Every route requires a logged-in user with `vulnhub_view`.
 | `GET /vuln-assets?vuln=`, `GET /product-assets?product=` | lazy bodies for the *Vulnerability on assets* and *By product* tabs |
 | `GET /vendor-drill` | the vendor card drill-down (paged, searchable, with its CSV export URL) |
 | `GET /sync-status?connector=` | live connector progress for the admin cards; also reaps a stuck run |
+| `GET /notifications` | the bell feed: `apply_filters( 'vulnhub_notifications', [] )` flattened to `{ items, count }` |
 
 ### admin-post actions
 
@@ -546,6 +660,11 @@ Every route requires a logged-in user with `vulnhub_view`.
 | `vulnhub_sources_csv` | view | the Inventory sources matrix and per-register figures as CSV |
 | `vulnhub_eos_export_csv` | view | the EOL plan screen's filtered rows |
 | `vulnhub_seed_elementor` | manage | recreate missing seeded Elementor documents |
+| `vulnhub_ticket_scope` | view to download, `vulnhub_raise_ticket` to save | the assets list's scope-ticket dialog: either hands over to the CSV export for the same filters and columns, or records the ticket against the matching assets (`docs/TICKETS.md`) |
+| `vulnhub_ticket_status` | `vulnhub_raise_ticket` | set a manually tracked ticket's status from its page (audited as `ticket.status_changed`) |
+| `vulnhub_ticket_report_csv` | view | the Tickets report as CSV (`set=tickets\|coverage`, nonce `vulnhub_ticket_report_csv_<set>`) |
+| `vulnhub_dept_devices_csv` | view | vulnhub-departments: the devices behind a department |
+| `vulnhub_dept_import` | manage | vulnhub-departments: upload the directory export |
 
 ---
 
@@ -569,8 +688,9 @@ when it is unset. The rules for writing new code are in `docs/CORE-API.md`.
   inside their own frame, never the page.
 - **`.vh-tablewrap--cards`** restacks each row as a card under 640px, with
   `td[data-th]::before` labels. It is used on the Vulnerabilities findings
-  table and the Assets list. Tickets, exceptions and detail tables still
-  scroll.
+  table, the Assets list, the ticket page's assets table, both Inventory
+  sources tables and the EOL plan. The Tickets list, Exceptions and the other
+  detail tables still scroll.
 - **Chart table views** use `.vh-tableview__scroll`.
 - **Primary actions** never live at the bottom of a tall panel. The export
   control is anchored to its button in the panel header, not
@@ -586,11 +706,14 @@ works. See `docs/BROWSER-PASS.md`.
 
 | Script | Checks | Auth |
 |---|---|---|
-| `dev/browserpass.js [--only=<substring>] [--theme=dark\|light]` | 24 screens × desktop and phone: console errors, PHP errors in the DOM, overflow | `.admin_pass` |
+| `dev/browserpass.js [--only=<substring>] [--theme=dark\|light]` | 22 screens × desktop and phone: console errors, PHP errors in the DOM, overflow | `.admin_pass` |
 | `dev/interact.js` | 25 functional assertions | `.admin_pass` |
 | `dev/railhover.js` | rail is 64px collapsed, expands on hover and focus, causes no reflow, is not a flyout on a phone | `VH_COOKIE` (from `wp_generate_auth_cookie`), `VH_BASE` |
-| `dev/designaudit.js [--only=] [--theme=]` | contrast, unlabeled controls, clipped text, small tap targets | `.admin_pass` |
+| `dev/designaudit.js [--only=] [--theme=]` | contrast, unlabeled controls, clipped text, small tap targets (18 screens) | `.admin_pass` |
 | `dev/portaluser.js`, `boardpass.js`, `importpass.js` | the portal-only user, board packing, the large CSV import UI | `.portal_test_pass` |
+
+`dragpass.js`, `exportpass.js`, `lifecyclepass.js`, `ownerpass.js`,
+`elementorpass.js` and `probe.js` are listed in `docs/BROWSER-PASS.md`.
 
 `NODE_PATH` must point at the Playwright that ships with `@playwright/mcp`. Run
 as the user that installed Playwright, not under `sudo`. The cookie name for a
@@ -605,6 +728,118 @@ under a different hash, so compute
 
 Nothing found in the September 2026 audit is still open. What was found, and
 what it took, is recorded below.
+
+### Fixed 2026-09-28
+
+- **"Reporting scope" and "In service" looked like synonyms.** They are not:
+  the scope is in service *plus* unknown, and 249 assets sit in that gap. A
+  dashboard cell reading 305 and the list it opened reading 286 were both
+  right, with nothing on screen to say why. The lifecycle control now spells
+  the scope out (`lifecycle_scope_label()`, used by all three selects), the
+  `value=""` option also selects on `life=reportable` so arriving from a
+  widget no longer leaves the control looking unset, and the vulnerability
+  list's scope line names what a narrower choice leaves out, with a link back
+  to the scope.
+
+- **Vulnerabilities by severity and age counted machines the rest of the
+  portal does not.** The table had no lifecycle filter at all: its correctness
+  rode on the archive sweep, which puts findings on out-of-service assets into
+  state `archived` so they fall out of the state filter. That works until a
+  sweep misses one, and nothing catches it -- 165 open findings sat on spare
+  and planned machines the day this was looked at. Every count in the table
+  also links to the vulnerability list, which filters by lifecycle itself and
+  defaults to `reportable`, so the cell and the list it opened were answering
+  different questions. `severity_age_rows()` and `severity_movement()` now join
+  assets and filter to `vh_reportable_sql()` -- the platform's own Reporting
+  scope setting, in service and unknown by default -- and the card says so.
+  Measured on the live data: 12,499 vulnerabilities on 258,430 asset findings
+  unscoped, 12,497 on 258,239 scoped.
+- **Severity-by-age audited cell by cell against the list it links to.** Every
+  cell and every total now agrees exactly (15 of 15, delta 0), checked by
+  running `Repo::findings()` with the link's own arguments. Four things were
+  wrong or waiting to go wrong:
+  - **The link did not carry the cell's filters.** It sent `state=open_any`
+    and nothing else, and relied on the list's defaults matching. They mostly
+    did, but the Lifecycle control then looked unset, which reads as "no
+    filter" -- the reason this was reported. It now sends `life=reportable`
+    and `excepted=exclude`.
+  - **Accepted risk.** The table has always excluded it (`exception_id = 0`);
+    the list includes it, dimmed. Zero open exceptions in this estate today,
+    so the gap was invisible and would have appeared the day somebody
+    accepted one.
+  - **The Total row's link had no severity filter**, so it opened the list
+    with informational findings in it: 907 rows more than the number in the
+    30-90 day column. It now sends `sev_not=info`.
+  - **Age was measured over a different population on each side.** The
+    dashboard ages a vulnerability by its oldest open instance *within the
+    reporting scope*; `Repo::findings()`'s age join grouped over every asset,
+    scope or not, so a vulnerability whose only old instance sits on a retired
+    machine would be *over 90 days* in the list and *30-90 days* on the board.
+    No case in this data; the join now carries the same lifecycle scope.
+- **The table now prints when it was counted**, absolute, not "5 minutes ago"
+  -- a relative phrase freezes the moment the markup is cached and starts
+  lying. Widget HTML is cached for up to 55 minutes and served stale beyond
+  that, so a cell can legitimately trail the list it opens; the reported
+  309-vs-306 gap was exactly that, a sync moving numbers under a cached
+  render. The foot also states that accepted risk and informational findings
+  are excluded, and reports any vulnerability with no first-seen date, which
+  falls in no column and used to vanish between the query and the table.
+- **Movement now counts in both units**, like every other column: net
+  vulnerabilities as the figure, "on ±N asset findings" beneath it. It had been
+  the only column whose second line was not asset findings, which is what made
+  it read as a different kind of number. The fixed/resurfaced halves live in
+  the cell's tooltip. The sub-line signs itself instead of borrowing the arrow,
+  because the two units can move in opposite directions — one vulnerability
+  coming back across forty machines outweighs three that left one.
+- **The Movement column was a pill among numbers.** Every other cell in that
+  table is a figure with the smaller figure it is made of underneath; movement
+  was a coloured chip carrying a net and nothing else, and "-586" cannot say
+  whether that is 586 fixed or 631 fixed with 45 back again -- different weeks.
+  `severity_movement()` now returns both halves, `movement_cell()` replaces
+  `movement_pill()`, and the column reads as a number with "N fixed, N
+  resurfaced" in grey beneath it. Colour and arrow still carry the direction
+  (down is good here). The copied table and TSV gained *Movement (fixed)* and
+  *Movement (resurfaced)* columns, as each band already carries its asset
+  findings.
+- **Widget changes did not show up.** Both fixes above were live and correct
+  for an hour while the board kept drawing the old table: stale-while-
+  revalidate served the cached markup and the background re-render sits on the
+  cron queue, which was half an hour behind. `bust()` does not help -- it marks
+  an entry stale, and stale is exactly what gets served. Fixed by the render
+  stamp in the cache key (see *The dashboard board*).
+- **Still unscoped, same pattern, not touched:** `funnel_stages()`,
+  `exploit_funnel` (its two counts at ~2015), `top_vuln_rows()`, the
+  `group_rows()` vulnerability half, and the counts near 1912 and 4406 in
+  `class-vh-dash-widgets.php`. Each reads findings with no asset join, so each
+  can drift the same way. `vh_reportable_sql()` is already used by seven
+  queries in that file, so the pattern to copy is there.
+
+### Fixed 2026-09-27
+
+- **Internet-facing functions was unreadable on the dark theme.**
+  `vulnhub-aws/assets/serverless.css` asked for `--vh-ink-soft`, a token no
+  theme defines. `color: var(--vh-ink-soft)` with no fallback is invalid at
+  computed-value time, so the declaration was dropped and every soft-ink
+  element on that page -- the section sub-headings, the fact labels, the
+  diagram's column captions and the second and third line of every box --
+  fell back to inherited near-black on a near-black card. The token is
+  `--vh-muted`; it is the only page that ever used the other name. Worth
+  checking for elsewhere: a mistyped custom property fails silently and shows
+  up only in the theme whose ink it happens to match.
+- **The path-in diagram cut its own labels off.** Names were clipped at a
+  fixed character count with no regard for the box, so "All S3 buckets in the
+  account" was drawn past the right-hand edge of the picture. Boxes are wider,
+  a name wraps to a second line, and the text is clipped to its box; see
+  `docs/AWS-NETWORK.md`, *How the topology is drawn*. The hops also gained
+  icons, and each diagram's arrow marker got a unique id -- every card on the
+  page had been emitting the same one.
+- **The page was one 40-card scroll.** Each function rendered its facts, two
+  tables, the diagram and two lists, all open, 46 times. Each card is now a
+  collapsed `<details>` whose `<summary>` carries the name, account, region
+  and the chips, with *Expand all* / *Collapse all* above the list. Native
+  `<details>` keeps it keyboard-operable and working with JavaScript blocked;
+  the only script opens the card a `#fn-<key>` link points at, because a
+  collapsed one is not scrolled to by every engine.
 
 ### Fixed 2026-09-16
 

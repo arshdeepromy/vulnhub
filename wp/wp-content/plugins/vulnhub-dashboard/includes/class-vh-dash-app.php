@@ -387,6 +387,29 @@ final class VulnHub_Dash_App {
 		return $out;
 	}
 
+	/**
+	 * What the reporting scope actually covers, spelled out for a control.
+	 *
+	 * "Reporting scope" means nothing to somebody who does not already know
+	 * what it covers, and the option sitting next to "In service" reads like
+	 * a synonym for it. It is not: the scope also holds every asset whose
+	 * lifecycle nobody has told us, and choosing the more specific-sounding
+	 * option silently drops them -- which is how a dashboard cell and the
+	 * list it opens can both be right and disagree.
+	 */
+	public static function lifecycle_scope_label(): string {
+		$names = array_map(
+			static fn( string $st ): string => strtolower( (string) ( vh_lifecycle_statuses()[ $st ]['label'] ?? $st ) ),
+			vh_reportable_statuses()
+		);
+
+		return sprintf(
+			/* translators: %s: the lifecycle statuses the dashboard counts. */
+			__( 'Reporting scope — %s (what the dashboard counts)', 'vulnhub' ),
+			implode( ' + ', $names )
+		);
+	}
+
 	public static function render_nav(): void {
 		$pages   = (array) get_option( 'vulnhub_dash_pages', array() );
 		$current = self::$current_view;
@@ -400,7 +423,7 @@ final class VulnHub_Dash_App {
 			<nav class="vh-nav" aria-label="<?php esc_attr_e( 'VulnHub sections', 'vulnhub' ); ?>">
 				<?php foreach ( vulnhub_dash_views() as $view => $def ) : ?>
 					<?php
-					if ( ! empty( $def['hidden'] ) ) {
+					if ( ! empty( $def['hidden'] ) || ! empty( $def['account'] ) ) {
 						continue;
 					}
 					$url = ! empty( $pages[ $view ] ) ? get_permalink( (int) $pages[ $view ] ) : '#';
@@ -424,6 +447,36 @@ final class VulnHub_Dash_App {
 				<?php endforeach; ?>
 			</nav>
 
+			<?php
+			/*
+			 * Everything that is not one of the screens somebody works from
+			 * lives behind the avatar: cost, docs, administration, the
+			 * theme switch, the account itself.
+			 *
+			 * The rail was carrying eleven destinations and a settings gear,
+			 * which makes the six that matter harder to find, not easier. A
+			 * view opts in with `account => true` rather than being named
+			 * here, so a plugin can put its own screen in this menu without
+			 * the dashboard knowing what it is.
+			 */
+			$vh_account_views = array();
+
+			foreach ( vulnhub_dash_views() as $vh_v => $vh_def ) {
+				if ( empty( $vh_def['account'] ) || ! empty( $vh_def['hidden'] ) ) {
+					continue;
+				}
+
+				$vh_u = ! empty( $pages[ $vh_v ] ) ? get_permalink( (int) $pages[ $vh_v ] ) : '';
+
+				if ( $vh_u ) {
+					$vh_account_views[ $vh_v ] = array(
+						'label' => (string) $vh_def['menu'],
+						'url'   => (string) $vh_u,
+						'icon'  => (string) $vh_def['icon'],
+					);
+				}
+			}
+			?>
 			<div class="vh-topbar__end">
 				<?php if ( vulnhub()->settings->mock_mode() ) : ?>
 					<span class="vh-chip vh-chip--warn" title="<?php esc_attr_e( 'Running on generated sample data. Add credentials in the admin portal to go live.', 'vulnhub' ); ?>">
@@ -437,25 +490,44 @@ final class VulnHub_Dash_App {
 					</button>
 					<div class="vh-bell__menu" data-vh-bell-menu hidden></div>
 				</div>
-				<button type="button" class="vh-iconbtn" data-vh-theme aria-label="<?php esc_attr_e( 'Switch between light and dark', 'vulnhub' ); ?>">
-					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 13a9 9 0 11-10-10 7 7 0 0010 10z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
-				</button>
-				<?php if ( current_user_can( Caps::MANAGE ) ) : ?>
-					<a class="vh-nav__link vh-nav__link--admin<?php echo VulnHub_Dash_Portal::ADMIN_VIEW === $current ? ' is-active' : ''; ?>"
-						href="<?php echo esc_url( VulnHub_Dash_Portal::portal_url( VulnHub_Dash_Portal::ADMIN_VIEW ) ); ?>"
-						title="<?php esc_attr_e( 'Administration', 'vulnhub' ); ?>">
-						<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M19.4 13a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-2.9 1.2V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-2.9-1.2l-.1.1a2 2 0 11-2.8-2.8l.1-.1A1.7 1.7 0 004.6 15H4.5a2 2 0 110-4h.1a1.7 1.7 0 001.2-2.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 002.9-1.2V4a2 2 0 114 0v.1a1.7 1.7 0 002.9 1.2l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 001.2 2.9h.1a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-						<span class="vh-nav__txt"><?php esc_html_e( 'Administration', 'vulnhub' ); ?></span>
-					</a>
-				<?php endif; ?>
 				<?php if ( is_user_logged_in() ) : ?>
 					<details class="vh-account">
-						<summary aria-label="<?php esc_attr_e( 'Account', 'vulnhub' ); ?>">
+						<summary aria-label="<?php esc_attr_e( 'Account and settings', 'vulnhub' ); ?>" title="<?php esc_attr_e( 'Account and settings', 'vulnhub' ); ?>">
 							<span class="vh-account__initials"><?php echo esc_html( strtoupper( substr( wp_get_current_user()->display_name, 0, 2 ) ) ); ?></span>
 						</summary>
 						<div class="vh-account__menu">
 							<p class="vh-account__name"><?php echo esc_html( wp_get_current_user()->display_name ); ?></p>
 							<p class="vh-account__mail"><?php echo esc_html( wp_get_current_user()->user_email ); ?></p>
+
+							<?php foreach ( $vh_account_views as $vh_v => $vh_item ) : ?>
+								<a class="vh-account__item<?php echo $current === $vh_v ? ' is-active' : ''; ?>" href="<?php echo esc_url( $vh_item['url'] ); ?>">
+									<svg viewBox="0 0 24 24" aria-hidden="true"><path d="<?php echo esc_attr( $vh_item['icon'] ); ?>" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+									<span><?php echo esc_html( $vh_item['label'] ); ?></span>
+								</a>
+							<?php endforeach; ?>
+
+							<?php if ( current_user_can( Caps::MANAGE ) ) : ?>
+								<a class="vh-account__item<?php echo VulnHub_Dash_Portal::ADMIN_VIEW === $current ? ' is-active' : ''; ?>" href="<?php echo esc_url( VulnHub_Dash_Portal::portal_url( VulnHub_Dash_Portal::ADMIN_VIEW ) ); ?>">
+									<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M19.4 13a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-2.9 1.2V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-2.9-1.2l-.1.1a2 2 0 11-2.8-2.8l.1-.1A1.7 1.7 0 004.6 15H4.5a2 2 0 110-4h.1a1.7 1.7 0 001.2-2.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 002.9-1.2V4a2 2 0 114 0v.1a1.7 1.7 0 002.9 1.2l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 001.2 2.9h.1a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+									<span><?php esc_html_e( 'Administration', 'vulnhub' ); ?></span>
+								</a>
+							<?php endif; ?>
+
+							<?php
+							/*
+							 * The theme switch is a button, not a link, and
+							 * the menu stays open after it: seeing the page
+							 * change under an open menu is the feedback, and
+							 * closing would hide what was just done.
+							 */
+							?>
+							<button type="button" class="vh-account__item" data-vh-theme>
+								<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 13a9 9 0 11-10-10 7 7 0 0010 10z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+								<span><?php esc_html_e( 'Light or dark', 'vulnhub' ); ?></span>
+							</button>
+
+							<span class="vh-account__rule" aria-hidden="true"></span>
+
 							<?php
 							/*
 							 * The portal's own "Your security" section when the auth
@@ -467,8 +539,14 @@ final class VulnHub_Dash_App {
 								? VulnHub_Dash_Portal::portal_url( VulnHub_Dash_Portal::ADMIN_VIEW, array( 'section' => 'security' ) )
 								: admin_url( 'profile.php' );
 							?>
-							<a href="<?php echo esc_url( $vh_security ); ?>"><?php esc_html_e( 'Security &amp; MFA', 'vulnhub' ); ?></a>
-							<a href="<?php echo esc_url( wp_logout_url( VulnHub_Dash_Portal::login_url() ) ); ?>"><?php esc_html_e( 'Sign out', 'vulnhub' ); ?></a>
+							<a class="vh-account__item" href="<?php echo esc_url( $vh_security ); ?>">
+								<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4.5 20a7.5 7.5 0 0115 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+								<span><?php esc_html_e( 'Your profile and sign-in', 'vulnhub' ); ?></span>
+							</a>
+							<a class="vh-account__item" href="<?php echo esc_url( wp_logout_url( VulnHub_Dash_Portal::login_url() ) ); ?>">
+								<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 17l5-5-5-5M20 12H9M11 4H6a2 2 0 00-2 2v12a2 2 0 002 2h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+								<span><?php esc_html_e( 'Sign out', 'vulnhub' ); ?></span>
+							</a>
 						</div>
 					</details>
 				<?php endif; ?>
@@ -1234,7 +1312,7 @@ final class VulnHub_Dash_App {
 						 */
 						?>
 						<option value=""><?php esc_html_e( 'Every asset, including retired', 'vulnhub' ); ?></option>
-						<option value="reportable" <?php selected( self::q( 'life' ), 'reportable' ); ?>><?php esc_html_e( 'Reporting scope (what the dashboard counts)', 'vulnhub' ); ?></option>
+						<option value="reportable" <?php selected( self::q( 'life' ), 'reportable' ); ?>><?php echo esc_html( self::lifecycle_scope_label() ); ?></option>
 						<option value="in_service_all" <?php selected( self::q( 'life' ), 'in_service_all' ); ?>><?php esc_html_e( 'Everything with an owner expectation', 'vulnhub' ); ?></option>
 						<?php foreach ( vh_lifecycle_statuses() as $vh_ls => $vh_lm ) : ?>
 							<option value="<?php echo esc_attr( (string) $vh_ls ); ?>" <?php selected( self::q( 'life' ), (string) $vh_ls ); ?>><?php echo esc_html( (string) $vh_lm['label'] ); ?></option>
@@ -1293,7 +1371,7 @@ final class VulnHub_Dash_App {
 							<th><?php esc_html_e( 'Asset', 'vulnhub' ); ?></th>
 							<th><?php esc_html_e( 'Type', 'vulnhub' ); ?></th>
 							<th><?php esc_html_e( 'App', 'vulnhub' ); ?></th>
-							<th><?php esc_html_e( 'Install path', 'vulnhub' ); ?></th>
+							<th title="<?php esc_attr_e( 'Where the vulnerable copy is, when the check examines files; otherwise the package and version found, and the version that fixes it.', 'vulnhub' ); ?>"><?php esc_html_e( 'Where / version', 'vulnhub' ); ?></th>
 							<th><?php esc_html_e( 'Owner', 'vulnhub' ); ?><?php echo self::owner_eye_html(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></th>
 							<th><?php esc_html_e( 'State', 'vulnhub' ); ?></th>
 							<th><?php esc_html_e( 'First found', 'vulnhub' ); ?></th>
@@ -1332,12 +1410,7 @@ final class VulnHub_Dash_App {
 									<?php endif; ?>
 								</td>
 								<td>
-									<?php $vh_path = VH_Product::install_path( (string) ( $f['output'] ?? '' ) ); ?>
-									<?php if ( '' !== $vh_path ) : ?>
-										<code class="vh-path" title="<?php echo esc_attr( $vh_path ); ?>"><?php echo esc_html( $vh_path ); ?></code>
-									<?php else : ?>
-										<span class="vh-meta">&mdash;</span>
-									<?php endif; ?>
+									<?php echo self::evidence_cell_html( (string) ( $f['output'] ?? '' ), (string) ( $f['zone_path'] ?? '' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside. ?>
 								</td>
 								<td>
 									<?php if ( ! empty( $f['owner_name'] ) ) : ?>
@@ -1543,6 +1616,20 @@ final class VulnHub_Dash_App {
 				strtolower( (string) ( vh_lifecycle_statuses()[ $vh_vscope_now ]['label'] ?? $vh_vscope_now ) )
 			);
 		?>
+		<?php
+		/*
+		 * What a narrower choice is leaving out, in assets. Without this a
+		 * dashboard cell reading 305 and this list reading 286 are both right
+		 * and nobody can see why: the difference is every asset whose
+		 * lifecycle nobody has told us, which the scope counts and "in
+		 * service" does not.
+		 */
+		$vh_scope_out = isset( vh_lifecycle_statuses()[ $vh_vscope_now ] )
+			? array_values( array_diff( vh_reportable_statuses(), array( $vh_vscope_now ) ) )
+			: array();
+
+		$vh_scope_out_n = $vh_scope_out ? Repo::assets_in_lifecycles( $vh_scope_out ) : 0;
+		?>
 		<p class="vh-sub vh-muted">
 			<?php
 			printf(
@@ -1551,6 +1638,27 @@ final class VulnHub_Dash_App {
 				esc_html( $vh_vscope_text )
 			);
 			?>
+			<?php if ( $vh_scope_out_n > 0 ) : ?>
+				<?php
+				printf(
+					/* translators: 1: assets left out, 2: the lifecycle statuses they hold. */
+					esc_html__( 'Narrower than the reporting scope: %1$s asset(s) whose lifecycle is %2$s are counted on the dashboard and left out here, so this total can be smaller than the number you clicked.', 'vulnhub' ),
+					esc_html( number_format_i18n( $vh_scope_out_n ) ),
+					esc_html(
+						implode(
+							', ',
+							array_map(
+								static fn( string $st ): string => strtolower( (string) ( vh_lifecycle_statuses()[ $st ]['label'] ?? $st ) ),
+								$vh_scope_out
+							)
+						)
+					)
+				);
+				?>
+				<a href="<?php echo esc_url( self::page_url( 'vulnerabilities', array_merge( self::current_filters( array( 'search', 'patch_available', 'ticketed', 'os_eol', 'severity', 'asset_type', 'team_id', 'age', 'overdue' ) ), array( 'life' => 'reportable' ) ) ) ); ?>">
+					<?php esc_html_e( 'Use the reporting scope', 'vulnhub' ); ?>
+				</a>
+			<?php endif; ?>
 			<?php if ( 'all' !== $vh_vscope_now ) : ?>
 				<a href="<?php echo esc_url( self::page_url( 'vulnerabilities', array_merge( self::current_filters( array( 'search', 'patch_available', 'ticketed', 'os_eol', 'severity', 'asset_type', 'team_id', 'age', 'overdue' ) ), array( 'life' => 'all' ) ) ) ); ?>">
 					<?php esc_html_e( 'Include every asset', 'vulnhub' ); ?>
@@ -1835,7 +1943,7 @@ final class VulnHub_Dash_App {
 			</label>
 			<label><?php esc_html_e( 'Lifecycle', 'vulnhub' ); ?>
 				<select name="life">
-					<option value=""><?php esc_html_e( 'Reporting scope (what the dashboard counts)', 'vulnhub' ); ?></option>
+					<option value="" <?php selected( in_array( self::q( 'life' ), array( '', 'reportable' ), true ), true ); ?>><?php echo esc_html( self::lifecycle_scope_label() ); ?></option>
 					<option value="in_service_all" <?php selected( self::q( 'life' ), 'in_service_all' ); ?>><?php esc_html_e( 'Everything with an owner expectation', 'vulnhub' ); ?></option>
 					<option value="all" <?php selected( self::q( 'life' ), 'all' ); ?>><?php esc_html_e( 'Every asset, including retired', 'vulnhub' ); ?></option>
 					<?php foreach ( vh_lifecycle_statuses() as $vh_ls => $vh_lm ) : ?>
@@ -2069,7 +2177,7 @@ final class VulnHub_Dash_App {
 								<th><?php esc_html_e( 'Reachable via', 'vulnhub' ); ?></th>
 							<?php endif; ?>
 							<th><?php esc_html_e( 'Location', 'vulnhub' ); ?></th>
-							<th><?php esc_html_e( 'File path', 'vulnhub' ); ?></th>
+							<th title="<?php esc_attr_e( 'Where the vulnerable copy is, when the check examines files; otherwise the package and version found, and the version that fixes it.', 'vulnhub' ); ?>"><?php esc_html_e( 'Where / version', 'vulnhub' ); ?></th>
 							<th>
 								<?php esc_html_e( 'Owner', 'vulnhub' ); ?>
 								<button type="button" class="vh-eye" data-vh-owner-toggle aria-pressed="false"
@@ -2248,6 +2356,49 @@ final class VulnHub_Dash_App {
 			'scope'   => $vh_scope,
 			'source'  => $vh_source,
 		);
+	}
+
+	/**
+	 * The evidence cell: where this vulnerable copy is, or which package and
+	 * version was found.
+	 *
+	 * A path is only ever reported by a check that examines files. A
+	 * distribution's package checks -- the bulk of a Linux estate -- name a
+	 * package and the version that fixes it instead, and the column used to
+	 * show a dash for every one of those, which reads as "the scanner told
+	 * us nothing" rather than "the answer is a version, not a place".
+	 *
+	 * @param string $output The finding's plugin output.
+	 * @param string $zone   A path already stamped on the finding, if any.
+	 */
+	public static function evidence_cell_html( string $output, string $zone = '', int $max = 0 ): string {
+		$path = '' !== $zone ? $zone : VH_Product::install_path( $output );
+		$cut  = static fn( string $v ): string => $max > 0 ? vh_trim( $v, $max ) : $v;
+
+		if ( '' !== $path ) {
+			return '<code class="vh-path" title="' . esc_attr( $path ) . '">' . esc_html( $cut( $path ) ) . '</code>';
+		}
+
+		$e = VH_Product::package_evidence( $output );
+
+		if ( '' === $e['name'] && '' === $e['installed'] ) {
+			return '<span class="vh-meta">&mdash;</span>';
+		}
+
+		$found = trim( $e['name'] . ' ' . $e['installed'] );
+		$html  = '<span class="vh-mono" title="' . esc_attr( $found ) . '">' . esc_html( $cut( $found ) ) . '</span>';
+
+		if ( '' !== $e['fixed'] ) {
+			$html .= '<span class="vh-meta">' . esc_html(
+				sprintf(
+					/* translators: %s: the version that fixes the finding. */
+					__( 'fixed in %s', 'vulnhub' ),
+					$e['fixed']
+				)
+			) . '</span>';
+		}
+
+		return '<span class="vh-evi">' . $html . '</span>';
 	}
 
 	public static function asset_row_html( array $a, bool $vh_can_edit ): string {
@@ -2518,7 +2669,7 @@ final class VulnHub_Dash_App {
 					<th><?php esc_html_e( 'Support', 'vulnhub' ); ?></th>
 					<th><?php esc_html_e( 'Owner', 'vulnhub' ); ?></th>
 					<th><?php esc_html_e( 'Location', 'vulnhub' ); ?></th>
-					<th><?php esc_html_e( 'Install path', 'vulnhub' ); ?></th>
+					<th title="<?php esc_attr_e( 'Where the vulnerable copy is, when the check examines files; otherwise the package and version found, and the version that fixes it.', 'vulnhub' ); ?>"><?php esc_html_e( 'Where / version', 'vulnhub' ); ?></th>
 					<th><?php esc_html_e( 'State', 'vulnhub' ); ?></th>
 					<th><?php esc_html_e( 'Due', 'vulnhub' ); ?></th>
 					<th><?php esc_html_e( 'Ticket', 'vulnhub' ); ?></th>
@@ -2528,7 +2679,6 @@ final class VulnHub_Dash_App {
 					<?php
 					$overdue = ! empty( $f['due_at'] ) && strtotime( (string) $f['due_at'] . ' UTC' ) < time();
 					$is_eol  = \VulnHub\Core\Eol::finding_is_eol( (int) $f['asset_id'], (int) $f['vuln_id'], (string) ( $f['component_class'] ?? '' ) );
-					$path    = VH_Product::install_path( (string) ( $f['output'] ?? '' ) );
 					?>
 					<tr>
 						<td>
@@ -2556,11 +2706,7 @@ final class VulnHub_Dash_App {
 						</td>
 						<td><span class="vh-meta"><?php echo esc_html( (string) ( $f['location_name'] ?: '—' ) ); ?></span></td>
 						<td>
-							<?php if ( '' !== $path ) : ?>
-								<code class="vh-path" title="<?php echo esc_attr( $path ); ?>"><?php echo esc_html( $path ); ?></code>
-							<?php else : ?>
-								<span class="vh-meta">—</span>
-							<?php endif; ?>
+							<?php echo self::evidence_cell_html( (string) ( $f['output'] ?? '' ), (string) ( $f['zone_path'] ?? '' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside. ?>
 						</td>
 						<td><?php echo esc_html( ucfirst( (string) $f['state'] ) ); ?></td>
 						<td class="<?php echo $overdue ? 'vh-overdue' : ''; ?>"><?php echo esc_html( $f['due_at'] ? vh_ago( (string) $f['due_at'] ) : '—' ); ?></td>
@@ -3004,22 +3150,18 @@ final class VulnHub_Dash_App {
 				</td>
 			<?php endif; ?>
 			<td data-th="<?php esc_attr_e( 'Location', 'vulnhub' ); ?>"><?php echo esc_html( (string) ( $f['location_name'] ?: '—' ) ); ?></td>
-			<td data-th="<?php esc_attr_e( 'File path', 'vulnhub' ); ?>">
+			<td data-th="<?php esc_attr_e( 'Where / version', 'vulnhub' ); ?>">
 				<?php
 				/*
 				 * zone_path first: on a finding that reports several paths it
 				 * is the one that put the row in its zone, which is the whole
-				 * reason the reader filtered by zone. install_path() is the
-				 * fallback for everything else, parsed from the output the
-				 * same way it always was.
+				 * reason the reader filtered by zone. Everything else falls
+				 * back to the path in the output, and failing that to the
+				 * package and version -- which is all a distribution's
+				 * package check ever reports.
 				 */
-				$vh_path = (string) ( $f['zone_path'] ?: VH_Product::install_path( (string) ( $f['output'] ?? '' ) ) );
+				echo self::evidence_cell_html( (string) ( $f['output'] ?? '' ), (string) ( $f['zone_path'] ?? '' ), 54 ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside.
 				?>
-				<?php if ( '' !== $vh_path ) : ?>
-					<code class="vh-path" title="<?php echo esc_attr( $vh_path ); ?>"><?php echo esc_html( vh_trim( $vh_path, 54 ) ); ?></code>
-				<?php else : ?>
-					<span class="vh-meta">—</span>
-				<?php endif; ?>
 			</td>
 			<td data-th="<?php esc_attr_e( 'Owner', 'vulnhub' ); ?>">
 				<?php if ( ! empty( $f['owner_name'] ) ) : ?>
@@ -3155,7 +3297,7 @@ final class VulnHub_Dash_App {
 										?>
 									</span>
 								</div>
-								<div class="vh-prodrow__bar"><span style="width:<?php echo (int) $vh_pct; ?>%"></span></div>
+								<?php echo VulnHub_Dash_Widgets::product_split_html( $vh_r, $vh_pct, $vh_url ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside. ?>
 								<?php
 								$vh_bundles = trim( (string) ( $vh_r['bundles'] ?? '' ) );
 								if ( '' !== $vh_bundles ) :
@@ -3176,6 +3318,7 @@ final class VulnHub_Dash_App {
 				</ul>
 				<p class="vh-prodsearch__empty" data-vh-prodsearch-empty hidden><?php esc_html_e( 'No products match your search.', 'vulnhub' ); ?></p>
 			</div>
+			<?php echo VulnHub_Dash_Widgets::product_split_legend(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped inside. ?>
 		<?php endif; ?>
 		<?php
 	}
@@ -4173,7 +4316,7 @@ final class VulnHub_Dash_App {
 			<label>
 				<span><?php esc_html_e( 'Lifecycle', 'vulnhub' ); ?></span>
 				<select name="life">
-					<option value=""><?php esc_html_e( 'Reporting scope (what the dashboard counts)', 'vulnhub' ); ?></option>
+					<option value="" <?php selected( in_array( self::q( 'life' ), array( '', 'reportable' ), true ), true ); ?>><?php echo esc_html( self::lifecycle_scope_label() ); ?></option>
 					<option value="in_service_all" <?php selected( self::q( 'life' ), 'in_service_all' ); ?>><?php esc_html_e( 'Everything with an owner expectation', 'vulnhub' ); ?></option>
 					<option value="all" <?php selected( self::q( 'life' ), 'all' ); ?>><?php esc_html_e( 'Everything, including retired', 'vulnhub' ); ?></option>
 					<option value="not_reported" <?php selected( self::q( 'life' ), 'not_reported' ); ?>><?php esc_html_e( 'Outside the reporting scope', 'vulnhub' ); ?></option>

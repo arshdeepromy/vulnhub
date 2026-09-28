@@ -118,6 +118,22 @@ final class VulnHub_Tenable_Verifier {
 	 */
 	private function verify_ticket( VulnHub_Tenable_Connector $connector, array $ticket, int $delay_hours ): string {
 		$ticket_id = (int) $ticket['id'];
+
+		/*
+		 * A scope ticket has no findings for Tenable to read: core judges it
+		 * from its own asset rows. Sent down the finding path it reached
+		 * check_ticket(), which would stamp "covers no findings, so there is
+		 * nothing to re-check" -- Cannot verify -- on a ticket that is
+		 * perfectly verifiable.
+		 *
+		 * No settling delay either: the delay exists to let a scan land, and
+		 * there is no scan here.
+		 */
+		if ( (int) $ticket['asset_count'] > 0 ) {
+			$summary = \VulnHub\Core\Tickets::verify_scope( $ticket_id );
+
+			return $summary ? (string) $summary['state'] : \VulnHub\Core\Tickets::VERIFY_UNKNOWN;
+		}
 		$key       = (string) ( $ticket['external_key'] ?: $ticket_id );
 		$closed    = (string) ( $ticket['remote_closed_at'] ?: $ticket['updated_at'] ?? '' );
 		$closed_ts = $closed ? strtotime( $closed . ' UTC' ) : false;
@@ -144,6 +160,85 @@ final class VulnHub_Tenable_Verifier {
 		}
 
 		return (string) $this->check_ticket( $connector, $ticket )['state'];
+	}
+
+	/**
+	 * The verdict for a ticket whose every finding sits on an asset somebody
+	 * set aside -- or null when that is not the case.
+	 *
+	 * There is then nothing for Tenable to judge, and no reason to ask it: the
+	 * answer follows from what a person decided, not from a scan. Recorded
+	 * here, in the shape a real check returns, so a caller can use it and
+	 * stop -- including one with no connector at all.
+	 *
+	 * This is what makes "set the last few assets aside and the ticket clears"
+	 * immediate. Left to the queued job, a *Closed but still detected* ticket
+	 * whose remaining detections were all on assets just set aside kept that
+	 * verdict until the job ran, which on a busy cron is not soon.
+	 *
+	 * @param array<string,mixed> $ticket Ticket row.
+	 * @return array<string,mixed>|null
+	 */
+	public static function all_aside_verdict( array $ticket ): ?array {
+		$ticket_id = (int) $ticket['id'];
+		$findings  = \VulnHub\Core\Tickets::findings_for( $ticket_id );
+
+		if ( ! $findings ) {
+			return null;
+		}
+
+		$aside = \VulnHub\Core\Tickets::aside_for( $ticket_id );
+
+		foreach ( $findings as $finding ) {
+			if ( ! isset( $aside[ (int) $finding['asset_id'] ] ) ) {
+				return null;
+			}
+		}
+
+		$key      = (string) ( $ticket['external_key'] ?: $ticket_id );
+		$resolved = 'done' === (string) ( $ticket['status_category'] ?? '' );
+		$count    = count( $findings );
+
+		$summary = array(
+			'state'    => 'progress',
+			'resolved' => $resolved,
+			'fixed'    => 0,
+			'open'     => 0,
+			'unknown'  => 0,
+			'aside'    => $count,
+			'findings' => array(),
+			'headline' => sprintf(
+				/* translators: 1: ticket key, 2: findings. */
+				__( '%1$s: every asset on it is set aside (%2$d findings), so none of it is outstanding here.', 'vulnhub' ),
+				$key,
+				$count
+			),
+		);
+
+		if ( ! $resolved ) {
+			\VulnHub\Core\Tickets::set_last_check( $ticket_id, $summary );
+
+			return $summary;
+		}
+
+		$summary['state']    = \VulnHub\Core\Tickets::VERIFY_CONFIRMED;
+		$summary['headline'] = sprintf(
+			/* translators: 1: ticket key, 2: findings set aside. */
+			__( '%1$s verified: every asset on it has been set aside (%2$d findings), so nothing is left to re-check.', 'vulnhub' ),
+			$key,
+			$count
+		);
+
+		\VulnHub\Core\Tickets::record_verification(
+			$ticket_id,
+			\VulnHub\Core\Tickets::VERIFY_CONFIRMED,
+			(string) $summary['headline'],
+			array( 'source' => 'aside', 'aside' => $count )
+		);
+
+		\VulnHub\Core\Tickets::set_last_check( $ticket_id, $summary );
+
+		return $summary;
 	}
 
 	/**
@@ -196,6 +291,21 @@ final class VulnHub_Tenable_Verifier {
 			$this->remember( $ticket, \VulnHub\Core\Tickets::VERIFY_UNKNOWN, 0, 0, 0, __( 'Ticket covers no findings.', 'vulnhub' ) );
 
 			return $empty;
+		}
+
+		/*
+		 * Nothing left to judge: every finding is on an asset set aside. The
+		 * verdict is the same one step 4 would reach, so it is reached here,
+		 * before an export and a scan-time lookup that could answer nothing.
+		 */
+		$all_aside = self::all_aside_verdict( $ticket );
+
+		if ( null !== $all_aside ) {
+			if ( $resolved ) {
+				$this->remember( $ticket, (string) $all_aside['state'], 0, 0, 0, (string) $all_aside['headline'] );
+			}
+
+			return $all_aside;
 		}
 
 		// 2. Resolve the Tenable identity and scan freshness of every asset --

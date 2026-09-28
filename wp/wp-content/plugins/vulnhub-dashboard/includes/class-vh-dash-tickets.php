@@ -386,7 +386,17 @@ final class VulnHub_Dash_Tickets {
 	private static function guess_kind(): string {
 		$known = self::q( 'known' );
 
+		/*
+		 * `agent=dark_14` merges into `agent_dark`, and it is a different
+		 * request from `agent=agent_required`: one asks for an agent, the
+		 * other asks an agent that is already there to start talking again.
+		 * Read before the plain agent test, or the dark filter falls through
+		 * to it and the ticket opens fully met.
+		 */
+		$merged = VulnHub_Dash_App::merged_asset_query();
+
 		return match ( true ) {
+			(int) $merged['agent_dark'] > 0 => 'tenable_agent_dark',
 			'' !== self::q( 'agent' )      => 'tenable_agent',
 			'' !== self::q( 'coverage' )   => 'tenable_coverage',
 			'' !== self::q( 'defender' )   => 'defender_coverage',
@@ -1031,7 +1041,12 @@ final class VulnHub_Dash_Tickets {
 	 * @param bool $inline True on the ticket page.
 	 */
 	public static function comments_body( int $id = 0, bool $inline = false, ?array $ticket = null ): string {
-		$out = '<div class="vh-comments' . ( $inline ? ' vh-comments--inline' : '' ) . '"'
+		/*
+		 * is-public from the start: the reply radio is the one checked below,
+		 * and the warm hint and border are what say so. JavaScript only keeps
+		 * the class in step after that.
+		 */
+		$out = '<div class="vh-comments is-public' . ( $inline ? ' vh-comments--inline' : '' ) . '"'
 			. ( $id > 0 ? ' data-vh-comments-for="' . (int) $id . '"' : '' ) . '>';
 
 		/*
@@ -1068,16 +1083,24 @@ final class VulnHub_Dash_Tickets {
 				. '<textarea id="vh-comment-body-' . (int) $id . '" class="vh-comments__text" data-vh-comment-body rows="3" placeholder="'
 				. esc_attr__( 'Write a comment…', 'vulnhub' ) . '"></textarea>'
 				/*
-				 * Internal first, and checked. A reply goes to whoever raised
-				 * the request and cannot be taken back, so the quiet option is
-				 * the one a misclick lands on.
+				 * Reply to customer is checked, by request: answering the
+				 * person who raised the ticket is what this box is for, and
+				 * having to change the radio every time invited the opposite
+				 * mistake -- a reply written, posted as an internal note, and
+				 * nobody told. The choice is still visible before Post: the
+				 * hint says the customer will be notified, and the box is
+				 * warm-bordered while it is set to reply.
+				 *
+				 * The REST default is unchanged -- an absent `public` is
+				 * still internal -- because that guards callers that say
+				 * nothing, not this box, which always says which it is.
 				 */
 				. '<div class="vh-comments__vis">'
-				. '<label><input type="radio" name="vh-comment-vis-' . (int) $id . '" value="internal" checked> '
+				. '<label><input type="radio" name="vh-comment-vis-' . (int) $id . '" value="internal"> '
 				. esc_html__( 'Internal note', 'vulnhub' ) . '</label>'
-				. '<label><input type="radio" name="vh-comment-vis-' . (int) $id . '" value="public"> '
+				. '<label><input type="radio" name="vh-comment-vis-' . (int) $id . '" value="public" checked> '
 				. esc_html__( 'Reply to customer', 'vulnhub' ) . '</label>'
-				. '<span class="vh-comments__hint" data-vh-comment-hint>' . esc_html__( 'Only agents see an internal note.', 'vulnhub' ) . '</span>'
+				. '<span class="vh-comments__hint" data-vh-comment-hint>' . esc_html__( 'The person who raised this will be notified and can read it.', 'vulnhub' ) . '</span>'
 				. '<button type="button" class="vh-btn vh-btn--primary vh-btn--sm" data-vh-comment-post>' . esc_html__( 'Post', 'vulnhub' ) . '</button>'
 				. '</div>'
 				. '<p class="vh-comments__status" data-vh-comment-status role="status"></p>'
@@ -1111,6 +1134,20 @@ final class VulnHub_Dash_Tickets {
 	 */
 	public static function can_transition(): bool {
 		return current_user_can( Caps::RAISE_TICKET ) && has_filter( 'vulnhub_apply_ticket_transition' );
+	}
+
+	/**
+	 * Whether this person may set assets aside on a ticket.
+	 *
+	 * Setting aside is a note on our own copy of the ticket: it changes what
+	 * this portal counts as outstanding and nothing else -- no asset is
+	 * edited, nothing is sent to Jira. So it asks for the ticket-raising
+	 * capability and nothing more. Deliberately not can_transition(), which
+	 * also wants an ITSM plugin offering status moves: a list raised by hand
+	 * still has to be clearable.
+	 */
+	public static function can_set_aside(): bool {
+		return current_user_can( Caps::RAISE_TICKET );
 	}
 
 	/**
@@ -1197,13 +1234,24 @@ final class VulnHub_Dash_Tickets {
 				return '';
 			}
 
-			$aside = ( (int) $counts['retired'] + (int) $counts['removed'] ) > 0
-				? sprintf(
-					/* translators: %d: number of assets. */
-					__( '%d no longer relevant', 'vulnhub' ),
-					(int) $counts['retired'] + (int) $counts['removed']
-				)
-				: '';
+			$gone  = (int) $counts['retired'] + (int) $counts['removed'];
+			$side  = (int) ( $counts['aside'] ?? 0 );
+			$notes = array();
+
+			if ( $gone > 0 ) {
+				/* translators: %d: number of assets. */
+				$notes[] = sprintf( __( '%d no longer relevant', 'vulnhub' ), $gone );
+			}
+
+			// Set aside is a decision somebody made, not a state the estate
+			// drifted into, so it is named separately rather than folded in
+			// with the decommissioned ones.
+			if ( $side > 0 ) {
+				/* translators: %d: number of assets. */
+				$notes[] = sprintf( __( '%d set aside', 'vulnhub' ), $side );
+			}
+
+			$aside = implode( ' · ', $notes );
 
 			return '<div class="vh-tprog">'
 				. self::progress_bar(
@@ -1683,13 +1731,37 @@ final class VulnHub_Dash_Tickets {
 		$outcomes = Tickets::outcomes();
 		$filter   = self::q( 'outcome' );
 		$filter   = isset( $outcomes[ $filter ] ) ? $filter : '';
+		$search   = self::q( 'aq' );
 		$page     = max( 1, (int) self::q( 'tap' ) );
-		$list     = Tickets::assets_for( $t, array( 'outcome' => $filter, 'limit' => self::PER, 'offset' => ( $page - 1 ) * self::PER ) );
+		$args     = array( 'outcome' => $filter, 'search' => $search );
+		$list     = Tickets::assets_for( $t, array_merge( $args, array( 'limit' => self::PER, 'offset' => ( $page - 1 ) * self::PER ) ) );
 		$pages    = max( 1, (int) ceil( (int) $list['total'] / self::PER ) );
 		$base     = self::page_url( 'tickets', array( 'ticket' => (int) $t['id'] ) );
+		$keep     = array_filter( array( 'outcome' => $filter, 'aq' => $search ) );
+		$here     = add_query_arg( $keep, $base );
 		$has_test = '' !== (string) ( Tickets::kinds()[ (string) $t['kind'] ]['resolved'] ?? '' );
 		$sources  = vh_asset_sources();
 		$life     = vh_lifecycle_statuses();
+		$why      = Tickets::aside_reasons();
+		$pick     = self::can_set_aside();
+
+		/*
+		 * On an agent ticket the coverage columns answer the wrong question:
+		 * every asset on it is scanned and has an agent, which is why it was
+		 * raised. What matters is whether the agent is talking, so that column
+		 * is added for these two kinds and left off everything else rather
+		 * than carried empty across every ticket in the estate.
+		 */
+		$agent_kinds = array( 'tenable_agent', 'tenable_agent_dark' );
+		$show_agent  = in_array( (string) $t['kind'], $agent_kinds, true );
+
+		/*
+		 * Every asset the filter matches, not just the fifty on this page.
+		 * "Select all matching" has to mean the filter, or the page size
+		 * quietly becomes the unit of work and a second page of machines is
+		 * left behind on a ticket somebody has just declared clear.
+		 */
+		$matching = $pick ? Tickets::asset_ids_for( $t, $args ) : array();
 
 		$names = static function ( string $stored ) use ( $sources ): string {
 			$seen = array_keys( Repo::source_map( $stored ) );
@@ -1723,30 +1795,107 @@ final class VulnHub_Dash_Tickets {
 				)
 			);
 			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => $outcomes['resolved']['label'], 'value' => $counts['resolved'], 'tone' => 'good', 'meta' => __( 'checked against the latest sync', 'vulnhub' ), 'href' => add_query_arg( 'outcome', 'resolved', $base ) ) ); // phpcs:ignore
-			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => $outcomes['retired']['label'], 'value' => $counts['retired'] + $counts['removed'], 'tone' => 'neutral', 'meta' => __( 'decommissioned, out of scope, or gone', 'vulnhub' ), 'href' => add_query_arg( 'outcome', 'retired', $base ) ) ); // phpcs:ignore
+			echo VulnHub_Dash_Charts::stat_tile( // phpcs:ignore
+				array(
+					'label' => $outcomes['retired']['label'],
+					'value' => $counts['retired'] + $counts['removed'] + $counts['aside'],
+					'tone'  => 'neutral',
+					'meta'  => $counts['aside'] > 0
+						/* translators: %s: assets set aside by hand. */
+						? sprintf( __( 'decommissioned, gone, or %s set aside by hand', 'vulnhub' ), number_format_i18n( $counts['aside'] ) )
+						: __( 'decommissioned, out of scope, or gone', 'vulnhub' ),
+					'href'  => add_query_arg( 'outcome', 'retired', $base ),
+				)
+			);
 			?>
 		</section>
 
-		<nav class="vh-chips" aria-label="<?php esc_attr_e( 'Show', 'vulnhub' ); ?>">
-			<a class="vh-chip <?php echo '' === $filter ? 'vh-chip--filter is-active' : ''; ?>" href="<?php echo esc_url( $base ); ?>"><?php esc_html_e( 'All', 'vulnhub' ); ?> <?php echo esc_html( number_format_i18n( $counts['total'] ) ); ?></a>
-			<?php foreach ( $outcomes as $vh_o => $vh_def ) : ?>
-				<?php if ( 0 === $counts[ $vh_o ] && $filter !== $vh_o ) : continue; endif; ?>
-				<a class="vh-chip <?php echo $filter === $vh_o ? 'vh-chip--filter is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'outcome', $vh_o, $base ) ); ?>">
-					<?php echo esc_html( (string) $vh_def['label'] ); ?> <?php echo esc_html( number_format_i18n( $counts[ $vh_o ] ) ); ?>
-				</a>
-			<?php endforeach; ?>
-		</nav>
+		<div class="vh-tf-bar">
+			<nav class="vh-chips" aria-label="<?php esc_attr_e( 'Show', 'vulnhub' ); ?>">
+				<a class="vh-chip <?php echo '' === $filter ? 'vh-chip--filter is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( array_filter( array( 'aq' => $search ) ), $base ) ); ?>"><?php esc_html_e( 'All', 'vulnhub' ); ?> <?php echo esc_html( number_format_i18n( $counts['total'] ) ); ?></a>
+				<?php foreach ( $outcomes as $vh_o => $vh_def ) : ?>
+					<?php if ( 0 === $counts[ $vh_o ] && $filter !== $vh_o ) : continue; endif; ?>
+					<a class="vh-chip <?php echo $filter === $vh_o ? 'vh-chip--filter is-active' : ''; ?>" href="<?php echo esc_url( add_query_arg( array_filter( array( 'outcome' => $vh_o, 'aq' => $search ) ), $base ) ); ?>">
+						<?php echo esc_html( (string) $vh_def['label'] ); ?> <?php echo esc_html( number_format_i18n( $counts[ $vh_o ] ) ); ?>
+					</a>
+				<?php endforeach; ?>
+			</nav>
+
+			<?php
+			/*
+			 * A GET form drops the query string of its own action, so every
+			 * filter that must survive the search goes in as a hidden field.
+			 */
+			?>
+			<form class="vh-tf-tools" method="get" action="<?php echo esc_url( self::page_url( 'tickets' ) ); ?>">
+				<input type="hidden" name="ticket" value="<?php echo esc_attr( (string) (int) $t['id'] ); ?>">
+				<?php if ( '' !== $filter ) : ?><input type="hidden" name="outcome" value="<?php echo esc_attr( $filter ); ?>"><?php endif; ?>
+				<label class="vh-tf-search">
+					<span class="screen-reader-text"><?php esc_html_e( 'Search the assets on this ticket', 'vulnhub' ); ?></span>
+					<input type="search" name="aq" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Host, IP, type…', 'vulnhub' ); ?>">
+				</label>
+				<button class="vh-btn vh-btn--sm"><?php esc_html_e( 'Apply', 'vulnhub' ); ?></button>
+				<?php if ( '' !== $search ) : ?>
+					<a class="vh-linkbtn" href="<?php echo esc_url( add_query_arg( array_filter( array( 'outcome' => $filter ) ), $base ) ); ?>"><?php esc_html_e( 'Clear search', 'vulnhub' ); ?></a>
+				<?php endif; ?>
+			</form>
+		</div>
+
+		<?php if ( $pick && $matching ) : ?>
+			<?php
+			/*
+			 * The same bar the findings tab uses, on the same hooks, so one
+			 * piece of JavaScript drives both. The wording differs because
+			 * what leaves the outstanding column differs: findings there,
+			 * whole assets here.
+			 */
+			?>
+			<div class="vh-tf-sel" data-vh-tf-sel data-ticket="<?php echo (int) $t['id']; ?>"
+				data-all="<?php echo esc_attr( (string) wp_json_encode( $matching ) ); ?>"
+				data-aside-why="<?php esc_attr_e( 'They stop counting as outstanding on this ticket only. The assets themselves are not changed and nothing is sent to Jira. You can take them back.', 'vulnhub' ); ?>"
+				data-aside-back="<?php esc_attr_e( 'They count as outstanding on this ticket again.', 'vulnhub' ); ?>">
+				<span class="vh-tf-sel__n" data-vh-tf-count><?php esc_html_e( 'None selected', 'vulnhub' ); ?></span>
+				<button type="button" class="vh-linkbtn" data-vh-tf-all>
+					<?php
+					/* translators: %s: assets matching the filter. */
+					echo esc_html( sprintf( __( 'Select all %s matching', 'vulnhub' ), number_format_i18n( count( $matching ) ) ) );
+					?>
+				</button>
+				<button type="button" class="vh-linkbtn" data-vh-tf-none><?php esc_html_e( 'Clear', 'vulnhub' ); ?></button>
+				<span class="vh-tf-sel__sep" aria-hidden="true"></span>
+				<span class="vh-tf-sel__grp">
+					<select data-vh-aside-reason aria-label="<?php esc_attr_e( 'Reason', 'vulnhub' ); ?>">
+						<?php foreach ( $why as $vh_k => $vh_label ) : ?>
+							<option value="<?php echo esc_attr( $vh_k ); ?>"><?php echo esc_html( $vh_label ); ?></option>
+						<?php endforeach; ?>
+					</select>
+					<input type="text" maxlength="500" data-vh-aside-note placeholder="<?php esc_attr_e( 'Note (optional)', 'vulnhub' ); ?>" aria-label="<?php esc_attr_e( 'Note', 'vulnhub' ); ?>">
+					<button type="button" class="vh-btn vh-btn--sm" data-vh-aside-set data-vh-needs-sel disabled><?php esc_html_e( 'Set aside for this ticket', 'vulnhub' ); ?></button>
+					<button type="button" class="vh-btn vh-btn--ghost vh-btn--sm" data-vh-aside-clear data-vh-needs-sel disabled><?php esc_html_e( 'Take back', 'vulnhub' ); ?></button>
+				</span>
+				<span class="vh-meta" data-vh-aside-status role="status"></span>
+			</div>
+			<p class="vh-sub vh-muted"><?php esc_html_e( 'Set aside a machine this request cannot reach — retired out of band, owned by somebody else, or genuinely not in scope — and it leaves the outstanding count so the rest of the ticket can be cleared and closed. The reason and note are kept, and nothing is sent to Jira.', 'vulnhub' ); ?></p>
+		<?php endif; ?>
 
 		<?php if ( ! $list['rows'] ) : ?>
-			<p class="vh-chart-empty"><?php esc_html_e( 'No assets in this group.', 'vulnhub' ); ?></p>
+			<p class="vh-chart-empty">
+				<?php echo esc_html( '' !== $search ? __( 'No assets on this ticket match that search.', 'vulnhub' ) : __( 'No assets in this group.', 'vulnhub' ) ); ?>
+			</p>
 			<?php return; ?>
 		<?php endif; ?>
 
 		<div class="vh-tablewrap vh-tablewrap--cards">
 			<table class="vh-table vh-table--ticket-assets">
 				<thead><tr>
+					<?php if ( $pick ) : ?>
+						<th class="vh-tf-pickcol"><input type="checkbox" data-vh-tf-page aria-label="<?php esc_attr_e( 'Select every asset on this page', 'vulnhub' ); ?>"></th>
+					<?php endif; ?>
 					<th><?php esc_html_e( 'Host', 'vulnhub' ); ?></th>
 					<th><?php esc_html_e( 'Outcome', 'vulnhub' ); ?></th>
+					<?php if ( $show_agent ) : ?>
+						<th><?php esc_html_e( 'Agent', 'vulnhub' ); ?><span class="vh-th__src"><?php esc_html_e( 'Tenable', 'vulnhub' ); ?></span></th>
+					<?php endif; ?>
 					<th><?php esc_html_e( 'Scan coverage', 'vulnhub' ); ?><span class="vh-th__src"><?php esc_html_e( 'Tenable', 'vulnhub' ); ?></span></th>
 					<th><?php esc_html_e( 'EDR coverage', 'vulnhub' ); ?><span class="vh-th__src"><?php esc_html_e( 'Defender', 'vulnhub' ); ?></span></th>
 					<th><?php esc_html_e( 'Known by', 'vulnhub' ); ?></th>
@@ -1760,8 +1909,12 @@ final class VulnHub_Dash_Tickets {
 					$vh_outcome = (string) $r['outcome'];
 					$vh_was_src = $names( (string) $r['was_sources'] );
 					$vh_now_src = $vh_live ? $names( (string) $r['now_sources'] ) : '—';
+					$vh_aside   = (string) ( $r['aside_reason'] ?? '' );
 					?>
 					<tr>
+						<?php if ( $pick ) : ?>
+							<td class="vh-tf-pickcol"><input type="checkbox" data-vh-tf-pick value="<?php echo (int) $r['asset_id']; ?>" aria-label="<?php echo esc_attr( sprintf( /* translators: %s: host. */ __( 'Select %s', 'vulnhub' ), (string) $r['hostname'] ) ); ?>"></td>
+						<?php endif; ?>
 						<td data-label="<?php esc_attr_e( 'Host', 'vulnhub' ); ?>">
 							<?php if ( $vh_live ) : ?>
 								<a class="vh-mono" href="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $r['asset_id'] ) ) ); ?>"><strong><?php echo esc_html( (string) $r['hostname'] ); ?></strong></a>
@@ -1772,7 +1925,55 @@ final class VulnHub_Dash_Tickets {
 						</td>
 						<td data-label="<?php esc_attr_e( 'Outcome', 'vulnhub' ); ?>">
 							<span class="vh-chip vh-chip--<?php echo esc_attr( (string) $outcomes[ $vh_outcome ]['tone'] ); ?>"><?php echo esc_html( (string) $outcomes[ $vh_outcome ]['label'] ); ?></span>
+							<?php if ( '' !== $vh_aside ) : ?>
+								<?php
+								/*
+								 * Shown even when the outcome is already Done
+								 * or Gone: somebody made this call, and the
+								 * next person has to be able to see it was
+								 * made rather than wonder why the count moved.
+								 */
+								?>
+								<span class="vh-chip vh-chip--muted vh-tf-aside" title="<?php echo esc_attr( trim( vh_date( (string) ( $r['aside_at'] ?? '' ) ) . ' ' . (string) ( $r['aside_note'] ?? '' ) ) ); ?>">
+									<?php
+									/* translators: %s: reason. */
+									echo esc_html( sprintf( __( 'Set aside: %s', 'vulnhub' ), (string) ( $why[ $vh_aside ] ?? $vh_aside ) ) );
+									?>
+								</span>
+							<?php endif; ?>
 						</td>
+						<?php if ( $show_agent ) : ?>
+							<td data-label="<?php esc_attr_e( 'Agent', 'vulnhub' ); ?>">
+								<?php
+								$vh_status = (string) ( $r['agent_status'] ?? '' );
+								$vh_last   = (string) ( $r['agent_last_connect'] ?? '' );
+
+								if ( ! $vh_live ) {
+									echo '&mdash;';
+								} elseif ( 'on' === $vh_status ) {
+									printf( '<span class="vh-chip vh-chip--good">%s</span>', esc_html__( 'Reporting', 'vulnhub' ) );
+								} elseif ( 'off' === $vh_status ) {
+									printf( '<span class="vh-chip vh-chip--bad">%s</span>', esc_html__( 'Dark', 'vulnhub' ) );
+								} else {
+									printf(
+										'<span class="vh-chip vh-chip--neutral">%s</span>',
+										esc_html( Agent_Coverage::label( (string) ( $r['now_agent'] ?? '' ) ) )
+									);
+								}
+								?>
+								<?php if ( $vh_live && '' !== $vh_last ) : ?>
+									<span class="vh-meta">
+										<?php
+										printf(
+											/* translators: %s: how long ago the agent last connected. */
+											esc_html__( 'last connected %s', 'vulnhub' ),
+											esc_html( vh_ago( $vh_last ) )
+										);
+										?>
+									</span>
+								<?php endif; ?>
+							</td>
+						<?php endif; ?>
 						<td data-label="<?php esc_attr_e( 'Scan coverage', 'vulnhub' ); ?>">
 							<?php echo $vh_live ? $state( (string) $r['was_coverage'], (string) $r['now_coverage'], array( Coverage::class, 'label' ), static fn( string $s ): string => $tone_map( Coverage::tone( $s ) ) ) : '—'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 						</td>
@@ -1808,14 +2009,13 @@ final class VulnHub_Dash_Tickets {
 
 		<?php if ( $pages > 1 ) : ?>
 			<nav class="vh-pager" aria-label="<?php esc_attr_e( 'Pagination', 'vulnhub' ); ?>">
-				<?php $vh_here = $filter ? add_query_arg( 'outcome', $filter, $base ) : $base; ?>
 				<?php if ( $page > 1 ) : ?>
-					<a class="vh-btn vh-btn--ghost" href="<?php echo esc_url( add_query_arg( 'tap', $page - 1, $vh_here ) ); ?>">&larr; <?php esc_html_e( 'Previous', 'vulnhub' ); ?></a>
+					<a class="vh-btn vh-btn--ghost" href="<?php echo esc_url( add_query_arg( 'tap', $page - 1, $here ) ); ?>">&larr; <?php esc_html_e( 'Previous', 'vulnhub' ); ?></a>
 				<?php endif; ?>
 				<?php /* translators: 1: current page, 2: total pages. */ ?>
 				<span class="vh-pager__count"><?php echo esc_html( sprintf( __( 'Page %1$d of %2$d', 'vulnhub' ), $page, $pages ) ); ?></span>
 				<?php if ( $page < $pages ) : ?>
-					<a class="vh-btn vh-btn--ghost" href="<?php echo esc_url( add_query_arg( 'tap', $page + 1, $vh_here ) ); ?>"><?php esc_html_e( 'Next', 'vulnhub' ); ?> &rarr;</a>
+					<a class="vh-btn vh-btn--ghost" href="<?php echo esc_url( add_query_arg( 'tap', $page + 1, $here ) ); ?>"><?php esc_html_e( 'Next', 'vulnhub' ); ?> &rarr;</a>
 				<?php endif; ?>
 			</nav>
 		<?php endif; ?>
@@ -2118,13 +2318,29 @@ final class VulnHub_Dash_Tickets {
 			return;
 		}
 
+		/*
+		 * `Outstanding` is open and reopened together, and it goes first
+		 * because it is the question this page exists to answer: what is
+		 * still to do. Every other tab could be reached and that one could
+		 * not -- All mixes the fixed ones back in, and Open and Reopened are
+		 * two halves of one list nobody wants split. A reopened finding is
+		 * outstanding work by any reading; the split matters when you are
+		 * asking why, not what.
+		 */
 		$states = array(
-			''         => __( 'All', 'vulnhub' ),
-			'open'     => __( 'Open', 'vulnhub' ),
-			'reopened' => __( 'Reopened', 'vulnhub' ),
-			'fixed'    => __( 'Fixed', 'vulnhub' ),
-			'oos'      => __( 'Resolved: out of service', 'vulnhub' ),
-			'aside'    => __( 'Set aside', 'vulnhub' ),
+			''            => __( 'All', 'vulnhub' ),
+			'outstanding' => __( 'Outstanding', 'vulnhub' ),
+			'open'        => __( 'Open', 'vulnhub' ),
+			'reopened'    => __( 'Reopened', 'vulnhub' ),
+			'fixed'       => __( 'Fixed', 'vulnhub' ),
+			'oos'         => __( 'Resolved: out of service', 'vulnhub' ),
+			'aside'       => __( 'Set aside', 'vulnhub' ),
+		);
+
+		// The states each tab stands for. A row's own `shown` is one value;
+		// a tab can cover more than one.
+		$covers = array(
+			'outstanding' => array( 'open', 'reopened' ),
 		);
 		$owners = vh_owner_filter_options();
 		$owner  = array_key_exists( self::q( 'fowner' ), $owners ) ? self::q( 'fowner' ) : '';
@@ -2141,17 +2357,28 @@ final class VulnHub_Dash_Tickets {
 		$count = array_fill_keys( array_keys( $states ), 0 );
 		foreach ( $all as $r ) {
 			++$count[''];
+
 			if ( isset( $count[ $r['shown'] ] ) ) {
 				++$count[ $r['shown'] ];
+			}
+
+			foreach ( $covers as $tab => $shown ) {
+				if ( in_array( $r['shown'], $shown, true ) ) {
+					++$count[ $tab ];
+				}
 			}
 		}
 
 		$rows = array_values(
 			array_filter(
 				$all,
-				static function ( array $r ) use ( $state, $search ): bool {
-					if ( '' !== $state && $r['shown'] !== $state ) {
-						return false;
+				static function ( array $r ) use ( $state, $covers, $search ): bool {
+					if ( '' !== $state ) {
+						$want = $covers[ $state ] ?? array( $state );
+
+						if ( ! in_array( $r['shown'], $want, true ) ) {
+							return false;
+						}
 					}
 					if ( '' === $search ) {
 						return true;

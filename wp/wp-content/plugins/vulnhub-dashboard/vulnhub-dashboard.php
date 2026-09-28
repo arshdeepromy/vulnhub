@@ -225,6 +225,52 @@ add_action(
 			)
 		);
 
+		/*
+		 * Rebuild one widget and hand back its markup.
+		 *
+		 * The board's caching serves stale markup while cron re-renders
+		 * behind the reader, which leaves somebody looking at a number with
+		 * no way to ask for it again. Same capability as viewing the board:
+		 * this reads what that person can already see, and writes nothing but
+		 * that widget's own cache entry.
+		 */
+		register_rest_route(
+			'vulnhub-dashboard/v1',
+			'/widget/refresh',
+			array(
+				'methods'             => 'POST',
+				'callback'            => static function ( WP_REST_Request $request ) {
+					$id   = sanitize_key( (string) $request->get_param( 'widget' ) );
+					$html = '' !== $id ? VulnHub_Dash_Widgets::refresh_now( $id ) : null;
+
+					if ( null === $html ) {
+						return new WP_Error(
+							'vulnhub_widget_unknown',
+							__( 'There is no widget by that name.', 'vulnhub' ),
+							array( 'status' => 404 )
+						);
+					}
+
+					return rest_ensure_response(
+						array(
+							'ok'     => true,
+							'widget' => $id,
+							'html'   => $html,
+						)
+					);
+				},
+				'permission_callback' => static function (): bool {
+					return is_user_logged_in() && current_user_can( \VulnHub\Core\Caps::VIEW );
+				},
+				'args'                => array(
+					'widget' => array(
+						'required' => true,
+						'type'     => 'string',
+					),
+				),
+			)
+		);
+
 		register_rest_route(
 			'vulnhub-dashboard/v1',
 			'/vendor-drill',

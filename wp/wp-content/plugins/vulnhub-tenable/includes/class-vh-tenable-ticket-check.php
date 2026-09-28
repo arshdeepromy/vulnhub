@@ -101,7 +101,26 @@ final class VulnHub_Tenable_Ticket_Check {
 		$ticket    = \VulnHub\Core\Tickets::get( $ticket_id );
 		$connector = $this->connector();
 
-		if ( ! $ticket || (int) $ticket['asset_count'] > 0 || '' === (string) $ticket['external_key'] || ! $connector || ! $connector->is_enabled() ) {
+		/*
+		 * Scope tickets are not queued here: core has already re-judged them
+		 * inline in `set_aside()`, from asset rows, with no scanner involved.
+		 * A job would only repeat that work several minutes later.
+		 */
+		if ( ! $ticket || (int) $ticket['asset_count'] > 0 || '' === (string) $ticket['external_key'] ) {
+			return;
+		}
+
+		/*
+		 * If every finding now sits on a set-aside asset there is nothing for
+		 * Tenable to judge, so that verdict is recorded here and now rather
+		 * than queued -- the case where somebody sets the last assets aside
+		 * precisely to clear a ticket they are looking at.
+		 */
+		if ( null !== VulnHub_Tenable_Verifier::all_aside_verdict( $ticket ) ) {
+			return;
+		}
+
+		if ( ! $connector || ! $connector->is_enabled() ) {
 			return;
 		}
 
@@ -476,26 +495,18 @@ final class VulnHub_Tenable_Ticket_Check {
 				continue;
 			}
 
-			// Asset-list tickets are judged against live asset data whenever
-			// they are shown; refreshing the status was their check.
+			/*
+			 * Asset-list tickets are judged from live asset data, by core --
+			 * the scanner has nothing to say about whether a machine reached
+			 * the CMDB. It records a verdict as well as a check line, so a
+			 * closed scope ticket can leave "Awaiting verification", which
+			 * nothing used to do.
+			 */
 			if ( (int) $ticket['asset_count'] > 0 ) {
-				$counts = \VulnHub\Core\Tickets::asset_outcomes( $ticket );
-				$summary = array(
-					'state'    => 'assets',
-					'resolved' => 'done' === (string) $ticket['status_category'],
-					'fixed'    => (int) $counts['resolved'],
-					'open'     => (int) $counts['open'],
-					'unknown'  => 0,
-					'headline' => sprintf(
-						/* translators: 1: done, 2: total, 3: outstanding, 4: no longer relevant. */
-						__( '%1$d of %2$d assets done, %3$d still outstanding, %4$d no longer relevant.', 'vulnhub' ),
-						$counts['resolved'],
-						$counts['total'],
-						$counts['open'],
-						$counts['retired'] + $counts['removed']
-					),
+				$summary = \VulnHub\Core\Tickets::verify_scope( (int) $id ) ?? array(
+					'state'    => \VulnHub\Core\Tickets::VERIFY_UNKNOWN,
+					'headline' => __( 'This ticket covers no assets, so there is nothing to judge.', 'vulnhub' ),
 				);
-				\VulnHub\Core\Tickets::set_last_check( (int) $id, $summary );
 			} elseif ( $connector && $connector->is_enabled() ) {
 				$summary = $verifier->check_ticket( $connector, $ticket );
 			} else {

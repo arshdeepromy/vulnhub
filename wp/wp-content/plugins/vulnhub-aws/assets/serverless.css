@@ -1,0 +1,404 @@
+/**
+ * Internet-facing functions.
+ *
+ * Everything here hangs off the app's own tokens, so the page follows the
+ * theme rather than carrying a second palette of its own.
+ *
+ * The soft ink is `--vh-muted`. An earlier version of this file asked for
+ * `--vh-ink-soft`, which no theme defines: `fill: var(--vh-ink-soft)` with no
+ * fallback is invalid at computed-value time, so every caption, sub-heading
+ * and second line on this page fell back to inherited black -- unreadable on
+ * the dark theme, which is what "the topology is not visible" was.
+ */
+
+.vh-sl-filters {
+	margin-bottom: 18px;
+}
+
+/* ---- the collapsed list ----------------------------------------- */
+
+.vh-sl-bar {
+	/* Left-aligned on purpose: the portal's notification bell is a fixed
+	   overlay in the top-right corner and sits on top of anything parked
+	   there. */
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: flex-start;
+	gap: 10px 16px;
+	margin: 0 0 12px;
+}
+
+.vh-sl-count {
+	margin: 0;
+	font-size: 13px;
+	color: var(--vh-muted);
+}
+
+.vh-sl-bar__acts {
+	display: flex;
+	gap: 8px;
+}
+
+.vh-sl-card {
+	margin-bottom: 10px;
+}
+
+.vh-sl-card[open] {
+	margin-bottom: 22px;
+}
+
+/* A row in a list of 40 should not lift and drop as the pointer crosses it. */
+.vh-sl-card:hover {
+	transform: none;
+}
+
+.vh-sl-card > summary.vh-sl-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 14px;
+	margin: 0;
+	padding: 2px 0;
+	cursor: pointer;
+	list-style: none;
+}
+
+.vh-sl-card > summary.vh-sl-head::-webkit-details-marker {
+	display: none;
+}
+
+.vh-sl-card[open] > summary.vh-sl-head {
+	margin-bottom: 14px;
+	padding-bottom: 12px;
+	border-bottom: 1px solid var(--vh-line);
+}
+
+.vh-sl-card > summary.vh-sl-head:focus-visible {
+	outline: 2px solid var(--vh-accent);
+	outline-offset: 4px;
+	border-radius: 8px;
+}
+
+.vh-sl-card > summary:hover .vh-sl-name {
+	color: var(--vh-link);
+}
+
+.vh-sl-caret {
+	flex: 0 0 auto;
+	width: 9px;
+	height: 9px;
+	margin: 0 2px 3px 2px;
+	border-right: 2px solid var(--vh-muted);
+	border-bottom: 2px solid var(--vh-muted);
+	transform: rotate(-45deg);
+	transition: transform .15s ease;
+}
+
+.vh-sl-card[open] > summary .vh-sl-caret {
+	transform: rotate(45deg);
+	margin-bottom: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.vh-sl-caret {
+		transition: none;
+	}
+}
+
+.vh-sl-headline {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	min-width: 0;
+	margin-right: auto;
+}
+
+.vh-sl-where {
+	font-size: 12px;
+	color: var(--vh-muted);
+}
+
+.vh-sl-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 10px 14px;
+	margin-bottom: 14px;
+}
+
+.vh-sl-name {
+	margin: 0;
+	font-size: 19px;
+	line-height: 1.25;
+	overflow-wrap: anywhere;
+}
+
+.vh-sl-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.vh-sl-h3 {
+	margin: 22px 0 8px;
+	font-size: 13px;
+	letter-spacing: .04em;
+	text-transform: uppercase;
+	color: var(--vh-muted);
+}
+
+.vh-sl-facts {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+	gap: 12px 18px;
+	margin: 0;
+	padding: 14px 16px;
+	border: 1px solid var(--vh-line);
+	border-radius: 10px;
+	background: var(--vh-raised);
+}
+
+.vh-sl-fact dt {
+	margin: 0 0 2px;
+	font-size: 11px;
+	letter-spacing: .04em;
+	text-transform: uppercase;
+	color: var(--vh-muted);
+}
+
+.vh-sl-fact dd {
+	margin: 0;
+	font-size: 14px;
+	overflow-wrap: anywhere;
+}
+
+.vh-sl-fact .vh-meta {
+	display: block;
+	margin-top: 2px;
+}
+
+.vh-sl-door {
+	display: block;
+	font-weight: 600;
+}
+
+.vh-sl-doors code {
+	font-size: 12px;
+	overflow-wrap: anywhere;
+}
+
+.vh-sl-quote {
+	margin: 0;
+	padding: 10px 14px;
+	border-left: 3px solid var(--vh-line-strong);
+	background: var(--vh-raised);
+	border-radius: 0 8px 8px 0;
+	font-size: 14px;
+}
+
+.vh-sl-note {
+	font-size: 12px;
+	overflow-wrap: anywhere;
+}
+
+.vh-sl-cols {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+	gap: 0 28px;
+}
+
+.vh-sl-list {
+	margin: 0;
+	padding-left: 20px;
+	font-size: 14px;
+	line-height: 1.55;
+}
+
+.vh-sl-list li {
+	margin-bottom: 8px;
+}
+
+/* ---- the diagram ------------------------------------------------ */
+
+.vh-sl-topo {
+	/* Two hop colours the shared tokens do not carry. Dark values first,
+	   because dark is the default theme; light overrides them below. */
+	--vh-sl-role: #a78bfa;
+	--vh-sl-data: #34d399;
+	--vh-sl-guard: #4ade80;
+	overflow-x: auto;
+	padding: 4px 0 8px;
+}
+
+:root[data-theme="light"] .vh-sl-topo {
+	--vh-sl-role: #6d49c9;
+	--vh-sl-data: #0f8f6f;
+	--vh-sl-guard: #15803d;
+}
+
+.vh-sl-topo svg {
+	display: block;
+	width: 100%;
+	/* Below this the 15-unit labels drop under ~10px on screen, so the
+	   wrapper scrolls instead of shrinking them further. */
+	min-width: 1080px;
+	height: auto;
+}
+
+.vh-sl-cap {
+	font-size: 12px;
+	letter-spacing: .06em;
+	text-transform: uppercase;
+	fill: var(--vh-muted);
+}
+
+/* One tone per hop, read by the tile, the glyph and the left edge. */
+.vh-sl-node { --vh-sl-tone: var(--vh-line-strong); }
+.vh-sl-node--net { --vh-sl-tone: var(--vh-series-1, #5ea3ff); }
+.vh-sl-node--door { --vh-sl-tone: var(--vh-sev-high, #ff9a3c); }
+.vh-sl-node--fn { --vh-sl-tone: var(--vh-sev-critical, #ff5a66); }
+.vh-sl-node--role { --vh-sl-tone: var(--vh-sl-role); }
+.vh-sl-node--data { --vh-sl-tone: var(--vh-sl-data); }
+.vh-sl-node--guard { --vh-sl-tone: var(--vh-sl-guard); }
+.vh-sl-node--unknown { --vh-sl-tone: var(--vh-line-strong); }
+
+.vh-sl-node__box {
+	fill: var(--vh-raised-solid, var(--vh-surface));
+	stroke: var(--vh-line);
+	stroke-width: 1;
+}
+
+.vh-sl-node--fn .vh-sl-node__box {
+	stroke: var(--vh-sl-tone);
+	stroke-width: 1.5;
+}
+
+.vh-sl-node__edge {
+	fill: var(--vh-sl-tone);
+	stroke: none;
+}
+
+.vh-sl-node__tile {
+	fill: var(--vh-sl-tone);
+	fill-opacity: .14;
+	stroke: none;
+}
+
+.vh-sl-ico {
+	fill: none;
+	stroke: var(--vh-sl-tone);
+	stroke-width: 1.8;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.vh-sl-ico__dot {
+	fill: var(--vh-sl-tone);
+	stroke: none;
+}
+
+.vh-sl-node__label {
+	font-size: 15px;
+	font-weight: 600;
+	fill: var(--vh-ink);
+}
+
+.vh-sl-node__sub {
+	font-size: 13px;
+	fill: var(--vh-ink-2, var(--vh-muted));
+}
+
+.vh-sl-node__meta {
+	font-size: 12px;
+	fill: var(--vh-muted);
+}
+
+.vh-sl-node--unknown .vh-sl-node__label,
+.vh-sl-node--unknown .vh-sl-node__sub {
+	fill: var(--vh-muted);
+}
+
+.vh-sl-link {
+	fill: none;
+	stroke-width: 2;
+}
+
+.vh-sl-link--open { stroke: var(--vh-sev-high, #ff9a3c); }
+.vh-sl-link--guard { stroke: var(--vh-sl-guard); }
+.vh-sl-link--trust { stroke: var(--vh-sl-role); }
+
+.vh-sl-link--unknown {
+	stroke: var(--vh-line-strong);
+	stroke-dasharray: 5 5;
+}
+
+.vh-sl-more {
+	font-size: 13px;
+	fill: var(--vh-muted);
+}
+
+@media (max-width: 640px) {
+	.vh-sl-facts {
+		grid-template-columns: 1fr;
+	}
+}
+
+
+/* ---- what stands in front --------------------------------------- */
+
+.vh-sl-front td {
+	vertical-align: top;
+}
+
+.vh-sl-host {
+	display: block;
+	font-family: var(--vh-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+	font-size: 12px;
+	overflow-wrap: anywhere;
+	color: var(--vh-muted);
+}
+
+/* A name somebody actually types outranks the AWS-issued one. */
+.vh-sl-host--real {
+	color: var(--vh-ink);
+	margin-top: 4px;
+}
+
+.vh-sl-src {
+	display: inline-block;
+	margin-left: 6px;
+	padding: 0 6px;
+	border: 1px solid var(--vh-line);
+	border-radius: 999px;
+	font-family: var(--vh-font, inherit);
+	font-size: 10px;
+	letter-spacing: .03em;
+	text-transform: uppercase;
+	color: var(--vh-muted);
+	vertical-align: 1px;
+}
+
+.vh-sl-front__yes {
+	display: block;
+	font-weight: 600;
+	color: var(--vh-good, #4ade80);
+}
+
+/* Not a warning colour: "nothing in front" is the ordinary state for an
+   AWS-managed endpoint, and painting it red on every row would train
+   people to ignore the column. */
+.vh-sl-front__no {
+	display: block;
+	color: var(--vh-ink-2, var(--vh-muted));
+}
+
+.vh-sl-allow {
+	display: block;
+	font-size: 13px;
+	overflow-wrap: anywhere;
+}
+
+.vh-sl-allow + .vh-sl-allow {
+	margin-top: 4px;
+}
