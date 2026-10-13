@@ -85,6 +85,22 @@ END</pre>
 
 <p>The "what is listening" inventory is built from two Tenable Netstat Portscanner plugins (34220 over WMI, 14272 over SSH) — informational findings that are otherwise suppressed, so the data was invisible until this plugin surfaced it. Of the ports another machine could connect to, only <strong>web and mail</strong> listeners count as evidence of a plausible perimeter host. This inventory answers "is something listening"; it can never answer "can the internet route to it" — no scanner supplies firewall or routing rules, and VulnHub never pretends otherwise.</p>
 
+<h3>Proven versus plausible</h3>
+
+<p>"Reachable" covers two different strengths of evidence, and the widget's reachability strip shows them apart. <strong>Open from outside</strong> means the path itself was read: a cloud security group admits an outside source on an address that routes from an internet gateway, an internet-facing load balancer forwards to the machine, or it answers on a public address. <strong>Looks published</strong> means only that a web or mail service is listening — the firewall in front of it was not readable, so whether the internet actually reaches it is unproven. <em>Never looked</em> and <em>Ruled out</em> complete the strip.</p>
+
+<h3>Open to the internet — and vulnerable on that port</h3>
+
+<p>The lanes say which findings <em>could</em> be used from outside. This panel, under the lanes, says which ones <em>can</em>, today, on which machine and port. A finding is on it only when all three hold: there is a <strong>way in</strong> (as above), the <strong>vulnerable component is the service on that port</strong> (OpenSSH on 22, a web server on 443, Windows on 3389), and the finding is <strong>open and not risk-accepted</strong>. Each row is then ranked:</p>
+
+<div class="vh-defs">
+  <div><span class="k">Mitigate now</span><span class="v">Open to anyone and exploitable today; or on CISA's exploited list and reachable from anywhere outside.</span></div>
+  <div><span class="k">Next</span><span class="v">Open to anyone and critical or high; or open only to listed addresses and exploitable today.</span></div>
+  <div><span class="k">Review</span><span class="v">Every other vulnerable service with a way in.</span></div>
+</div>
+
+<p>Alongside it are ports a rule opens to anyone but nothing routes to today (<em>latent</em> — one route change away from real), servers with a way in and nothing known vulnerable behind it, and internet-facing load-balancer listeners whose targets were not captured or that no scanner covers. Each row says whether an inline firewall inspects the traffic, whether the finding is already on a ticket, and what to do. Every tier links to its findings (<code>expo=now|next|review|all|latent</code>), and the panel has its own CSV. The cloud half of the evidence comes from the AWS network capture (see <a href="?doc=cloud">Cloud: posture, network &amp; cost</a>); firewall rules in front of AWS and on-premises are not read, so a door here can only be closed by them, never opened.</p>
+
 <h3>What happens to edge findings on unreachable machines</h3>
 
 <p>An <span class="vh-tag vh-tag--edge">edge</span>-route finding on a machine the internet <em>cannot</em> reach is not thrown away — it is moved to the <span class="vh-tag vh-tag--inside">inside</span> lane, because that is where it can actually be used (by someone who already has a foothold). This is why the inside lane's total is larger than "purely local" bugs alone, and the widget labels this the "borrowed" portion.</p>

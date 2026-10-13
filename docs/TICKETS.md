@@ -486,7 +486,8 @@ Internal notification emails are not sent to Jira and are unaffected.
 | `vulnerability` | never automatically — verified against the scanner |
 | `tenable_coverage` | Tenable holds a record of the asset |
 | `tenable_agent` | Tenable reports an agent on the asset |
-| `tenable_agent_dark` | the agent **checks in again** (`agent_status = 'on'`) |
+| `tenable_agent_dark` | the agent **checks in again**: Tenable's `last_connect` is later than when the asset went on the ticket, and within `Tickets::agent_back_days()` (14) |
+| `cmdb_cleanup` | the CMDB record is right again: taken **out of service**, the asset is gone from the inventory, or **AWS reports it** within `Tickets::cloud_seen_days()` (7, `vulnhub_cmdb_cleanup_seen_days`) and it is matched to its CMDB record. The other direction from a CMDB gap, which is met as soon as the CMDB holds the asset -- the very thing a clean-up is about. Guessed from a `missing=aws` or `known=only:cmdb` filter |
 | `defender_coverage` | Defender reports the asset onboarded |
 | `cmdb_gap` / `intune_gap` | the source reports the asset |
 | `cleanup` | the asset is out of service or gone |
@@ -498,6 +499,18 @@ quiet still *is* one. So a ticket raised about twenty machines whose agents had
 stopped reporting opened at "20 of 20 assets done" and would have closed itself
 on the first check. The ask on that ticket is the check-in, so that is what the
 new kind tests; the same twenty assets read 19 outstanding under it.
+
+**Checked in, not "online right now"** (changed 2026-10-02). The first version
+tested `agent_status = 'on'`. That is Tenable's *online at the moment*: every
+agent marked `on` had connected within the last two hours, and a workstation
+whose agent came back that afternoon read `off` again once it was shut for the
+night. So dark-agent tickets said "still outstanding" about machines visibly back
+(connected 4 hours ago, green dot), and the done count rose and fell with the
+time of day -- the last check said 2 of 20, the bar 1 of 20. The test is now
+the check-in itself: `agent_last_connect > ticket_assets.created_at` and within
+14 days (`vulnhub_agent_back_days`), so an agent that comes back and then dies
+again for two weeks reopens. The ticket's Agent column follows the same test:
+**Back**, with "offline now" under it when Tenable's status is off.
 
 Two details worth keeping:
 
@@ -1001,6 +1014,96 @@ the same component is rendered inline on the ticket page — from one function
     comment on, and says so rather than looking like a ticket nobody has
     commented on.
 
+## Attachments: every file on the ticket, previewed in place
+
+The ticket page lists every file on the Jira issue, newest first -- the
+ones this site sent (the CSV a ticket is raised with, every "Send an updated
+list") and the ones people added in Jira. Clicking one opens it in a pop-up.
+
+**Where the list comes from.** `attachment` is one of the poll's
+`SYNC_FIELDS`, so the metadata (name, type, size, who, when) rides on the
+batched JQL search that already runs: no extra call per ticket. It is kept
+in the ticket's `payload_json` as `attachments` (`Tickets::attachments()`),
+capped at `VulnHub_Jira_Connector::MAX_ATTACHMENTS` (200). An answer from
+Jira that did not carry the field leaves the stored list alone
+(`Tickets::upsert()` keeps it); an empty `attachment` array does empty it,
+because that means every file was removed. **Refresh from Jira** reads it
+now (`GET /issue/{key}?fields=attachment`), for a file somebody has only
+just added.
+
+**By us, or from others.** A file is *by us* when its author is the Jira
+account this site is connected as (one `/myself` a day, cached in
+`vulnhub_jira_own_account`) or its name is the last list sent
+(`Attachments::is_ours()`); anything else is *from others*. The ticket page
+groups them -- **From others** first, since that is the half somebody needs
+to read, then **Added by us** -- and previous/next in the pop-up walks the
+same order. Under OAuth the connected account is a person's own, so a file
+that person added in Jira directly also counts as ours.
+
+**On the Tickets list** a paperclip under the latest comment gives the count
+and the split (a paperclip, then "1 by us · 2 from others"), read from the stored list
+(`Attachments::counts()`, no round trip); it is drawn in the accent colour
+when anything came from somebody else, and links to `#vh-attachments` on the
+ticket page. A ticket with no files shows nothing.
+
+**Backfilling.** A ticket's list is filled by the first poll after this
+shipped, or at once with:
+
+```
+docker exec vulnhub-wpcli wp --path=/var/www/html eval 'global $wpdb; $c = vulnhub_jira_connector();
+  foreach ( $wpdb->get_results( "SELECT id, external_key FROM " . vh_table( "tickets" ) . " WHERE provider = \"jira\" AND external_key <> \"\"", ARRAY_A ) as $r ) {
+    $res = $c->attachments( $r["external_key"], (int) $r["id"] );
+    echo $r["external_key"], ": ", $res["ok"] ? count( $res["attachments"] ) : $res["message"], "\n";
+    usleep( 250000 );
+  }'
+```
+
+One read-only `GET /issue/{key}?fields=attachment` per ticket.
+
+**The bytes.** Nothing is downloaded until somebody opens a file. Then
+`GET /attachment/content/{id}?redirect=false` fetches it -- `redirect=false`
+so the Authorization header is never carried to the media host -- and the
+copy is kept under `uploads/vulnhub-attachments/` (fenced off by
+`.htaccess`, excluded from backups: it is a cache). A Jira attachment id
+never changes its content, so the copy never goes stale; the folder is
+pruned least-recently-opened first above 512 MB
+(`vulnhub_ticket_attachment_cache_limit`). Nothing over 25 MB is fetched
+(`vulnhub_ticket_attachment_fetch_limit`); the size from the metadata is
+checked before the call and the received length after it, so a short read
+is an error, never a truncated preview.
+
+The browser is never sent to Jira. Every file comes through
+`/tickets/{id}/attachments/{att}/file` under the viewer's own session, and
+only for an id on **that ticket's** stored list -- the route cannot read an
+attachment off another issue.
+
+**What a preview does, by type** (`VulnHub\Core\Attachments`):
+
+| Kind | Files | How |
+|---|---|---|
+| table | csv, tsv | parsed here; delimiter and encoding (UTF-8 BOM, UTF-16, Windows-1252) detected |
+| sheet | xlsx, xlsm, xltx | parsed here (ZipArchive + XMLReader): every sheet up to 12, shared strings, booleans, date-formatted cells as dates |
+| doc | docx | the document's text, paragraph by paragraph |
+| text | txt, log, json, xml, md, yaml, scripts, html… | first 256 KB as text; whole JSON is pretty-printed; HTML is shown as source, never rendered |
+| image | png, jpg, gif, webp, bmp, avif, svg | served inline |
+| pdf | pdf | served inline in a frame |
+| video / audio | mp4, webm, mp3, wav, ogg, m4a | native player |
+| none | xls, doc, pptx, msg, archives, programs, anything else | a sentence saying why, and Download |
+
+Tables show the first 500 rows and 60 columns (500 characters a cell), with
+a row filter and a "first row is headings" switch; the note under the table
+says how much was left out.
+
+**Serving safely.** The type sent is chosen from the extension, never from
+Jira's `mimeType`, and an inline kind is only served inline when `finfo`
+agrees with the extension (a `.png` that is really HTML becomes a download).
+Every response carries `X-Content-Type-Options: nosniff`, and everything
+except PDF -- whose viewer will not start under it -- a
+`Content-Security-Policy` with `sandbox`, so an SVG opened in its own tab
+runs nothing. Parsed content reaches the page as JSON and is written with
+`textContent`. Office files are unpacked with a per-part cap
+(`ZIP_ENTRY_CAP`, 64 MB) and XML is read with `LIBXML_NONET`.
+
 ## Waiting on you: tags, the glow, and the bell
 
 The Tickets list marks what needs the person looking at it, without a column
@@ -1265,5 +1368,8 @@ nobody answers returns 409 ("No ticketing integration is active").
 | `POST /tickets/{id}/aside` | raise | none: `Tickets::set_aside()` |
 | `GET` / `POST /tickets/{id}/transitions` | raise | `vulnhub_ticket_transitions`, `vulnhub_apply_ticket_transition` |
 | `GET` / `POST /tickets/{id}/comments` | view / raise | `vulnhub_ticket_comments`, `vulnhub_post_ticket_comment` |
+| `GET /tickets/{id}/attachments` (`fresh=1` asks Jira now) | view | `vulnhub_ticket_attachments` |
+| `GET /tickets/{id}/attachments/{att}/preview` | view | `vulnhub_ticket_attachment_bytes` (first look only) |
+| `GET /tickets/{id}/attachments/{att}/file` (`download=1`) | view | `vulnhub_ticket_attachment_bytes` (first look only) |
 
 *View* is `vulnhub_view`; *raise* is `vulnhub_raise_ticket` (`Caps::RAISE_TICKET`).

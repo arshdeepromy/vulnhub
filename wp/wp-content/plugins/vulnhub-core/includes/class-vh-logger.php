@@ -421,7 +421,9 @@ final class Logger {
 				$dl_bytes = (int) ( $out['download']['bytes'] ?? 0 );
 				$is_full  = ! empty( $stats['is_full'] ) || ! empty( $out['download']['is_full'] );
 				$est_key  = 'vulnhub_' . ( $is_full ? 'dl_est_full_' : 'dl_est_incr_' ) . $connector;
-				$dl_est   = (int) get_option( $est_key, 0 );
+				// A connector that knows the exact size up front (a chunked
+				// package with a manifest) says so; no need to guess.
+				$dl_est   = (int) ( $out['download']['bytes_total'] ?? 0 ) ?: (int) get_option( $est_key, 0 );
 				$dl_rate  = $dl_bytes / $elapsed; // bytes/sec
 
 				$out['download']['rate_bps']  = (int) round( $dl_rate );

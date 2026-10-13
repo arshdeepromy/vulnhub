@@ -373,7 +373,15 @@ body.vh-app select option { background: var(--vh-surface); color: var(--vh-ink);
 .vh-flow__foot, .vh-flow__evidence { color: var(--vh-muted); font-size: 12px; }
 
 /* ------------------------------------------------------------- misc/utility */
-.vh-tooltip { position: absolute; z-index: 20; padding: 6px 10px; border-radius: 8px; background: var(--vh-raised-solid); border: 1px solid var(--vh-line-strong); color: var(--vh-ink); font-size: 12px; box-shadow: var(--vh-shadow-hover); pointer-events: none; }
+/*
+ * Hover tooltips. `fixed`, because showTip() positions from clientX/clientY,
+ * which are viewport coordinates: as `absolute` the box drifted by the scroll
+ * offset, away from the thing it explains. A width cap, because some tips are
+ * a paragraph (a finding's fix route explains itself in full) and an uncapped
+ * box laid that out as one line across the whole screen, unreadable.
+ */
+.vh-tooltip { position: fixed; z-index: 60; max-width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; padding: 8px 11px; border-radius: 8px; background: var(--vh-raised-solid); border: 1px solid var(--vh-line-strong); color: var(--vh-ink); font-size: 12px; line-height: 1.45; text-align: left; white-space: normal; overflow-wrap: anywhere; box-shadow: var(--vh-shadow-hover); pointer-events: none; }
+@media (max-width: 640px) { .vh-tooltip { max-width: calc(100vw - 24px); } }
 .vh-os { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; font: 700 9px var(--vh-mono); background: var(--vh-neutral-bg); color: var(--vh-ink-2); border: 1px solid rgba(120,160,210,.3); margin-right: 8px; vertical-align: middle; }
 .vh-os svg { width: 15px; height: 15px; }
 .vh-srcs { display: flex; gap: 5px; flex-wrap: wrap; }

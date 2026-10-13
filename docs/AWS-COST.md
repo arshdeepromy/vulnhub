@@ -24,19 +24,25 @@ running, or the newest snapshot is younger than the mode's floor:
 | `off` | never automatic |
 
 The choice sits beside **Refresh from AWS** on the dashboard. What the last
-sync decided is kept in `vulnhub_aws_cost_auto_last`. A read that finds the SSO
-session expired is stored as `failed` with that message and the screens keep
-showing the last complete snapshot. Decisions are keyed by suggestion id, so
+sync decided is kept in `vulnhub_aws_cost_auto_last` and shown under the
+choice. A read counts as running while its progress (`vulnhub_aws_cost_progress`)
+is `queued` with the event still scheduled, or has a heartbeat under ten minutes
+old. A read that finds the SSO session expired is stored as `failed` with that
+message and the screens keep showing the last complete snapshot. Decisions are keyed by suggestion id, so
 they carry across reads; a suggestion that stops appearing moves to "no longer
 in the latest data".
 
 ## Export
 
-**Export HTML** on either page (View permission) downloads one self-contained
-file from `GET /cost/export?view=cost|savings`: both screens as tabs, the
+**Export HTML** on either page (View permission; the button only appears once
+there is a snapshot, and the route answers 404 before then) downloads one
+self-contained file, `vulnhub-aws-cost-<date read>.html`, from
+`GET /cost/export?view=cost|savings`: both screens as tabs (`view` only picks
+the tab it opens on), the
 current snapshot embedded, the same two scripts in offline mode
-(`VH_AWS_COST.offline`), VulnHub's dark and light tokens (`cost-export.css`).
-It loads nothing from the network. Accept / Drop in the file are a what-if that
+(`VH_AWS_COST.offline`), VulnHub's dark and light tokens (`cost-export.css`),
+starting in the viewer's system theme with a toggle. Refresh, auto-refresh and
+progress are stripped from the embedded data. It loads nothing from the network. Accept / Drop in the file are a what-if that
 totals a plan and downloads it as CSV — nothing is written back. Every export is
 audit-logged as `aws_cost_export`. The file holds account IDs, instance names
 and addresses, so treat it like the screens themselves.
@@ -50,8 +56,8 @@ per account the login can see:
   an account that can see others is never counted twice: service x usage type
   for last month and month-to-date, record type (Savings Plan covered vs on
   demand) for last month, and 45 days daily by service. Four requests per
-  account. **Cost Explorer bills $0.01 per request** — that is why refresh is
-  manual.
+  account. **Cost Explorer bills $0.01 per request** — that is why a read never
+  runs on every sync, only on demand or at most once per auto-refresh floor.
 - **EC2**: every instance (all states), volume and Elastic IP.
 - **CloudWatch**: 14 days hourly CPU average/max and network per instance,
   summarised into a weekday x hour grid (site timezone) and bucket stats; 5-minute
@@ -65,9 +71,21 @@ per account the login can see:
   ambiguous is stored as null.
 
 Cost Explorer paging is followed to the end with back-off on throttling; a
-query that still fails leaves that account marked `cost_ok: false` and the
-screens say how many accounts are covered. A run with no Cost Explorer data at
-all is stored as `failed` and never shown.
+query that still fails leaves that account marked `cost_ok: false`. A run with
+no Cost Explorer data at all is stored as `failed` and never shown.
+
+A partial read never replaces a complete one: to the screens a skipped account
+would look like costs that vanished, and its suggestions like work that got
+done. If any account was not fully read (`cost_ok` or `ec2_ok` false), the Price
+List could not be read, or the SSO login listed fewer accounts than the last
+complete read, the run is stored as `partial` and the dashboard says "the last
+refresh was incomplete" above the last complete figures. Only the very first
+read is shown despite gaps, flagged in its message.
+
+Snapshots live in `{prefix}vulnhub_aws_cost_snapshots` (`started_at`,
+`finished_at`, `status` ok|partial|failed, `message`, `data` JSON; schema
+version in `vulnhub_aws_cost_db`, currently `1`). The newest six rows are kept
+to compare against when a number moves; the screens read the newest `ok` one.
 
 ## Suggestions (`class-vh-aws-cost-recs.php`)
 
@@ -75,7 +93,7 @@ all is stored as `failed` and never shown.
 
 | Rule | Condition | Saving |
 |---|---|---|
-| Idle instance | ran ≥90% of the window, network < 0.05 MB/h, CPU p95 < 5% | compute + its disks |
+| Idle instance | ran ≥90% of the window, network < 0.05 MB/h, CPU p95 of the hourly max < 5% | compute + its disks |
 | Stopped, still billed | stopped ≥ 30 days (or no activity in the window and no stop date) | its disks + Elastic IPs |
 | Unused Elastic IP | not associated | idle IPv4 price x 730 |
 | Unattached disk | volume `available` | the volume at list price |
@@ -83,14 +101,23 @@ all is stored as `failed` and never shown.
 | gp2 → gp3 | per account, gp3 provisioned to gp2's own baseline (3 IOPS/GB to 16k; 250 MiB/s above 170 GB) | price difference, only where positive |
 
 The *scheduled fleet* is measured: instances the Instance Scheduler has acted on
-(`InstanceScheduler-LastAction`) that ran ≤ 60% of the window and were off at
-weekends. Its median hours a week and the tag values in use come from them.
+(`InstanceScheduler-LastAction`) that ran between 24 hours and 60% of the window
+and no more than 10% of the weekend hours. Its median hours a week and the tag
+values in use come from them. "Running through weekends" means at least a
+quarter of the window's weekend hours.
+
+Instances in an Auto Scaling group, EKS/ECS cluster, Elastic Beanstalk
+environment or Karpenter node pool (by their AWS tags) are left out of the
+idle, off-schedule and rightsizing rules — their size and hours belong to
+whatever manages them. Each instance and disk gets at most one suggestion: one
+already claimed by an earlier rule (idle, stopped, unattached, off-schedule)
+is not offered again by a later one.
 
 **Needs confirmation** — depends on something not measured here:
 
 | Rule | Unmeasured | Saving shown |
 |---|---|---|
-| Rightsize one size down / current generation | memory; licensing; driver support | price difference ("if confirmed") |
+| Rightsize one size down / current generation | memory; licensing; driver support | price difference ("if confirmed"); one size down only when CPU peak < 40% and p95 < 25% over a ≥90% window |
 | io1/io2 → gp3 | bursts inside 5 minutes; peaks outside 14 days; durability needs | gp3 sized to measured peak ("if confirmed"); skipped above 16k IOPS or 1,000 MiB/s |
 | Snapshots, NAT gateways, VPC endpoints, RDS backups, Config, CloudTrail data events, S3 Standard-IA | retention, architecture, compliance | none — today's cost only |
 
@@ -103,7 +130,10 @@ Stored in `vulnhub_aws_cost_decisions` (option), keyed by the suggestion id
 (`sched:<instance>`, `gp3:<account>` …), shared across users, written to the
 audit log as `aws_cost_decision`. The server looks the suggestion up in the
 current snapshot before recording it. A decision whose suggestion no longer
-appears is kept and shown as "no longer in the latest data — likely done".
+appears is kept and shown as "no longer in the latest data — likely done"; it
+can only be cleared (status `""`), and any other change is refused with 409.
+The accepted plan (still-present and gone items) downloads as
+`aws-savings-plan-<date>.csv` from the browser.
 
 ## REST (`vulnhub-aws/v1`)
 

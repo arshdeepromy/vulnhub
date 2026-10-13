@@ -15,8 +15,10 @@ bell).
 
 The signature is a **15-hex computer name with no NetBIOS name**
 (`^[0-9a-f]{15}$`), overridable with the `vulnhub_tenable_appstream_regex`
-option. `candidates()` selects live assets matching it (excluding rows already
-dropped or de-duplicated), newest `last_seen` first.
+option. `candidates()` selects assets matching it, newest `last_seen` first. It
+leaves out rows already dropped from Tenable (`tenable_dropped_at` set) and rows
+merged into another asset — except rows folded into a fleet record (see *One
+record per fleet*), because Tenable still holds those sessions' assets.
 
 `summary()` returns:
 
@@ -128,12 +130,13 @@ those from the network capture: the fleets, their account, their subnets --
 and, since the capture now records each subnet's `cidr`, the address ranges.
 Image builders in the same account add their subnets to the range (they build
 the image the fleet runs). `refresh_config()` folds that into the setting
-`vulnhub_fleets` after every AWS sync; the busiest fleet of an account is its
-*primary*. The definitions live in the setting, never in code: they name the
+`vulnhub_fleets` after every AWS sync (`on_sync()` on `vulnhub_sync_complete`);
+the busiest fleet of an account is its *primary*. The definitions live in the setting, never in code: they name the
 estate's own accounts and ranges.
 
-Nothing is folded until the setting's `enabled` flag is on. `absorb( true )`
-is the dry run: which rows, into which fleet.
+Nothing is folded until the setting's `enabled` flag is on. Once it is,
+`absorb()` runs after every AWS, Tenable, Intune, CMDB or Defender sync.
+`absorb( true )` is the dry run: which rows, into which fleet.
 
 ### Membership
 
@@ -147,7 +150,8 @@ fleet when its name is the 15-hex session name and it runs Windows.
 `Repo::upsert_asset()` asks the `vulnhub_asset_route` filter *before* it
 matches anything:
 
-- **The scanner** (`tenable`, `tenable-csv`): `fold` -- the record is written
+- **The scanner** (any source that normalises to `tenable`, so the CSV import
+  too): `fold` -- the record is written
   onto the fleet record, and only what a session may say about the fleet is
   kept (last seen and scanned, OS, agent, address, the newest session's
   Tenable id), and only when it is newer than what is held: sessions arrive

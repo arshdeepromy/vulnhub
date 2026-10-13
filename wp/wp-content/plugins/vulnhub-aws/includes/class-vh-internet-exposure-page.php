@@ -666,7 +666,9 @@ final class VulnHub_Internet_Exposure_Page {
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
-	private static function names( string $search, string $cover ): array {
+	private static function names( string $search, string $cover, string $reaches = '', string $facing = '' ): array {
+		global $wpdb;
+
 		static $cache = null;
 
 		if ( null === $cache ) {
@@ -696,6 +698,45 @@ final class VulnHub_Internet_Exposure_Page {
 			$out = array_filter( $out, static fn( array $r ): bool => $r['waf'] && empty( $r['waf']['covered'] ) );
 		} elseif ( 'unlisted' === $cover ) {
 			$out = array_filter( $out, static fn( array $r ): bool => ! $r['waf'] );
+		}
+
+		/*
+		 * The two new filters. `reaches` splits three ways: a resource kind,
+		 * "nothing at all" (no target recorded), and "an origin we cannot
+		 * match" -- which are different problems. The first is a dead record,
+		 * the second is usually a sync that has not run rather than a missing
+		 * server.
+		 */
+		if ( '' !== $reaches ) {
+			$out = array_values(
+				array_filter(
+					$out,
+					static function ( array $r ) use ( $reaches ): bool {
+						if ( 'none' === $reaches ) {
+							return '' === (string) $r['origin'];
+						}
+
+						if ( 'unmatched' === $reaches ) {
+							return '' !== (string) $r['origin'] && ! $r['resolved'];
+						}
+
+						if ( 'lambda' === $reaches ) {
+							return ! empty( $r['reaches_function'] );
+						}
+
+						return $reaches === (string) $r['kind'];
+					}
+				)
+			);
+		}
+
+		if ( '' !== $facing ) {
+			$out = array_values(
+				array_filter(
+					$out,
+					static fn( array $r ): bool => $facing === (string) $r['facing']
+				)
+			);
 		}
 
 		return array_values( $out );
@@ -729,10 +770,57 @@ final class VulnHub_Internet_Exposure_Page {
 		$byname = array();
 		$bytarget = array();
 
+		/*
+		 * Several sources can know the same name, and they do not know it
+		 * equally well. A Route 53 ALIAS for an API Gateway custom domain
+		 * says only "it points at d-….execute-api"; the API Gateway reader's
+		 * own row for that name says which API and which stage. Last-one-wins
+		 * threw that away depending on read order, which is why 112 hostnames
+		 * could be followed to an API in the database and none of them showed
+		 * it on the page.
+		 *
+		 * So: a row that identifies a resource beats one that only classifies
+		 * the shape of a target, which beats one that does neither.
+		 */
+		$rank = static function ( array $d ): int {
+			if ( '' !== (string) ( $d['matched_ref'] ?? '' ) ) {
+				return 3;
+			}
+
+			if ( '' !== (string) ( $d['matched_kind'] ?? '' ) ) {
+				return 2;
+			}
+
+			return 1;
+		};
+
 		foreach ( $domains as $d ) {
 			$n = strtolower( (string) $d['name'] );
 			$byname[ $n ][] = $d;
-			$bytarget[ $n ] = $d;
+
+			if ( ! isset( $bytarget[ $n ] ) || $rank( $d ) > $rank( $bytarget[ $n ] ) ) {
+				$bytarget[ $n ] = $d;
+			}
+		}
+
+		/*
+		 * Load balancer DNS name -> scheme, read once.
+		 *
+		 * The only source that can say whether a thing answers from outside
+		 * is the thing itself. A name being in public DNS says nothing: 28 of
+		 * the first 40 names that looked unprotected pointed at load
+		 * balancers that only answer inside the network, and calling those
+		 * exposed is how a report loses its reader.
+		 */
+		$schemes = array();
+
+		foreach ( (array) $wpdb->get_results( 'SELECT detail FROM ' . $wpdb->prefix . "vulnhub_aws_net_nodes WHERE node_type = 'elb'", ARRAY_A ) as $node ) { // phpcs:ignore WordPress.DB
+			$detail = json_decode( (string) $node['detail'], true );
+			$dns    = strtolower( (string) ( is_array( $detail ) ? ( $detail['dns'] ?? '' ) : '' ) );
+
+			if ( '' !== $dns ) {
+				$schemes[ $dns ] = (string) ( $detail['scheme'] ?? '' );
+			}
 		}
 
 		// What these names are, as their owners describe them. Read once,
@@ -785,7 +873,19 @@ final class VulnHub_Internet_Exposure_Page {
 			$hop = $edge ? (array) $edge['matched'] : (array) $dns;
 			$key = strtolower( $origin );
 
-			if ( ( '' === (string) ( $hop['matched_kind'] ?? '' ) ) && isset( $bytarget[ $key ] ) ) {
+			/*
+			 * Also take the further hop when what we have is a shape with no
+			 * resource behind it -- "looks like an API Gateway" is not an
+			 * answer when another source can name the API.
+			 */
+			if ( '' === (string) ( $hop['matched_ref'] ?? '' ) && isset( $bytarget[ $key ] ) && '' !== (string) ( $bytarget[ $key ]['matched_ref'] ?? '' ) ) {
+				$hop  = $bytarget[ $key ];
+				$note = sprintf(
+					/* translators: %s: the record type that resolved it. */
+					__( 'resolved one hop further, by a %s record we hold', 'vulnhub' ),
+					(string) $hop['record_type']
+				);
+			} elseif ( ( '' === (string) ( $hop['matched_kind'] ?? '' ) ) && isset( $bytarget[ $key ] ) ) {
 				$hop  = $bytarget[ $key ];
 				$note = sprintf(
 					/* translators: %s: the record type that resolved it. */
@@ -799,7 +899,29 @@ final class VulnHub_Internet_Exposure_Page {
 
 			$svc = $catalog[ $name ] ?? array();
 
+			/*
+			 * Three tells, in order of what they are worth: the load
+			 * balancer's own scheme, a private address, a name that is not
+			 * routable anyway. Anything else stays unknown rather than being
+			 * guessed in either direction -- "unknown" is a useful answer
+			 * here and a wrong one is not.
+			 */
+			$facing_row = '';
+			$target_low = strtolower( (string) ( $hop['target'] ?? '' ) );
+
+			if ( isset( $schemes[ $target_low ] ) && '' !== $schemes[ $target_low ] ) {
+				$facing_row = 'internal' === $schemes[ $target_low ] ? 'internal' : 'external';
+			} elseif ( preg_match( '/^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/', $target_low ) ) {
+				$facing_row = 'internal';
+			} elseif ( preg_match( '/\.(local|internal|intranet)$/', $name ) ) {
+				$facing_row = 'internal';
+			} elseif ( '' !== (string) ( $hop['matched_kind'] ?? '' ) ) {
+				$facing_row = 'external';
+			}
+
 			$out[] = array(
+				'facing'        => $facing_row,
+				'kind'          => $resolved ? (string) ( $resolved['kind'] ?? '' ) : '',
 				'service'       => $svc,
 				'name'          => $name,
 				'zone'          => (string) ( $dns['zone'] ?? '' ),
@@ -883,6 +1005,10 @@ final class VulnHub_Internet_Exposure_Page {
 		$def = $map[ $kind ] ?? array( 'database', ucfirst( $kind ) );
 
 		return array(
+			// The label is for reading; the kind is for filtering. Returning
+			// only the label is why "reaches an API Gateway" could be true of
+			// 117 names in the database and false of every one on the page.
+			'kind'  => $kind,
 			'icon'  => (string) $def[0],
 			'label' => (string) $def[1],
 			'sub'   => (string) ( $hop['matched_name'] ?? '' ) ?: (string) ( $hop['matched_ref'] ?? '' ),

@@ -8,7 +8,7 @@ The front-end portal those screens are mirrored into lives in `vulnhub-dashboard
 
 Plugins live under `wp/wp-content/plugins/` in the repository.
 
-WordPress 7.0.4, PHP 8.3, MariaDB 11. Table prefix `vh_`, so VulnHub tables are
+WordPress 7.1 (7.1.3 at the last check), PHP 8.5, MariaDB 11. Table prefix `vh_`, so VulnHub tables are
 `vh_vulnhub_*`. Use `vh_table('assets')` — never hardcode.
 
 ---
@@ -81,10 +81,16 @@ Optional overrides:
 
 ```php
 public function icon(): string;               // dashicon slug, default dashicons-admin-plugins
-public function category(): string;           // vulnerability|identity|cmdb|itsm|auth|other
+public function category(): string;           // vulnerability|cloud|identity|cmdb|itsm|auth|email|other (default other)
 public function supports_sync(): bool;        // false for auth-only connectors
-public function default_interval(): string;   // vh_15min|vh_30min|vh_hourly|vh_4hours|vh_12hours|vh_daily|vh_weekly|manual
+public function supports_mock(): bool;        // false for a send-only connector (mail): no "Use mock data" box
+public function default_interval(): string;   // vh_15min|vh_30min|vh_hourly|vh_4hours|vh_12hours|vh_daily|vh_weekly|manual (default vh_hourly)
 ```
+
+`category()` is shown on the connector's card on the Integrations screen, and
+cards sort by it (in the order `Connectors::categories()` lists them, which also
+holds the labels), so related connectors sit together. An unknown slug still
+works; its card just sorts last.
 
 ### Field definitions
 
@@ -139,6 +145,9 @@ scripting off every row stays visible, which is exactly what the screen
 did before, so nothing becomes unreachable.
 
 `select` options are `value => label`. `checkbox` may add `checkbox_label`.
+Any input may carry a `placeholder`. A field of type `note` draws no input at
+all: its `help` text is shown as a block of guidance (it honours `show_when`
+too), which is how the Jira connector explains the OAuth connect step inline.
 A blank secret field on submit means "keep the stored value" — never clear it.
 
 ### Reading configuration
@@ -157,12 +166,25 @@ $this->settings->get_int( $this->id(), 'page_size', 500 );
 protected function do_sync( array $args = array() ): array {
     $this->log( 'Fetching assets…' );      // goes to the run log, visible in the UI
     $this->bump( 'processed' );            // processed|created|updated|skipped|failed
+    $this->progress( 'Importing findings', $done );  // live progress bar + heartbeat; per batch, not per row
     return array( 'ok' => true, 'message' => 'Imported 120 assets, 840 findings.' );
 }
 ```
 
-Core wraps `do_sync()` with run bookkeeping, a 30-minute lock, exception capture and
-the `vulnhub_sync_complete` action. Throwing is safe — it is caught and logged.
+Core wraps `do_sync()` (in the final `sync()`) with run bookkeeping, a 30-minute
+lock (the `vulnhub_sync_lock_<id>` transient), exception capture and the
+`vulnhub_sync_complete` action. Throwing is safe — it is caught and logged. A
+disabled connector refuses to run unless the caller passes `force`, and a second
+run while the lock is held returns *A sync for this connector is already
+running* rather than stacking.
+
+Before it takes the lock, `sync()` asks the `vulnhub_connector_sync_blocked`
+filter. Anything other than `''` refuses the run, even with `force`, and that
+string becomes the message. An instance that is a copy of another uses it to
+stop every connector but its own (`docs/REPLICATION.md`). After a scheduled or
+manual run the scheduler recalculates coverage unless the connector's
+`recalculate_after_sync()` answers false. The replica connector answers false,
+because it brings in state the source already computed.
 
 **Mock mode is mandatory.** Every connector must produce useful data with
 `$this->is_mock() === true` and no credentials, using the shared fixtures in §5.
@@ -197,12 +219,14 @@ Tenable connector decides full versus incremental.
 ## 3. HTTP client
 
 `$this->http` is a `\VulnHub\Core\Http` already wired to log into the current run.
-It retries 429 and 5xx up to 5 times, always honouring `Retry-After` over its own
-exponential backoff, with jitter.
+It retries 429, 500, 502, 503, 504 and transport errors, up to 5 attempts in all,
+always honouring `Retry-After` (capped at 60 s) over its own exponential backoff,
+with jitter. Pass `retries` in the request args to change the attempt count.
 
 ```php
 $response = $this->http->get( $url, $query, $headers );
 $response = $this->http->post( $url, $body_array_or_string, $headers );
+$response = $this->http->put( $url, $body_array_or_string, $headers );
 $response = $this->http->post_form( $url, array( 'grant_type' => 'client_credentials' ) );
 $response = $this->http->request( 'PUT', $url, array( 'headers' => [], 'body' => [], 'timeout' => 60 ) );
 
@@ -261,9 +285,9 @@ Repo::upsert_asset( array(
     'intune_id'          => '…',
     'azure_ad_device_id' => '…',
     'cmdb_id'            => '…',
-    'hostname'           => 'NZWS-001',    // lowercased automatically
+    'hostname'           => 'wkstn-001',   // lowercased; a dotted name is split, the domain moving to fqdn
     'fqdn'               => '…',
-    'ipv4'               => '10.10.20.15',
+    'ipv4'               => '192.0.2.15',
     'ipv4s'              => array( … ),    // or comma string
     'mac_address'        => '…',
     'serial_number'      => '…',
@@ -287,14 +311,27 @@ Repo::upsert_asset( array(
     'software'           => array( … ),
     'raw'                => array( 'yourfeed' => array( … ) ), // merged by top-level key
 ) );
-// returns ['id' => int, 'created' => bool]
+// returns ['id' => int, 'created' => bool, 'matched' => bool]
+// (plus 'ignored' => true, id 0, when a vulnhub_asset_route listener dropped it)
 // `raw` is merged into the row's raw_json by top-level key: file your feed's
 // data under your own key, and you replace only that key. Other feeds' keys
 // (tenable, plerion, intune, cmdb, cloud) are kept.
 ```
 
-Matching order: tenable_uuid → intune_id → azure_ad_device_id → cmdb_id →
-serial_number → hostname. **Never set `owner_person_id` / `team_id` / `location_id`
+Matching is `Repo::match_asset()`, one chain every feed shares, strongest
+evidence first: tenable_uuid → intune_id → defender_id → azure_ad_device_id →
+azure_vm_id → aws_instance_id → cmdb_id → serial_number, then the name in every
+spelling the record offers (hostname, the label in front of its FQDN, the FQDN
+itself), then a 15-character NetBIOS truncation of a longer name only when the
+IPv4 agrees too, and finally the address alone — but only for a `match_only`
+lookup, never for a feed that can create assets, because a DHCP lease is not an
+identity. A serial is skipped when it is a placeholder word (`vh_clean_serial()`)
+or when the row it hits carries a different CI number (see §4b).
+
+Before any of that, the `vulnhub_asset_route` filter is asked whether the record
+belongs to a pooled fleet: return `['action' => 'ignore']` to drop it, or
+`['action' => 'fold', 'asset_id' => …, 'data' => …]` to write it onto a named
+record instead of matching (see `Fleets` and `docs/APPSTREAM.md`). **Never set `owner_person_id` / `team_id` / `location_id`
 directly from a sync** — that is the mapping engine's job (§6). The one exception is
 the Intune connector, which must write the primary user's UPN into
 `raw['intune']['userPrincipalName']` so the `person_from_intune` rule can find it.
@@ -401,7 +438,7 @@ Repo::asset( $id ); Repo::person( $id ); Repo::vuln( $id ); Repo::finding( $id )
 Repo::person_by_upn( 'a.b@x.com' );
 Repo::teams(); Repo::team( $id ); Repo::team_id_by_slug( 'infrastructure' );
 Repo::ensure_team( 'Network Operations', 'intune' );   // creates if missing
-Repo::ensure_location( 'Auckland HQ', 'Auckland', 'New Zealand' );
+Repo::ensure_location( 'Head Office', 'Springfield', 'Example Country' );
 Repo::assets( array( 'search'=>…, 'asset_type'=>…, 'team_id'=>…, 'limit'=>50, 'offset'=>0 ) );
 Repo::findings( array( 'state'=>'open_any', 'severity'=>['critical','high'], 'asset_id'=>…, 'limit'=>50 ) );
 Repo::summary(); Repo::breakdown( 'team' ); Repo::top_vulns( 10 );
@@ -432,8 +469,9 @@ Severity says what to worry about. `VH_Action` says what the *work* is, which
 is the difference between a queue and a list.
 
 ```php
-VH_Action::classes();                       // slug => label, in precedence order
-VH_Action::actionable();                    // [ patch, remove, config ]
+VH_Action::classes();                       // slug => label, in display order (precedence is sql_case())
+VH_Action::actionable();                    // the classes somebody can act on this week
+VH_Action::label( 'patch' ); VH_Action::is_class( $slug );
 VH_Action::description( 'blocked_eol' );    // one line, for a legend or help text
 VH_Action::sql_case( 'f', 'v' );            // a CASE evaluating to a class slug
 VH_Action::sql_for( 'patch', 'f', 'v' );    // a WHERE fragment matching one class
@@ -477,8 +515,11 @@ stays actionable: 844 findings here are Java and .NET updates on RHEL 6 boxes.
 Burying them as "EOL noise" would hide schedulable work behind a replacement
 project measured in quarters.
 
-**The invariant.** The six classes **partition** the open findings exactly —
-every finding lands in one, none in two. Re-check that after touching any rule:
+**The invariant.** The classes **partition** the open findings exactly —
+every finding lands in one, none in two. Re-check that after touching any rule.
+The figures below were measured before `update_app` was split out of `patch`
+(it takes the component findings that used to count as `patch`, and leaves the
+total alone):
 
 ```
 29,872 patch + 0 remove + 692 config + 6,337 blocked_eol
@@ -494,8 +535,17 @@ The end-of-life asset ids are inlined into the SQL rather than joined, because
 that set is a PHP judgement (`Eol::match_os()`, including the build-number
 correction), not a column. It is memoised per request, and with nothing expired
 the fragment is `1=0`. If an estate ever ran thousands of expired machines, the
-answer is a materialised column refreshed where coverage is — and
+answer is a materialised column refreshed where coverage is — and the private
 `VH_Action::eol_expr()` is the single place to change.
+
+The two vulnerability-level tests are already materialised. Since schema v38
+the vulns table carries STORED generated columns `vh_patchable`
+(`Repo::patch_test_sql()`) and `vh_fix_action` (`VH_Action::fix_action_sql()`),
+built from the very expressions the queries used, so MariaDB recomputes them on
+every write and they cannot drift. They are added by `Install::derived_columns()`
+after `dbDelta()`, which cannot express a generated column; until they exist
+(`Repo::derived_ready()`, e.g. after restoring an older backup) the raw
+expressions run instead.
 
 **Filtering with it.** `Repo::findings()` takes `action` (one class) and
 `excepted` (`exclude` / `only`), and they compose with every other filter:
@@ -550,8 +600,8 @@ liveliest thing on the estate. An agent check-in only happens when something is
 powered on and talking. So the survivor is the row whose agent spoke most
 recently, and the CI is moved onto it.
 
-**Three conditions before anything merges unattended**, each one the scar of a
-case that would otherwise have been destroyed:
+**Three conditions before `Duplicates::merge()` will fold a pair**, each one the
+scar of a case that would otherwise have been destroyed:
 
 | condition | why |
 |---|---|
@@ -577,8 +627,17 @@ through to the serial, and minting a fresh duplicate every night. Merging
 locally contains upstream duplication; it cannot cure it. The real fix is
 retiring the stale device objects at source.
 
-Runs nightly on `HOOK_HOUSEKEEP` at priority 20, after the lifecycle sweep, and
-is idempotent: a pair already folded in is skipped rather than re-merged.
+**Nightly is detection only.** `Duplicates::scan()` runs on `HOOK_HOUSEKEEP` at
+priority 20 and flags pairs; it does not merge them (since changed: the first
+version merged unattended). The first live merge did not survive the next full
+sync: the CMDB re-asserted itself, un-retired the folded row under a different
+hostname, and wrote two *different* CI keys across the pair. The retired row
+came back with a `cmdb_key` but an empty `cmdb_id`, which is the column the
+guard reads, so the pair would have been re-merged every night, flapping against
+the CMDB import. Until that is understood, merging is a deliberate act:
+`Duplicates::pairs()` lists what was flagged, and `Duplicates::merge( $loser,
+$survivor, $dry_run = true )` previews or applies one pair. A merge is
+idempotent: a pair already folded in is skipped (`already_merged()`).
 
 **One bug worth remembering.** The identifier lookup in `match_asset()` was
 `... WHERE {$column} = %s LIMIT 1` with no `ORDER BY`. For a genuinely unique
@@ -588,6 +647,35 @@ ended up attached to the older of two records while all the live telemetry sat
 on the newer one — and it would not have reproduced on a reimport. It now
 orders by `last_seen DESC, id DESC`.
 
+## 4c. Core tables and schema version
+
+`VULNHUB_DB_VERSION` (in `vulnhub-core.php`) is **38**. On `admin_init`, a
+mismatch with the `vulnhub_db_version` option runs `Install::run()`: a
+`pre_migrate()` step for what `dbDelta()` cannot do, `dbDelta()` over every
+`CREATE TABLE`, the v38 generated columns (§4), a coverage recalculation, and
+default teams, locations and mapping rules. Bump the constant with any schema
+change; the upgrade runs on the next wp-admin request.
+
+Core owns twenty tables, all `vh_vulnhub_<name>` (always `vh_table( '<name>' )`):
+
+| Table | Holds |
+|---|---|
+| `people`, `teams`, `locations` | who and where; people unique on (source, source_uid) |
+| `assets` | one row per machine; `tenable_uuid` is a plain index since v11, not UNIQUE |
+| `asset_aliases` | other ids one asset is known by (a pooled fleet's per-session scanner ids, see `Fleets`) |
+| `vulns`, `findings` | definitions (unique on source + plugin_id) and per-asset findings (unique fingerprint) |
+| `tickets`, `ticket_findings`, `ticket_assets`, `ticket_aside` | tickets, what they cover, and assets set aside on them (`docs/TICKETS.md`) |
+| `exceptions` | risk exceptions (unique reference) |
+| `automations`, `mapping_rules` | ticket automation rules; ownership mapping rules |
+| `sync_runs`, `audit` | run log with progress; audit trail |
+| `metrics` | daily snapshots for trends |
+| `summary_products` | materialised product exposure, rebuilt by the dashboard's warm job |
+| `agent_status` | hourly Tenable agent online/offline changes |
+| `stale_records` | records held out of the inventory (a name and nothing to act on) |
+
+Other plugins (alerts, aws, backup, eos, import, mcp, plerion, rules, threat)
+create their own `vh_vulnhub_*` tables; they are not listed here.
+
 ## 5. Shared mock fixtures — use these, do not invent your own
 
 `\VulnHub\Core\Mock` generates one deterministic fleet that **every** connector must
@@ -596,10 +684,11 @@ mapping actually joins.
 
 ```php
 Mock::people();    // ~56 records shaped like Microsoft Graph /users
-Mock::devices();   // ~150 records: workstations, mobiles, servers, network gear
+Mock::devices();   // 112 records: 64 workstations, 22 servers, 18 mobiles, 8 network devices
 Mock::vulns();     // 25 vulnerability definitions shaped like Tenable plugin data
 Mock::vulns_for_device( $device );          // the ones applicable to that OS
 Mock::has_vuln( $hostname, $plugin_id, $severity );  // deterministic yes/no
+Mock::flush();     // drop the memoised fixtures (tests only)
 ```
 
 A `Mock::people()` record has Graph field names: `id`, `displayName`, `givenName`,
@@ -650,6 +739,8 @@ Your job is only to populate the raw signals: asset type, tags, and — for Intu
 do_action( 'vulnhub_register_connectors', $connectors );   // register here
 do_action( 'vulnhub_loaded', $core );
 do_action( 'vulnhub_sync_complete', $connector_id, $status, $stats );
+apply_filters( 'vulnhub_connector_sync_blocked', '', $connector_id, $args );  // non-empty = refuse the sync, with that reason
+apply_filters( 'vulnhub_sync_disk_progress_at', 0, $connector_id );            // newest write time a staged sync is making
 
 // A CSV import job that finished successfully, after merge, roll-ups,
 // ownership mapping and Coverage::recalculate(). $type is 'tenable' or
@@ -667,7 +758,56 @@ apply_filters( 'vulnhub_admin_pages', $pages );            // add an admin scree
 do_action( 'vulnhub_render_admin_page', $slug );           // render it
 apply_filters( 'vulnhub_user_bound_asset_types', array( 'workstation', 'mobile' ) );
 apply_filters( 'vulnhub_asset_risk_score', 'COALESCE(x.rs, 0)', $assets, $findings );
+apply_filters( 'vulnhub_asset_route', null, $data );         // pooled fleets: ignore or fold (§4)
+apply_filters( 'vulnhub_assets_query', $ext, $args );       // teach Repo::assets() a filter (below)
+apply_filters( 'vulnhub_findings_query', $ext, $args );     // teach Repo::findings() a filter (below)
+apply_filters( 'vulnhub_admin_screen_url', $url, $page, $args );  // vh_admin_url(); the dashboard answers it
 ```
+
+**The ticket bridge.** Core owns the REST routes for tickets (§7b) but not the
+ITSM: each route asks a filter that starts as `null`, and the Jira plugin
+answers. `null` coming back means no integration is active, and the route says
+so with a 409 rather than pretending.
+
+| Filter | Arguments | Route that asks it |
+|---|---|---|
+| `vulnhub_create_ticket` | `null, $finding_ids, $request` | `POST /tickets` |
+| `vulnhub_draft_ticket` | `null, $params` | `POST /tickets/draft` |
+| `vulnhub_start_ticket_check` | `null, $ids, $rescan` | `POST /tickets/check` (answered by the scanner plugin) |
+| `vulnhub_ticket_check_status` | `null, $job` | `GET /tickets/check/<job>` |
+| `vulnhub_refresh_ticket` | `null, $ticket` | `POST /tickets/<id>/refresh` |
+| `vulnhub_refresh_ticket_attachment` | `null, $ticket, [preview, note, asset_ids]` | `POST /tickets/<id>/attachment` |
+| `vulnhub_ticket_transitions` | `null, $ticket` | `GET /tickets/<id>/transitions` |
+| `vulnhub_apply_ticket_transition` | `null, $ticket, $transition, $values, $note` | `POST /tickets/<id>/transitions` |
+| `vulnhub_ticket_comments` | `null, $ticket` | `GET /tickets/<id>/comments` |
+| `vulnhub_post_ticket_comment` | `null, $ticket, $body, $public` | `POST /tickets/<id>/comments` |
+
+**Signals core fires after it changes something**, for caches and follow-on
+work. None expects a return value:
+
+| Action | Arguments | When |
+|---|---|---|
+| `vulnhub_lifecycle_changed` | `$ids, $status, $moved` | assets moved between lifecycle statuses (`$moved` = findings archived / restored) |
+| `vulnhub_coverage_recalculated` | — | `Coverage::recalculate()` finished |
+| `vulnhub_agent_coverage_recalculated`, `vulnhub_defender_coverage_recalculated` | — | agent / Defender coverage columns rebuilt |
+| `vulnhub_agent_status_polled` | `$totals` | the hourly Tenable agent-status reading |
+| `vulnhub_app_fix_recomputed` | `$stats` | `findings.app_fix` recomputed (`App_Fix`) |
+| `vulnhub_ticket_aside_changed` | `$ticket_id, $reason, $asset_ids` | assets set aside on a ticket, or taken back |
+
+**Vocabulary filters.** Each of these lists is a function in `functions.php`,
+filterable so an estate with different words does not need a code change:
+`vulnhub_in_service_statuses`, `vulnhub_scannable_statuses`,
+`vulnhub_reportable_statuses`, `vulnhub_unissued_statuses` (default spare,
+stock, planned), `vulnhub_unscannable_asset_types` (default appliance, network,
+mobile), `vulnhub_suppressed_severities` (default info), `vulnhub_asset_sources`
+(slug => label of the systems an asset can be known by). The product
+vocabulary has its own: `vulnhub_product_aliases`, `vulnhub_known_libraries`,
+`vulnhub_product_path_kb` and `vulnhub_msix_apps` (`Product`). Two tuning
+knobs: `vulnhub_defender_window_days` (how long a Defender sensor may stay
+quiet before it is flagged; defaults to the scanning window) and
+`vulnhub_sync_disk_progress_at` (`0, $connector`: a staging connector returns
+the newest mtime of what it is writing, so a long single-chunk download counts
+as a heartbeat and is not reaped as stalled).
 
 `vulnhub_asset_risk_score` is an **SQL expression** filter, not a value filter.
 `Repo::recalculate_asset_rollups()` is one set-based `UPDATE` across the whole
@@ -701,6 +841,27 @@ nothing in the UI to show for it. The two namespaces are now kept apart:
 |---|---|
 | `vulnhub_cron_verify_closures` | `vulnhub_verify_closures` |
 | `vulnhub_cron_run_automations` | `vulnhub_run_automations` |
+
+Every cron event core keeps (`Scheduler`, reconciled on `vulnhub_loaded` by
+`ensure_schedules()`; the cron container runs due events every 60 s):
+
+| Cron event | Interval | Does |
+|---|---|---|
+| `vulnhub_run_connector_sync` (arg: connector id) | the connector's `interval` setting | scheduled sync; unscheduled when disabled or `manual` |
+| `vulnhub_run_connector_sync_now` (arg: connector id) | single event | a queued *Sync now* (`Scheduler::queue_sync()`) |
+| `vulnhub_resume_syncs` | `vh_5min` | pick up staged syncs left mid-flight |
+| `vulnhub_cron_verify_closures` | `vh_hourly` | fires `vulnhub_verify_closures` |
+| `vulnhub_cron_run_automations` | `vh_15min` | fires `vulnhub_run_automations` |
+| `vulnhub_poll_agent_status` | `vh_hourly` | Tenable agent online history (listener lives in vulnhub-tenable) |
+| `vulnhub_housekeeping` | `vh_daily` | housekeeping; `Duplicates::scan()` at priority 20 |
+| `vulnhub_daily_snapshot` | `vh_daily` | per-day metrics for the trend charts (`metrics` table) |
+
+Core also listens on `vulnhub_sync_complete` itself, and the priorities are
+the order things happen after every sync: `Lifecycle::sweep_and_recount()` (5),
+ownership mapping after a successful `tenable`, `intune` or `cmdb` sync (20),
+`Lifecycle::derive()` (25), `Exceptions::reapply_active()` (30). Anything that
+should see the finished picture belongs after 30; the dashboard busts its
+caches at 99.
 
 `Scheduler::dispatch()` additionally refuses to re-enter an action that is
 already running and writes a `scheduler.reentered` audit line instead, so a
@@ -908,12 +1069,17 @@ All defined by `vulnhub-dashboard`; none needs a change to it.
 | `vulnhub_dashboard_widgets`, `vulnhub_dashboard_default_layout` | filters | Register a dashboard widget and place it on the default board. |
 | `vulnhub_widget_connector_sources` | filter | Which widget data sources a connector's sync invalidates. |
 | `vulnhub_widget_cache_ttl`, `vulnhub_widget_stale_ttl` | filters | Widget cache fresh window (15 min) and serve-stale window (6 h). |
+| `vulnhub_widget_exact_count_connectors` | filter | Connectors whose widget counts must be exact rather than cached (default `[ 'jira' ]`). |
+| `vulnhub_group_cache_ttl` | filter | Cache lifetime for grouped list reads (default 1 h). |
 | `vulnhub_product_icons`, `vulnhub_product_colours` | filters | Product artwork on the exposure widgets. |
+| `vulnhub_notifications` | filter | Items for the top-bar bell: `{ id, severity, count, title, body, url }`. The AppStream cleanup tool contributes. |
+| `vulnhub_ticket_rescan_allowed` | filter | Whether a ticket's *Verify* may launch a scan (default false). |
 | `POST vulnhub-dashboard/v1/layout`, `/layout/reset` | REST | Save or reset the current user's board. |
 | `GET vulnhub-dashboard/v1/findings-more`, `/assets-more` | REST | Infinite-scroll row fragments, built from the same `$_GET` filters as the page. |
 | `GET vulnhub-dashboard/v1/vuln-assets`, `/product-assets` | REST | Expandable rows on the *Vulnerability on assets* and *By product* tabs. |
 | `GET vulnhub-dashboard/v1/vendor-drill` | REST | Vendor card drill-down (paged, with its export URL). |
 | `GET vulnhub-dashboard/v1/sync-status` | REST | Live connector progress for the connector cards. |
+| `GET vulnhub-dashboard/v1/notifications` | REST | The bell's items and total count, from `vulnhub_notifications`. |
 | `admin-post: vulnhub_save_layout` | form | Save or reset a layout (`vulnhub_view`, nonce). |
 | `admin-post: vulnhub_widget_csv` | form | One widget's rows as CSV (`vulnhub_view`, nonce `vulnhub_widget_csv_<id>`). |
 | `admin-post: vulnhub_set_lifecycle` | form | Decommission / return to service (`vulnhub_triage`; `lifecycle` or `lifecycle_other`, `assets[]`, `back`). |
@@ -924,12 +1090,67 @@ Every `vulnhub-dashboard/v1` route requires a signed-in user with `vulnhub_view`
 
 ---
 
+## 7b. Core REST API (`vulnhub/v1`)
+
+`VulnHub\Core\Rest` registers these. None is public: each checks one
+capability through `Caps::can()`, which also requires a signed-in user, and a
+refusal is 401 when signed out and 403 otherwise.
+
+| Route | Cap | Does |
+|---|---|---|
+| `GET /summary` | view | `Repo::summary()` |
+| `GET /trend?days=30` | view | daily metric snapshots |
+| `GET /breakdown?dimension=team&limit=10` | view | `dimension`: team, location, owner, asset_type |
+| `GET /findings` | view | `Repo::findings()`; see below for the parameters |
+| `GET /findings/<id>` | view | one finding with its asset, vuln, owner and team |
+| `GET /assets` | view | `Repo::assets()` |
+| `GET /assets/<id>` | view | one asset |
+| `POST /assets/<id>/owner` | triage | set the owner by `owner_upn` |
+| `GET /tickets`, `POST /tickets` | view / raise_ticket | list (`Tickets::query()`); create through `vulnhub_create_ticket` |
+| `POST /tickets/draft` | raise_ticket | preview a ticket without creating it |
+| `POST /tickets/check`, `GET /tickets/check/<job>` | raise_ticket | re-check tickets against the scanner (`ids`, `all`, `rescan`); poll the job |
+| `POST /tickets/<id>/refresh`, `/attachment` | raise_ticket | re-read from the ITSM; re-send the asset list |
+| `POST /tickets/<id>/aside` | raise_ticket | set assets aside (`asset_ids`, `reason`: resolved / out_of_scope, `note`) or take them back (empty reason) |
+| `GET`/`POST /tickets/<id>/transitions` | raise_ticket | status moves offered / apply one |
+| `GET`/`POST /tickets/<id>/comments` | view / raise_ticket | read / post a comment |
+| `GET /exceptions`, `POST /exceptions` | view / request_exception | list; request a risk exception |
+| `POST /exceptions/<id>/decide` | approve_exception | `decision` (or `revoked`), `note` |
+| `GET /connectors` | manage | registered connectors and their health |
+| `POST /connectors/<id>/test` | manage | `test_connection()` |
+| `POST /connectors/<id>/sync` | run_sync | `full`, `assets_only`, `force`; an async connector is queued, not run inline |
+| `POST /mapping/run` | manage | re-run ownership mapping |
+
+The list routes take `limit` (default 50, at most 300) and `offset`, plus an
+**allow-list** of filter keys each: `/findings` takes `state`, `severity`,
+`asset_id`, `team_id`, `location_id`, `asset_type`, `owner_person_id`, `owner`,
+`search`, `has_ticket`, `excepted`, `overdue`, `orderby`, `order`; `/assets`
+takes `search`, `asset_type`, `team_id`, `location_id`, `owner_person_id`,
+`owner`, `criticality`, `unowned`, `needs_user`, `has_vulns`, `orderby`,
+`order`. Anything else is dropped, so a filter a plugin teaches the repository
+through `vulnhub_findings_query` / `vulnhub_assets_query` (and core's own
+`action`, `has`, `missing`) is not reachable here until it is added to that
+list. The portal and the MCP tools call `Repo` directly and are not limited
+by it.
+
+---
+
 ## 8. Capabilities
 
 `vulnhub_view`, `vulnhub_triage`, `vulnhub_raise_ticket`, `vulnhub_request_exception`,
 `vulnhub_approve_exception`, `vulnhub_run_sync`, `vulnhub_view_audit`,
-`vulnhub_manage`. Every REST route needs a real `permission_callback`; never
-`__return_true`.
+`vulnhub_manage` (constants on `VulnHub\Core\Caps`). Every REST route needs a
+real `permission_callback`; never `__return_true`. Check with `Caps::can()`
+rather than `current_user_can()` alone, so a signed-out REST call is refused
+cleanly.
+
+Four roles are installed with them:
+
+| Role | Caps |
+|---|---|
+| `vulnhub_admin` (VulnHub Administrator) | all of them |
+| `vulnhub_analyst` (VulnHub Analyst) | view, triage, raise_ticket, request_exception, run_sync, view_audit |
+| `vulnhub_approver` (VulnHub Risk Approver) | view, request_exception, approve_exception, view_audit |
+| `vulnhub_viewer` (VulnHub Viewer) | view |
 
 ---
 
@@ -945,8 +1166,28 @@ vh_risk_score( $sev, $crit, $exploitable, $vpr );
 vh_json( $maybe_json );        vh_date( $mysql );         vh_ago( $mysql );
 vh_date_only( $date );         // a DATE column, never shifted by a timezone
 vh_fingerprint( ...$parts );   vh_trim( $text, 90 );      vh_admin_url( 'vulnhub-assets', [] );
-vh_can_manage();
+vh_can_manage();               vh_duration_human( $ms );
+
+// Cleaning what a feed hands you
+vh_clean_ip( $raw );           vh_clean_mac( $raw );      vh_clean_serial( $raw );   // '' for non-values
+vh_split_person( 'Name - a@example.com' );                 vh_normalise_source( 'intune-csv' );
+vh_normalise_lifecycle( $raw ); vh_disambiguate_date( $value );
+
+// Scope: which assets and findings a number is about (each list is filterable, §7)
+vh_lifecycle_statuses();       vh_in_service_statuses();  vh_in_service_sql();
+vh_scannable_statuses();       vh_scannable_sql();        vh_scannable_asset_types();
+vh_reportable_statuses();      vh_reportable_sql();       vh_unissued_statuses();
+vh_live_finding_states();      vh_live_finding_sql();     vh_suppressed_severities();
+vh_asset_sources();            vh_asset_type_label( $t );
+
+// Deadlines and settings
+vh_sla_days( 'high' );         vh_due_in_days( 30 );      vh_valid_due_date( $date );
+vh_verification_delay_hours(); // 0 or unset means the documented 24, capped at 720
+vh_asset_request_due_days();   vh_integration_brand( 'tenable' );
 ```
+
+`vulnhub()` returns the `VulnHub_Core` container: `->connectors`, `->settings`,
+`->logger`, `->scheduler`, `->admin`.
 
 ---
 
@@ -999,6 +1240,45 @@ vh_can_manage();
 Lessons from live Tenable and CMDB exports. Every one of these caused a silent
 failure before it was handled.
 
+**Microsoft Defender is its own product** (2026-10-02). `VH_Product::classify()`
+tests for Defender *before* the Windows rules: any title naming Windows or
+Microsoft Defender, the Malware Protection Engine, or the antimalware
+platform/engine is product `Microsoft Defender` (slug `microsoft-defender`,
+class `third_party`, kind `application`). Defender is fixed through its own
+update channel, not a Windows KB, and its daily signature check alone is ~180
+findings -- inside "Windows / Microsoft updates" it buried the KB work and could
+not be filtered or ticketed apart from it. It now has its own row on By product,
+its own `product=microsoft-defender` filter, and its own tickets. Existing rows
+were moved with `wp vulnhub classify-products` (26 plugins: 19 from Windows
+updates, 7 from an older "Microsoft Windows Defender" third-party bucket).
+
+**A scanner reports a file path only when the check looks at files.** Windows
+and application checks write `Path : …` (and `Oracle Home : …`, `Install path
+: …`) into the plugin output; a distribution's package checks write no path at
+all, because the fix is "update this package", not "replace this file". On a
+mixed estate that is most findings, so a column that only ever shows a path is
+empty on the majority of rows and reads as missing data.
+
+`VH_Product` parses both out of the output text, since neither is a field of
+its own in the export:
+
+- `install_path()` -- the path. Windows drive-letter paths and Unix absolute
+  paths, labelled or standing alone. The Unix side was once limited to a list
+  of roots (`/home`, `/opt`, `/usr`, …), which silently dropped every
+  `/u01/...` and `/oracle/...` install on this estate; it now takes any
+  absolute path of two segments or more, with a lookbehind so a URL
+  (`https://host/a/b`) and a CPE (`cpe:/a:vendor:product`) cannot match.
+- `package_evidence()` -- `{name, installed, fixed}`, from
+  `Name : … Version : … Fixed version : …`, from
+  `Remote package installed : curl-7.76.1-35.el9_7.3`, or from the bulleted
+  package list the distro-CVE plugins carry.
+- `evidence_text()` -- one line of either, path first. The dashboard's
+  `evidence_cell_html()` draws the same thing.
+
+**Checked (2026-09-27)** over 40,000 open findings: paths 5,998 -> 6,286 with
+the Unix fix and no false positives, and 1,569 rows that reported no path
+gained a package and version.
+
 **Tenable tags are `{category, value}`, not `{key, value}`.** Reading only `key`
 matched nothing at all. `Mapping::tag_map()` now accepts `category`,
 `category_name` or `key`.
@@ -1006,8 +1286,8 @@ matched nothing at all. `Mapping::tag_map()` now accepts `category`,
 **A Tenable asset export may have no hostname.** One real 912-row export carried
 only `id`, `ipv4_addresses`, scan times, `sources` and `tags` — so it shares *no
 join key at all* with a CMDB export that has hostname, serial and MAC. Match on
-as many identifiers as you can (`upsert_asset()` now also tries MAC, FQDN, and an
-FQDN's short name against a bare hostname), and expect some assets to stay
+as many identifiers as you can (`upsert_asset()` now also tries the FQDN and an
+FQDN's short name against a bare hostname; it does not match on MAC), and expect some assets to stay
 unmatched rather than pretending otherwise.
 
 **Asset type usually lives in the customer's tag taxonomy**, not in the OS
@@ -1035,7 +1315,7 @@ apparent gap list. Use `vh_normalise_lifecycle()` and `vh_in_service_sql()`.
 
 **Duplicate OS-version columns disagree.** One export had `OS Version` = `19045
 (22H2)` — a Windows 10 build — on rows whose `Operating System` said Windows 11,
-while `OS Version (Cherwell)` correctly said `26100 (24H2)`; 560 of 783 rows
+while a second, vendor-prefixed `OS Version (…)` column correctly said `26100 (24H2)`; 560 of 783 rows
 disagreed. Put the more accurate column first in the alias order.
 
 **Header names alone do not identify a column.** That export had both `Asset Tag`

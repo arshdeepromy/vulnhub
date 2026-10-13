@@ -400,6 +400,8 @@ final class VulnHub_Dash_Tickets {
 			'' !== self::q( 'agent' )      => 'tenable_agent',
 			'' !== self::q( 'coverage' )   => 'tenable_coverage',
 			'' !== self::q( 'defender' )   => 'defender_coverage',
+			// In the CMDB but not where it says: a record to correct, not one to add.
+			str_contains( self::q( 'missing' ), 'aws' ), 'only:cmdb' === $known => 'cmdb_cleanup',
 			'not:cmdb' === $known, str_contains( self::q( 'missing' ), 'cmdb' ) => 'cmdb_gap',
 			'not:intune' === $known, str_contains( self::q( 'missing' ), 'intune' ) => 'intune_gap',
 			'not_reported' === self::q( 'life' ), str_starts_with( $known, 'only:' ) => 'cleanup',
@@ -1007,6 +1009,68 @@ final class VulnHub_Dash_Tickets {
 			. '<span class="vh-meta">' . esc_html( vh_ago( (string) $c['created'] ) ) . '</span>'
 			. '<span class="vh-lastcomment__body">' . esc_html( vh_trim( (string) $c['body'], 120 ) ) . '</span>'
 			. '</span>';
+	}
+
+	/**
+	 * The ticketing account this site is connected as, once per request.
+	 */
+	private static function own_account(): string {
+		static $own = null;
+
+		/** Filters the ticketing account this site acts as. */
+		return $own ??= (string) apply_filters( 'vulnhub_ticket_own_account', '' );
+	}
+
+	/**
+	 * The paperclip on the Tickets list: how many files, and who added them.
+	 *
+	 * Read from what the last poll stored, so it costs nothing per row.
+	 * "By us" is the Jira account this site is connected as (and the last
+	 * list it sent); everything else is from somebody else, and is the half
+	 * worth a look -- so it is the half drawn in the accent colour.
+	 *
+	 * @param array<string,mixed> $t Ticket row.
+	 */
+	public static function attachments_badge( array $t ): string {
+		if ( 'jira' !== (string) ( $t['provider'] ?? '' ) ) {
+			return '';
+		}
+
+		$c = \VulnHub\Core\Attachments::counts( $t, self::own_account() );
+
+		if ( 0 === $c['total'] ) {
+			return '';
+		}
+
+		$title = sprintf(
+			/* translators: 1: total files, 2: added by us, 3: added by others. */
+			_n( '%1$d attachment: %2$d added by us, %3$d by others.', '%1$d attachments: %2$d added by us, %3$d by others.', $c['total'], 'vulnhub' ),
+			$c['total'],
+			$c['ours'],
+			$c['theirs']
+		);
+
+		if ( '' !== $c['newest_theirs'] ) {
+			/* translators: %s: how long ago. */
+			$title .= ' ' . sprintf( __( 'Newest from others: %s.', 'vulnhub' ), vh_ago( $c['newest_theirs'] ) );
+		}
+
+		$out = '<a class="vh-attbadge' . ( $c['theirs'] > 0 ? ' has-theirs' : '' ) . '" href="'
+			. esc_url( self::page_url( 'tickets', array( 'ticket' => (int) $t['id'] ) ) . '#vh-attachments' ) . '" title="' . esc_attr( $title ) . '" aria-label="' . esc_attr( $title ) . '">'
+			. '<svg class="vh-attbadge__clip" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 01-7.8-7.8l9.2-9.2a3.7 3.7 0 015.2 5.2l-9.2 9.2a1.8 1.8 0 01-2.6-2.6l8.5-8.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+		// The split is the count: "1 by us · 2 from others" already says 3.
+
+		if ( $c['ours'] > 0 ) {
+			/* translators: %s: number of files. */
+			$out .= '<span class="vh-attbadge__part vh-attbadge__part--ours" aria-hidden="true">' . esc_html( sprintf( __( '%s by us', 'vulnhub' ), number_format_i18n( $c['ours'] ) ) ) . '</span>';
+		}
+		if ( $c['theirs'] > 0 ) {
+			/* translators: %s: number of files. */
+			$out .= '<span class="vh-attbadge__part vh-attbadge__part--theirs" aria-hidden="true">' . esc_html( sprintf( __( '%s from others', 'vulnhub' ), number_format_i18n( $c['theirs'] ) ) ) . '</span>';
+		}
+
+		return $out . '</a>';
 	}
 
 	/**
@@ -1626,6 +1690,7 @@ final class VulnHub_Dash_Tickets {
 				</dl>
 
 				<?php if ( 'jira' === (string) $t['provider'] ) : ?>
+					<?php echo self::attachments_body( $t ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
 					<div class="vh-panel__sub">
 						<h3><?php esc_html_e( 'Comments', 'vulnhub' ); ?></h3>
 						<?php echo self::comments_body( (int) $t['id'], true, $t ); // phpcs:ignore WordPress.Security.EscapeOutput ?>
@@ -1721,6 +1786,61 @@ final class VulnHub_Dash_Tickets {
 		}
 
 		echo self::transition_dialog(); // phpcs:ignore WordPress.Security.EscapeOutput
+
+		if ( 'jira' === (string) $t['provider'] ) {
+			echo self::attachment_dialog(); // phpcs:ignore WordPress.Security.EscapeOutput
+		}
+	}
+
+	/**
+	 * The Attachments block on the ticket page.
+	 *
+	 * Seeded with what the last Jira poll stored -- no round trip to draw
+	 * it -- and drawn by JavaScript from that one JSON, the same code that
+	 * redraws it after "Refresh from Jira", so the two cannot disagree.
+	 *
+	 * @param array<string,mixed> $t Ticket row.
+	 */
+	public static function attachments_body( array $t ): string {
+		$seed = \VulnHub\Core\Rest::described_attachments( // Same decoration the REST route applies.
+			$t,
+			array(
+				'ok'          => true,
+				'message'     => '',
+				'attachments' => Tickets::attachments( $t ),
+			)
+		);
+		$n    = count( $seed['attachments'] );
+
+		return '<div class="vh-panel__sub vh-atts" id="vh-attachments" data-vh-atts-for="' . (int) $t['id'] . '">'
+			. '<div class="vh-atts__head">'
+			. '<h3>' . esc_html__( 'Attachments', 'vulnhub' ) . ' <span class="vh-atts__count" data-vh-atts-count>' . esc_html( number_format_i18n( $n ) ) . '</span></h3>'
+			. '<div class="vh-atts__tools">'
+			. '<button type="button" class="vh-btn vh-btn--ghost vh-btn--sm" data-vh-atts-refresh>' . esc_html__( 'Refresh from Jira', 'vulnhub' ) . '</button>'
+			. '</div></div>'
+			. '<ul class="vh-atts__list" data-vh-atts-list></ul>'
+			. '<p class="vh-meta vh-atts__status" data-vh-atts-status role="status"></p>'
+			. '<script type="application/json" data-vh-atts-seed>' . wp_json_encode( $seed, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT ) . '</script>'
+			. '</div>';
+	}
+
+	/**
+	 * The preview pop-up. One per page; filled per file.
+	 */
+	public static function attachment_dialog(): string {
+		return '<dialog id="vh-att-preview" class="vh-review vh-att__dialog" aria-labelledby="vh-att-title">'
+			. '<form method="dialog" class="vh-modal__x"><button aria-label="' . esc_attr__( 'Close', 'vulnhub' ) . '">&times;</button></form>'
+			. '<h2 id="vh-att-title" class="vh-att__title"></h2>'
+			. '<p class="vh-review__lede" data-vh-att-lede></p>'
+			. '<div class="vh-review__body vh-att__body" data-vh-att-body></div>'
+			. '<div class="vh-review__foot">'
+			. '<button type="button" class="vh-btn vh-btn--ghost vh-btn--sm" data-vh-att-prev aria-label="' . esc_attr__( 'Previous file', 'vulnhub' ) . '">&lsaquo;</button>'
+			. '<button type="button" class="vh-btn vh-btn--ghost vh-btn--sm" data-vh-att-next aria-label="' . esc_attr__( 'Next file', 'vulnhub' ) . '">&rsaquo;</button>'
+			. '<span class="vh-review__status" data-vh-att-status role="status"></span>'
+			. '<a class="vh-btn vh-btn--ghost" data-vh-att-newtab target="_blank" rel="noopener noreferrer" hidden>' . esc_html__( 'Open in new tab', 'vulnhub' ) . '</a>'
+			. '<a class="vh-btn" data-vh-att-download>' . esc_html__( 'Download', 'vulnhub' ) . '</a>'
+			. '<button type="button" class="vh-btn" data-vh-att-close>' . esc_html__( 'Close', 'vulnhub' ) . '</button>'
+			. '</div></dialog>';
 	}
 
 	/**
@@ -1917,7 +2037,7 @@ final class VulnHub_Dash_Tickets {
 						<?php endif; ?>
 						<td data-label="<?php esc_attr_e( 'Host', 'vulnhub' ); ?>">
 							<?php if ( $vh_live ) : ?>
-								<a class="vh-mono" href="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $r['asset_id'] ) ) ); ?>"><strong><?php echo esc_html( (string) $r['hostname'] ); ?></strong></a>
+								<a class="vh-mono" href="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $r['asset_id'] ) ) ); ?>"><strong><?php echo esc_html( (string) $r['hostname'] ); ?></strong></a><?php echo VulnHub_Dash_Charts::online_dot( $r ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 								<span class="vh-meta"><?php echo esc_html( trim( vh_asset_type_label( (string) $r['asset_type'] ) . ' · ' . (string) $r['ipv4'], ' ·' ) ); ?></span>
 							<?php else : ?>
 								<span class="vh-mono"><strong><?php echo esc_html( (string) $r['hostname'] ); ?></strong></span>
@@ -1948,8 +2068,21 @@ final class VulnHub_Dash_Tickets {
 								$vh_status = (string) ( $r['agent_status'] ?? '' );
 								$vh_last   = (string) ( $r['agent_last_connect'] ?? '' );
 
+								/*
+								 * On a dark-agent ticket the chip follows the
+								 * ticket's own test (Tickets::outcome_sql()):
+								 * checked in since it was raised. Tenable's
+								 * on/off is only "online this hour", so it is
+								 * kept as the note under the chip -- an agent
+								 * that is back but on a laptop shut for the
+								 * night reads "Back · offline now", not "Dark".
+								 */
+								$vh_back = 'tenable_agent_dark' === (string) $t['kind'] && 'resolved' === (string) ( $r['outcome'] ?? '' );
+
 								if ( ! $vh_live ) {
 									echo '&mdash;';
+								} elseif ( $vh_back ) {
+									printf( '<span class="vh-chip vh-chip--good" title="%s">%s</span>', esc_attr__( 'Tenable has seen this agent check in since the ticket was raised.', 'vulnhub' ), esc_html__( 'Back', 'vulnhub' ) );
 								} elseif ( 'on' === $vh_status ) {
 									printf( '<span class="vh-chip vh-chip--good">%s</span>', esc_html__( 'Reporting', 'vulnhub' ) );
 								} elseif ( 'off' === $vh_status ) {
@@ -1969,6 +2102,9 @@ final class VulnHub_Dash_Tickets {
 											esc_html__( 'last connected %s', 'vulnhub' ),
 											esc_html( vh_ago( $vh_last ) )
 										);
+										if ( $vh_back && 'on' !== $vh_status ) {
+											echo ' &middot; ' . esc_html__( 'offline now', 'vulnhub' );
+										}
 										?>
 									</span>
 								<?php endif; ?>

@@ -16,7 +16,7 @@ protocol              : h3
 
 Sixteen and a half seconds waiting for the server to produce the HTML, and
 essentially nothing else. Not CSS, not JavaScript, not image weight, not the
-a fronting CDN. The same page measured 322 ms an hour later.
+fronting CDN. The same page measured 322 ms an hour later.
 
 That gap is the whole story: the stack was not slow, it **collapsed under
 contention**, and four things made it fragile.
@@ -45,7 +45,9 @@ container was capped at 1 GB while the host ran at `vm.swappiness = 60` with
 **Fixed** in `conf/mysql/vulnhub.cnf`: pool raised to 1536 M (the whole
 database now fits in RAM, with room), container limit 1 g → 3 g, swappiness
 60 → 10, and the pool is dumped at shutdown and reloaded at startup so a
-deploy does not hand the first person through the door a cold cache.
+deploy does not hand the first person through the door a cold cache. The
+same file also raises the redo log (384 M), the InnoDB I/O capacity and
+thread counts, and the in-memory temporary table limit (64 M).
 
 The slow query log was also **off**, so nothing that took seconds was ever
 recorded. It is on now at `long_query_time = 1`, writing to
@@ -87,11 +89,20 @@ The container has been up for days serving no purpose. WordPress has no
 persistent object cache, so every page re-reads options, transients and user
 meta from MySQL — pages run **162–207 queries each**.
 
-**Not yet fixed.** It needs `phpredis` in the web image (a rebuild) plus a
-drop-in and `WP_REDIS_*` config. Worth doing, but be honest about the size of
-the prize: DB time is only 34–166 ms of a 150–280 ms page, so this buys
-smoothness and headroom under load, not a step change. Do it when there is a
-window for an image rebuild.
+**Not yet fixed** at the time. It needs `phpredis` in the web image (a
+rebuild) plus a drop-in and `WP_REDIS_*` config. Worth doing, but be honest
+about the size of the prize: DB time is only 34–166 ms of a 150–280 ms page,
+so this buys smoothness and headroom under load, not a step change.
+
+*(since changed: done.)* The `wp`, `wpcli` and `cron` services now build from
+`docker/wp-redis/`, which adds phpredis to the stock images;
+`WP_REDIS_HOST` / `WP_REDIS_PORT` are set in `docker-compose.yml`, the
+Redis Object Cache plugin's `object-cache.php` drop-in is in place, and Redis
+runs with `--maxmemory 384mb --maxmemory-policy allkeys-lru` under a 512 MB
+container limit. Checked 2026-09-26: `wp redis status` reports *Connected*,
+drop-in *Valid*. The Dockerfile's own comment records the other reason it
+mattered: without a persistent object cache, a long wp-cli sync grows
+WordPress's in-process cache until it is OOM-killed.
 
 ---
 
@@ -109,18 +120,23 @@ queues behind ten processes while Apache forks more — and with mod_php each
 fork is a ~50 MB PHP process. That is the shape behind a 250 ms page taking
 sixteen seconds when several requests arrive together.
 
-At the other end, 150 workers at ~50 MB is 7.5 GB against a 2 g container
-limit; the ceiling could never be reached, it would OOM first. The database
+At the other end, 150 workers at ~50 MB is 7.5 GB against the web
+container's 2 g limit; the ceiling could never be reached, it would OOM first. The database
 also caps at 151 connections and prefork opens one per worker.
 
 **Fixed** in `conf/apache/vulnhub-mpm.conf`: a real floor of warm workers
-(`StartServers 16`, `MinSpareServers 12`), and a ceiling the container can
-genuinely hold (`MaxRequestWorkers 40`), plus a short keep-alive timeout so a
-proxied connection does not pin a worker doing nothing.
+(`StartServers 16`, `MinSpareServers 12`, `MaxSpareServers 28`), and a
+ceiling the container can genuinely hold (`MaxRequestWorkers 40`,
+`MaxConnectionsPerChild 2000`), plus a short keep-alive timeout
+(`KeepAliveTimeout 3`) so a proxied connection does not pin a worker doing
+nothing.
 
 ---
 
 ## 4. VulnHub is a guest on a busy box with no reservation
+
+*(Measured on the host of the time; the co-tenants named below are that
+host's, not a requirement.)*
 
 Load was 7.4 on 16 cores while measuring, with `guacd` at 175%, the invoicing
 app at 53% and NTFS media mounts at 18%. Nothing guarantees VulnHub any CPU or
@@ -128,7 +144,9 @@ memory share.
 
 **Not fixed** — it is a policy decision, not a bug. If the portal becomes
 something people depend on, give its containers `cpus` and `mem_reservation`
-so a media transcode cannot starve it.
+so a media transcode cannot starve it. Checked 2026-09-26: `docker-compose.yml`
+still sets only `mem_limit` (db 3 g, wp 2 g, wpcli and cron 4 g, redis
+512 m), no `cpus` or `mem_reservation`.
 
 ---
 
@@ -245,7 +263,9 @@ byte-identical.
 **2. The aggregates themselves are not indexable.** Both group by a `CASE`
 expression over ~258,000 open findings; EXPLAIN shows `Using temporary; Using
 filesort` whatever is indexed. So they are cached, by
-`VulnHub_Dash_App::cached_group()`, on the same epoch-keyed discipline as the
+`VulnHub_Dash_App::cached_group()` (TTL an hour, filter
+`vulnhub_group_cache_ttl`; it only bounds how long a clock-relative filter
+such as age or overdue can lag), on the same epoch-keyed discipline as the
 widgets -- full filter set in the key so no two filter sets can share an
 answer, and **no stale-while-revalidate**: `bust()` ticks
 `vulnhub_widget_epoch` unconditionally, so a sync that changed the numbers is

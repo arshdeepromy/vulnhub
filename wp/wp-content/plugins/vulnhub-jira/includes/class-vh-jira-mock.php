@@ -333,7 +333,34 @@ final class VulnHub_Jira_Mock {
 			return $this->attachment( rawurldecode( $m[1] ), array( 'filename' => 'temporary attachment', 'size' => 0 ) );
 		}
 
+		if ( 'GET' === $method && preg_match( '#^/rest/api/3/attachment/content/([^/]+)$#', $path, $m ) ) {
+			return $this->attachment_content( rawurldecode( $m[1] ) );
+		}
+
 		return $this->error( 404, array( sprintf( 'The simulated Jira site has no route for %s %s.', $method, $path ) ) );
+	}
+
+	/**
+	 * GET /rest/api/3/attachment/content/{id}: the simulated site keeps no
+	 * bytes, so it answers with a small CSV of exactly the recorded size --
+	 * enough for the preview and the short-read check to be exercised.
+	 */
+	private function attachment_content( string $id ): \VulnHub\Core\Http_Response {
+		foreach ( (array) ( $this->state()['issues'] ?? array() ) as $issue ) {
+			foreach ( (array) ( $issue['attachments'] ?? array() ) as $a ) {
+				if ( (string) ( $a['id'] ?? '' ) !== $id ) {
+					continue;
+				}
+
+				$size = max( 0, (int) ( $a['size'] ?? 0 ) );
+				$csv  = "name,state\nappsrv01,simulated\n";
+				$body = $size > 0 ? substr( str_pad( $csv, $size, ' ' ), 0, $size ) : $csv;
+
+				return new \VulnHub\Core\Http_Response( 200, array( 'content-type' => (string) ( $a['mimeType'] ?? 'text/csv' ) ), $body, null );
+			}
+		}
+
+		return $this->error( 404, array( 'The attachment does not exist.' ) );
 	}
 
 	/**
@@ -1368,6 +1395,13 @@ final class VulnHub_Jira_Mock {
 							),
 						),
 					),
+				),
+				'attachment'  => array_map(
+					fn( array $a ): array => $a + array(
+						'author'  => $this->myself(),
+						'content' => $this->site_url() . '/rest/api/3/attachment/content/' . $a['id'],
+					),
+					array_values( (array) ( $issue['attachments'] ?? array() ) )
 				),
 				'comment'     => array(
 					'comments'   => array_values( (array) ( $issue['comments'] ?? array() ) ),

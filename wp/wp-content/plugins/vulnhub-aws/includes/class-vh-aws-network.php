@@ -875,7 +875,6 @@ final class VulnHub_AWS_Network {
 
 		try {
 			$ref    = new ReflectionMethod( $connector, 'client' );
-			$ref->setAccessible( true );
 			$client = $ref->invoke( $connector );
 		} catch ( \Throwable $e ) {
 			return $out;
@@ -2249,6 +2248,10 @@ final class VulnHub_AWS_Network {
 		$inspection = self::inspection_stack();
 		$gwlbs      = $inspection['gwlbs'];
 		$firewalls  = $inspection['firewalls'];
+		// The account(s) the appliances run in. Read but never assigned
+		// before, so the "Runs in" row never drew and each request logged an
+		// undefined-variable warning.
+		$stack      = (array) ( $inspection['accounts'] ?? array() );
 
 		/* ---- build the bands ---- */
 		$in_env = static function ( string $key ) use ( $env, $vpc_name, $labels, $acct_of ): bool {
@@ -2523,7 +2526,16 @@ final class VulnHub_AWS_Network {
 			$dest[] = array( 'id' => 'dest-onprem', 'kind' => 'onprem', 'label' => __( 'On-premises', 'vulnhub' ) );
 		}
 
-		return array(
+		/*
+		 * Other plugins may add what they know about the boxes drawn here
+		 * (vulnhub-checkpoint names the firewalls and the on-premises side).
+		 * The shape is the contract: bands of nodes with `meta` rows and a
+		 * `note`, and links with a `label`.
+		 *
+		 * @param array<string,mixed> $flow The flowchart.
+		 * @param string              $env  '' or an environment key.
+		 */
+		return (array) apply_filters( 'vulnhub_aws_estate_flow', array(
 			'env'    => $env,
 			'label'  => VulnHub_AWS_Environment::label( $env ),
 			'totals' => $totals,
@@ -2534,7 +2546,7 @@ final class VulnHub_AWS_Network {
 				array( 'id' => 'work', 'label' => __( 'Workloads', 'vulnhub' ), 'nodes' => $work ),
 			),
 			'links'  => $links,
-		);
+		), $env );
 	}
 
 	/** Leaves listed under one tier before the rest are summarised as a count. */

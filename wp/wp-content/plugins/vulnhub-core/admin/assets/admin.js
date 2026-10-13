@@ -348,6 +348,13 @@
 	function stagedBars( d ) {
 		var dl = d.download || {};
 		var pr = d.process || {};
+
+		// A chunked package: the source builds it first, then the size and
+		// chunk count are exact, so both bars are true ratios.
+		if ( 'prepare' === d.phase || dl.chunks_total ) {
+			return packageBars( d, dl, pr );
+		}
+
 		var mb = Math.round( ( dl.bytes || 0 ) / 1048576 );
 		var estMb = Math.round( ( dl.est_bytes || 0 ) / 1048576 );
 		var rateMb = ( dl.rate_bps || 0 ) / 1048576;
@@ -399,6 +406,37 @@
 		);
 
 		return dlBar + pBar;
+	}
+
+	function packageBars( d, dl, pr ) {
+		var prep = 'prepare' === d.phase;
+		var mb = ( dl.bytes || 0 ) / 1048576;
+		var totalMb = ( dl.bytes_total || 0 ) / 1048576;
+		var fmt = function ( v ) { return v < 10 ? v.toFixed( 1 ) : num( Math.round( v ) ); };
+		var dlBar;
+
+		if ( prep ) {
+			var pp = Math.max( 0, Math.min( 99, Math.round( dl.prepare_pct || 0 ) ) );
+			dlBar = progressRow( 'Package', pp > 0 ? '' : ' is-indeterminate', pp > 0 ? pp : 100, ( dl.prepare_note || 'Preparing…' ) + ( pp > 0 ? ' · ' + pp + '%' : '' ) );
+		} else {
+			var dlDone = 'download' !== d.phase;
+			var pct = dlDone ? 100 : ( totalMb > 0 ? Math.min( 99, Math.round( 100 * mb / totalMb ) ) : 0 );
+			var bits = [ num( dl.chunks_done || 0 ) + ' of ' + num( dl.chunks_total || 0 ) + ' chunks', fmt( mb ) + ' of ' + fmt( totalMb ) + ' MB' ];
+			var rateMb = ( dl.rate_bps || 0 ) / 1048576;
+			if ( ! dlDone && rateMb >= 0.1 ) { bits.push( rateMb.toFixed( rateMb < 10 ? 1 : 0 ) + ' MB/s' ); }
+			if ( ! dlDone && dl.eta != null ) { bits.push( '~' + dur( dl.eta ) + ' left' ); }
+			dlBar = progressRow( 'Download', '', pct, ( dlDone ? 'Downloaded and checked · ' : 'Downloading… ' ) + bits.join( ' · ' ) );
+		}
+
+		var active = 'process' === d.phase;
+		var total = pr.records_total || 0;
+		var done = Math.min( pr.records_done || 0, total );
+		var ppct = active ? ( total > 0 ? Math.min( 99, Math.round( 100 * done / total ) ) : 99 ) : 0;
+		var meta = active
+			? ( num( done ) + ' / ' + num( total ) + ' rows' + ( pr.table ? ' · ' + pr.table : '' ) + ( pr.tables_total ? ' · table ' + num( Math.min( ( pr.tables_done || 0 ) + 1, pr.tables_total ) ) + ' of ' + num( pr.tables_total ) : '' ) )
+			: ( prep ? 'Waiting for the package…' : ( 'download' === d.phase ? 'Waiting for the download to finish…' : 'Finishing up…' ) );
+
+		return dlBar + progressRow( 'Apply', '', ppct, meta );
 	}
 
 	// Returns true while the run is live (keep polling), false when terminal.

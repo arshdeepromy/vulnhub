@@ -869,3 +869,29 @@ it is committed.
 Surfaced on Internet exposure: an environment chip on each card, the system,
 component and purpose above the hop chain, the documented architecture under it,
 the count in the sources note, and the production split in the WAF-gap block.
+
+
+## Enrichment hook on the estate flowchart
+
+`VulnHub_AWS_Network::estate_flow()` returns through the filter
+`vulnhub_aws_estate_flow( $flow, $env )`. The shape is the contract: `bands`
+of `nodes` (each may carry `meta` rows `{k, v}` and a `note`) and `links`
+with a `label`. Destination cards (Internet, On-premises) now draw `meta` and
+`note` behind a *What is here* disclosure, as the lane cards already did.
+A `meta` value may be a string or a list of strings; a list draws one line
+per item. Closed, a destination stays a pill with the button beside its name;
+opened, the card gets `is-open` and becomes an opaque panel (up to 560px) with
+the detail on its own row — keys in one column, values in the other. The first
+version left the detail as a flex item inside the pill, which squeezed the
+values to a few characters wide. Clicks inside the panel do not select the
+lane.
+vulnhub-checkpoint is the first user — see `docs/CHECKPOINT.md`.
+A node outside the destination and workload bands may set `why` to name its
+disclosure button (it defaults to *Why this lane exists*); vulnhub-checkpoint
+adds an on-premises firewall card to the firewall band this way and reroutes
+the transit-gateway line through it.
+
+Fixed at the same time: the inline-firewall card's *Runs in* row read
+`$stack`, which was never assigned (an undefined-variable warning on every
+request since 25 September, and the row never drew). It is now
+`inspection_stack()['accounts']`.

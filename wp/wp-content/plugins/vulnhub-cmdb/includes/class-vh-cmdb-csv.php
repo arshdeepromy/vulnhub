@@ -153,7 +153,6 @@ final class VulnHub_Cmdb_Csv {
 			$finfo = finfo_open( FILEINFO_MIME_TYPE );
 			if ( false !== $finfo ) {
 				$mime = (string) finfo_file( $finfo, $path );
-				finfo_close( $finfo );
 
 				// Some servers report CSV as application/csv or
 				// application/vnd.ms-excel; anything else non-text is out.

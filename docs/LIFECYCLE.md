@@ -74,7 +74,8 @@ ticket is raised on (see `docs/FILTERS.md` §11):
 
 - **`comp=app|bundled`** on the findings list, its export and everything
   raised from it.
-- **By product** splits each row's bar into the two.
+- **By product**, the *Exposure by product* widget and the Products page split
+  each row's bar into the two.
 - **Exception scope `bundled`** (`Exceptions::scope_types()`): every component
   attributed to one product row, keyed by the row's slug
   (`Repo::product_group_slug_sql()` and `bundled_sql()`, so it is exactly
@@ -274,8 +275,8 @@ largest", so nothing is lost by giving up the shared scale here.
 
 ### The table
 
-`wp-content/plugins/vulnhub-core/data/eol.php` — a checked-in table, 74 rows,
-each with a `source` URL to the vendor's own lifecycle page. Every date was
+`wp-content/plugins/vulnhub-core/data/eol.php` — a checked-in table (74 rows
+when this was written, 88 now), each with a `source` URL to the vendor's own lifecycle page. Every date was
 verified against that page in September 2026.
 
 It is a file, not a feed, because an external EOL API is one more thing to
@@ -300,7 +301,7 @@ shipped table" drops everything.
   genuinely retired 4.5.2 / 4.6 / 4.6.1 *are* listed.
 - **Anything the vendor has not published.** Windows Server 23H2 is the live
   example: Microsoft's Annual Channel page still reads "In Support" with no
-  date. It is in the table with a null date, so those machines are still
+  date. It is in the table with an empty date, so those machines are still
   counted — under "no published date" rather than under a number somebody
   invented.
 
@@ -363,7 +364,10 @@ repository call the screen was rendered with, minus the paging**. Somebody who
 spent five minutes narrowing to "critical, past SLA, owned by Infrastructure"
 wants those rows, not 228,000 others.
 
-- Views: `assets`, `findings`, `coverage_gaps`, `patch_status`, `eol`.
+- Views (`VulnHub_Dash_Export::views()`): `assets`, `findings`, `vuln_assets`,
+  `product_remediation`, `coverage_gaps`, `patch_status`, `eol`, `products`,
+  `vendors`, `vendor_assets`, `vendor_products`, `vendor_findings`. The EOL
+  remediation plan has its own exporter (`docs/EOS.md`).
 - Capability-checked, nonce-checked, and written to the audit trail with the
   filters it ran under — "who downloaded the asset list" and "who downloaded
   every unpatchable critical" are different events.
@@ -431,12 +435,14 @@ under the status on the asset page.
 
 | Source | When |
 |---|---|
-| `manual` | A person, through the lifecycle controls. `Lifecycle::set()` records `manual` when someone is signed in and it is not cron or wp-cli; automated callers pass their own source. |
+| `manual` | A person, through the lifecycle controls. `Lifecycle::set()` records `manual` when no source is passed, someone is signed in, and it is not cron or wp-cli; automated callers pass their own source. |
 | `cmdb` | The CMDB's Status attribute (mapping `install_status <- Status`), on every CMDB sync, for everything the CMDB lists, with the status text and key as the reason. The guard that keeps a recently scanned machine in scope when the CMDB says otherwise still applies. |
 | `aws` | Records AWS or the posture inventory made: running is in service, stopped is spare, gone is retired. |
 | `tenable` | Missing from Tenable's complete export, deleted in Tenable, AppStream session machines removed. |
-| `merge`, `fleet`, `restore` | Duplicate merges, AppStream fleet records, released held records. |
+| `merge`, `fleet`, `restore` | Duplicate merges; AppStream fleet records; `restore` is an asset Tenable reports again after its prune or removal sweep retired it, put back to the status it had (`Repo::restore_pruned_tenable()`, `docs/SYNC.md`). |
 | `rule` | `Lifecycle::derive()`, below. |
+| a feed id, or `sync` | A feed that writes a status through `Repo::upsert_asset()` without naming a source is recorded under its `primary_source`. |
+| `system` | Any other automated change that names no source (cron, wp-cli, or no signed-in user). |
 
 **The rule for what the CMDB does not list** (`Lifecycle::derive()`, after
 every non-failed sync at priority 25 and in nightly housekeeping):

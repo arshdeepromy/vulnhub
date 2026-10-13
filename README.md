@@ -14,7 +14,7 @@ host or path.
 ## Getting started
 
 ```bash
-git clone https://github.com/arshdeepromy/vulnhub.git
+git clone <repository-url> vulnhub
 cd vulnhub
 cp .env.example .env          # set ports, DB name and secrets (see below)
 docker compose up -d          # build and start the whole stack
@@ -31,7 +31,7 @@ reads hours behind, on a tool whose whole job is telling you when something was
 last seen:
 
 ```bash
-docker compose run --rm --entrypoint wp wpcli option update timezone_string Pacific/Auckland
+./wp.sh option update timezone_string Europe/London   # your own IANA zone
 ```
 
 Stored data is always UTC and never needs migrating, so this is safe to set (or
@@ -87,7 +87,7 @@ script if your install differs. See `docs/BROWSER-PASS.md`.
 ### Day-to-day
 
 ```bash
-docker compose logs -f vulnhub-wp
+docker compose logs -f wordpress   # compose service names: db, redis, wordpress, wpcli, cron, mailhog
 ./lint.sh                    # php -l across every plugin file
 ./check-pages.sh             # log in and fetch every screen, report PHP errors
 ./wp.sh <args>               # wp-cli inside the stack (resolves its own path)
@@ -96,12 +96,14 @@ docker compose logs -f vulnhub-wp
 | Service | Port | What it is |
 |---|---|---|
 | `vulnhub-wp` | **8093** | WordPress 7.x + the VulnHub plugins |
+| `vulnhub-wpcli` | — | idle WP-CLI container that `./wp.sh` execs into |
 | `vulnhub-db` | internal | MariaDB 11 (`vh_` table prefix) |
 | `vulnhub-redis` | internal | object cache |
 | `vulnhub-cron` | — | runs `wp cron event run --due-now` every 60s (real cron, not page-load cron) |
 | `vulnhub-mailhog` | **8094** | catches outbound mail |
 
-The port mappings live in `docker-compose.yml`; change them there if 8093/8094
+The first column is the container name (`docker exec vulnhub-wpcli …`); compose
+commands take the service name instead. The port mappings live in `docker-compose.yml`; change them there if 8093/8094
 are taken on your host.
 
 ---
@@ -110,16 +112,16 @@ are taken on your host.
 
 Each integration is its own plugin, so any one can be disabled or updated
 without touching the rest. They all build against the contract in
-`docs/CORE-API.md`. The principal ones:
+`docs/CORE-API.md`. There are twenty. The principal ones:
 
 | Plugin | Does |
 |---|---|
-| **vulnhub-core** | Data model (14 tables), connector framework, encrypted credential vault, ownership mapping engine, RBAC, REST API, the wp-admin screens |
+| **vulnhub-core** | Data model (20 tables, schema v38), connector framework, encrypted credential vault, scheduler, ownership mapping engine, RBAC (four roles, eight capabilities), the `vulnhub/v1` REST API, the wp-admin screens |
 | **vulnhub-tenable** | Tenable VM export API → assets, vulnerabilities, tags. Owns closure verification, and the **AppStream cleanup** tool that deletes the one-shot streaming duplicates a fleet leaves behind (`docs/APPSTREAM.md`) |
 | **vulnhub-intune** | Microsoft Graph → managed devices, users, departments, offices, groups |
 | **vulnhub-cmdb** | ServiceNow / Jira Assets / Confluence / CSV → business service, team and site for non-user assets |
-| **vulnhub-jira** | Ticket creation with real ADF, status sync, the automation engine, reopen-on-failed-verification |
-| **vulnhub-auth** | TOTP MFA + recovery codes, Okta OIDC, Entra ID OIDC, generic OIDC, LDAP/AD |
+| **vulnhub-jira** | Ticket creation with real ADF (API token or OAuth 3LO sign-in, `docs/JIRA-OAUTH.md`), JSM requests and scope tickets (`docs/TICKETS.md`), status sync, the automation engine, reopen-on-failed-verification |
+| **vulnhub-auth** | TOTP MFA + recovery codes, Okta OIDC, Entra ID OIDC, generic OIDC, LDAP/AD, and the outbound mail (SMTP) connector used for invitations and password links |
 | **vulnhub-dashboard** | The front-end application served at your own domain — every portal view (including **Inventory sources**, which compares the registers against each other), the dashboard board, and the portal **Administration** area (`/portal-admin/`), which mirrors core's wp-admin screens so nobody needs wp-admin |
 | **vulnhub-threat** | CVE ids out of the scanner's own text, enriched from NVD, CISA KEV and FIRST EPSS, and turned into the route an attacker would have to take. Owns the attack-path widget |
 
@@ -184,8 +186,9 @@ finding and records one of:
 
 ## Going live
 
-Everything currently runs on a deterministic mock fleet: 112 assets, 56 people,
-22 vulnerability definitions, 360 findings, 78 tickets. The mock payloads are
+Out of the box everything runs on a deterministic mock fleet: 112 devices, 56
+people and 25 vulnerability definitions, with the findings and tickets that
+follow from them. The mock payloads are
 reshaped into the real vendor JSON and pushed through **the same normalisation
 code the live path uses**, so switching over is a credential change, not a code
 change.
@@ -193,8 +196,8 @@ change.
 Per connector, at **Administration → Integrations** in the portal (wp-admin:
 **VulnHub → Integrations**):
 
-1. Paste credentials (encrypted at rest with XChaCha20-Poly1305 using
-   `VULNHUB_ENCRYPTION_KEY` from wp-config — a database dump alone does not
+1. Paste credentials (encrypted at rest with libsodium's secretbox,
+   XSalsa20-Poly1305, keyed from `VULNHUB_ENCRYPTION_KEY` in wp-config — a database dump alone does not
    expose them).
 2. **Test connection**.
 3. Untick *Use mock data*.
@@ -206,7 +209,9 @@ What each connector needs:
 - **Intune/Entra** — tenant id, client id, client secret, and admin consent for
   `DeviceManagementManagedDevices.Read.All`, `User.Read.All`, `Group.Read.All`.
   The Intune screen lists these as a copyable checklist.
-- **Jira** — site URL, account email, API token, default project key.
+- **Jira** — site URL and default project key, plus either an account email and
+  API token or an OAuth 2.0 (3LO) app's client id and secret, connected as
+  yourself (`docs/JIRA-OAUTH.md`).
 - **CMDB** — ServiceNow instance + token, or Jira Service Management Assets
   (Atlassian account email + a read-only scoped API token, plus the site's cloud
   id, the Assets workspace id and the object schema id), or Confluence page ids,

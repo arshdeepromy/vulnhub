@@ -2981,6 +2981,79 @@ final class Repo {
 	 * @param mixed $value Raw argument.
 	 * @return array<int,string>
 	 */
+	/**
+	 * Whether a machine has been heard from recently enough to call it online,
+	 * and what heard it.
+	 *
+	 * One definition, used everywhere an asset is drawn. "Online" here means a
+	 * system that actually talks to the machine has heard from it inside its
+	 * window -- a Defender check-in, a Tenable agent connect, an Intune sync,
+	 * or a completed Tenable scan, which only completes against something that
+	 * answered. `last_seen` is deliberately not one of them: a CMDB import
+	 * moves it without anyone touching the machine.
+	 *
+	 * The window differs by what the thing is. A server that has not been
+	 * heard from in a day is worth looking at; a laptop that has not been
+	 * heard from in a day is at the weekend. So servers get 24 hours and
+	 * everything else gets seven days.
+	 *
+	 * @param array<string,mixed> $asset Asset row.
+	 * @return array{online:bool,at:string,via:string,hours:int,tone:string,note:string}
+	 */
+	public static function online_state( array $asset ): array {
+		$signals = array(
+			'defender_last_seen' => __( 'Defender', 'vulnhub' ),
+			'agent_last_connect' => __( 'the Tenable agent', 'vulnhub' ),
+			'last_intune_sync'   => __( 'Intune', 'vulnhub' ),
+			'tenable_last_scan'  => __( 'a Tenable scan', 'vulnhub' ),
+		);
+
+		$at  = '';
+		$via = '';
+
+		foreach ( $signals as $field => $label ) {
+			$when = trim( (string) ( $asset[ $field ] ?? '' ) );
+
+			if ( '' === $when || '0000-00-00 00:00:00' === $when ) {
+				continue;
+			}
+
+			if ( '' === $at || strtotime( $when ) > strtotime( $at ) ) {
+				$at  = $when;
+				$via = $label;
+			}
+		}
+
+		$hours  = 'server' === (string) ( $asset['asset_type'] ?? '' ) ? 24 : 168;
+		$online = '' !== $at && strtotime( $at ) >= ( time() - ( $hours * HOUR_IN_SECONDS ) );
+
+		$state = array(
+			'online' => $online,
+			'at'     => $at,
+			'via'    => $via,
+			'hours'  => $hours,
+			// on | off | warn | down, or '' when nothing has ever heard from it.
+			'tone'   => '' === $at ? '' : ( $online ? 'on' : 'off' ),
+			// A sentence that replaces the default tooltip when set.
+			'note'   => '',
+		);
+
+		/*
+		 * What the machine is *supposed* to be doing can change the reading:
+		 * an EC2 instance the scheduler switches off at night is not offline at
+		 * night (vulnhub-aws, VulnHub_AWS_Run_Profile). A listener may set
+		 * `online`, `tone` and `note`; it must leave `at` and `via` as found.
+		 */
+		$filtered = apply_filters( 'vulnhub_online_state', $state, $asset );
+
+		return is_array( $filtered ) ? array_merge( $state, $filtered ) : $state;
+	}
+
+	/** The columns online_state() reads, for any query that wants to draw a dot. */
+	public static function online_columns(): array {
+		return array( 'asset_type', 'defender_last_seen', 'agent_last_connect', 'last_intune_sync', 'tenable_last_scan', 'aws_instance_id' );
+	}
+
 	public static function source_slugs( mixed $value ): array {
 		$parts = is_array( $value ) ? $value : explode( ',', (string) $value );
 		$out   = array();
@@ -3769,6 +3842,8 @@ final class Repo {
 		 * rows still arrive outside every count rather than quietly rejoining
 		 * the totals. prev_state keeps the way back.
 		 */
+		$row_prev = '';
+
 		if ( vh_severity_suppressed( $severity ) ) {
 			$reopened = false;
 			if ( $existing && ! in_array( (string) $existing['state'], array( 'suppressed' ), true ) ) {
@@ -3777,7 +3852,23 @@ final class Repo {
 			$state = 'suppressed';
 		}
 
-		$row_prev        = '';
+		/*
+		 * A plugin aimed only at Windows Server, reported on a Windows client,
+		 * lands suppressed the same way -- see Platform_Fit. This is the one
+		 * place every scanner finding is written, so deciding it here is what
+		 * keeps it out of every count, widget, report, export and ticket at
+		 * once, rather than filtering each of them. The state Tenable sent is
+		 * kept in prev_state (only when the row was not already parked, so a
+		 * second pass does not overwrite it with 'suppressed').
+		 */
+		if ( 'suppressed' !== $state && Platform_Fit::mismatch( $vuln_id, $asset_id ) ) {
+			if ( $existing && 'suppressed' !== (string) $existing['state'] ) {
+				$row_prev = $reopened ? 'reopened' : $state;
+			}
+			$reopened = false;
+			$state    = 'suppressed';
+		}
+
 		$incoming_output = (string) ( $data['output'] ?? '' );
 
 		/*

@@ -1,22 +1,43 @@
 # Plerion (cloud inventory & CSPM)
 
 `vulnhub-plerion` reads Plerion's REST API — one read-only Bearer key, region host
-`https://{region}.api.plerion.com` — and brings two things into the portal, from
-every connected AWS/Azure/GCP account, with **no per-account role to assume**.
+`https://{region}.api.plerion.com` (setting `region`, default `us`) — and brings
+two things into the portal from every account connected to the Plerion tenant,
+with **no per-account role to assume**. The `providers` setting (default `AWS`)
+limits both imports to those clouds.
 
 ## 1. Assets
-`do_sync()` pages `/v1/tenant/assets` (filtered to compute instances) and imports
+`do_sync()` pages `/v1/tenant/assets` (filtered to `AWS::EC2::Instance`, so in
+practice AWS only, whatever `providers` says) and imports
 each as a first-class asset through `Repo::upsert_asset()`, keyed on its cloud
 instance id (`aws_instance_id` / `azure_vm_id` / `gcp_instance_id`) so it **merges**
-with the Tenable/Defender/CMDB record for the same box. `primary_source = plerion`.
+with the Tenable/Defender/CMDB record for the same box. `primary_source = plerion`,
+hostname from the `Name` tag (else the resource name, else the instance id).
+
+After the assets it reads `/v1/tenant/integrations` for AWS account names and
+announces them on `vulnhub_aws_account_names` (see `docs/AWS-NETWORK.md`); a
+failure there is logged and never fails the sync.
 
 ## 2. CSPM posture findings — isolated by construction
-`/v1/tenant/findings` (FAILED, severities configurable, default CRITICAL/HIGH) are
-stored in **their own table** `vulnhub_plerion_findings`, never the core `findings`
-table. Because nothing writes them there, they can never appear on the
+`/v1/tenant/findings` (FAILED only; `finding_severities`, default
+`CRITICAL, HIGH`; switch off with `use_findings`) are stored in **their own
+table** `vulnhub_plerion_findings`, keyed on the finding PRN, never the core
+`findings` table. Rows not seen by a complete run are pruned at its end, so the
+table is the current set, not a history. Because nothing writes them there, they can never appear on the
 Vulnerabilities list, be selected into a ticket, or enter a JSM/Jira flow — the
 isolation is structural, not a flag. Shown on the **Cloud Posture** page (view
-`cspm`, `/cloud-posture/`), badged CSPM · Plerion, with no raise-ticket control.
+`cspm`, `/cloud-posture/`, placed after Vulnerabilities in the menu), badged
+CSPM · Plerion, with no raise-ticket control. It filters on `?severity=`,
+`?account=`, `?rtype=` (resource type) and `?search=` (message, resource name or
+detection id), 50 a page via `?p=`, and never lists exempted findings.
+
+Each finding also carries a **cross-account grouping key** (`cause_key`, with
+`cause_stem`, `cause_account` and `env_tier`), set on upsert by
+`VulnHub_Plerion_Cause`: same detection, same resource type, same name once the
+environment tier, account id, region, revision and CloudFormation suffix are
+taken out. Cloud Posture also filters on `?cause=<key>` and `?detection=<id>`
+(no on-page control: they arrive from the **Control gaps** page, and a banner
+says so). The rules, the backfill and the page are in `docs/CONTROL-GAPS.md`.
 
 ## The exposure map, and why it is gone
 
@@ -47,14 +68,20 @@ loop by "rows returned + a live cursor" — never by `hasNextPage`.
 
 ## Ops
 Config lives in the connector settings (`Settings::set`/`set_secret('plerion', …)`);
-the key is encrypted at rest. Enable + interval on the Integrations screen. The
-hourly sync refreshes assets, CSPM findings and the exposure snapshot together.
+the key is encrypted at rest. Enable + interval (default hourly) on the
+Integrations screen. The sync refreshes assets, account names and CSPM findings
+together; there is no exposure snapshot any more (see above).
 
 ## The Cloud Network map reads this inventory, and checks it
 
 `vulnhub-aws`'s **Cloud Network** screen (`docs/AWS-NETWORK.md`) builds its
-tiers from `..._cloud_resources` — this connector's inventory — and enriches
-each row from the AWS capture and the asset store.
+per-account tiers from `..._cloud_resources` — a Plerion resource inventory
+(`account_id`, `region`, `kind`, `resource_type`, `resource_id`, `name`,
+`exposed`, `risk`, `last_seen`) — and enriches each row from the AWS capture and
+the asset store. **Nothing in the current code writes that table**: this
+connector imports only instances and findings, and the table keeps whatever an
+earlier writer left in it. Treat its contents as a dated snapshot until a writer
+is restored.
 
 That makes it a cross-check on what is stored here. A resource this inventory
 lists as an internet-facing load balancer, which a direct AWS read of the same
@@ -76,9 +103,11 @@ behind it, the transit-gateway hub — usually sits in a network account the
 operator's SSO login has no assignment to. Because this connector is onboarded
 centrally rather than per account, it can see that one, and
 `VulnHub_AWS_Network::import_posture_network()` copies those load balancers,
-transit gateways and auto-scaling groups into the topology store with
+transit gateways, auto-scaling groups and instances into the topology store with
 `source = 'plerion'`. Accounts the AWS capture reads live are skipped. Without
-it the middle of the Cloud Network flowchart is a blank.
+it the middle of the Cloud Network flowchart is a blank. Note that nothing calls
+it on a schedule: neither sync invokes it, so it has to be run by hand
+(`wp eval 'VulnHub_AWS_Network::import_posture_network();'`) to refresh.
 
 ---
 

@@ -27,11 +27,11 @@
   <tbody>
     <tr><td>Should this asset resolve to an owner?</td><td><code>in_service_all</code></td><td>In service, quarantine, maintenance, unknown</td></tr>
     <tr><td>Should Tenable have scanned it?</td><td>coverage scope</td><td>In service, unknown (editable)</td></tr>
-    <tr><td>Should it appear in a reported number?</td><td><code>reportable</code> <em>(default)</em></td><td>In service, unknown</td></tr>
+    <tr><td>Should it appear in a reported number?</td><td><code>reportable</code> <em>(default)</em></td><td>In service, unknown (editable)</td></tr>
   </tbody>
 </table>
 
-<p>The findings and asset screens offer three scopes, and <strong>reportable is the default</strong>:</p>
+<p>The findings and asset screens offer three scopes, and <strong>reportable is the default</strong>. (The statuses that make up the reporting scope and the coverage scope are set by an administrator in Settings; the defaults are shown above.) The assets list adds two more views for housekeeping — <em>Outside the reporting scope</em> and <em>Out of service only</em>.</p>
 
 <div class="vh-defs">
   <div><span class="k">reportable</span><span class="v">Live and unknown-status machines someone can actually act on — minus off-network (quarantine/maintenance) and un-issued kit (spare/stock/planned/retired). This is what a reported figure is <em>about</em>.</span></div>
@@ -48,7 +48,7 @@
 <h3>Anatomy of an exception</h3>
 
 <div class="vh-defs">
-  <div><span class="k">Scope</span><span class="v"><strong>finding</strong> (one finding on one asset), <strong>asset</strong> (all findings on one asset), <strong>vuln</strong> (one vulnerability across all assets), or <strong>team</strong> (one vulnerability across one team).</span></div>
+  <div><span class="k">Scope</span><span class="v"><strong>finding</strong> (one finding on one asset), <strong>asset</strong> (all findings on one asset), <strong>vuln</strong> (one vulnerability across all assets), <strong>team</strong> (one vulnerability across one team), or <strong>bundled</strong> (every bundled library or file inside one application, now and as found).</span></div>
   <div><span class="k">Reason</span><span class="v">false positive, compensating control, no fix available, business impact, end of life, not exploitable, accepted risk, or other.</span></div>
   <div><span class="k">Status</span><span class="v">draft → pending → approved (or rejected); later expired or revoked.</span></div>
   <div><span class="k">Justification</span><span class="v">Required, at least 20 characters — "the record an auditor will read".</span></div>
@@ -57,7 +57,7 @@
 
 <h3>What approval does to the numbers</h3>
 
-<p>On approval, the exception stamps its id onto every matching open/reopened finding, and those findings immediately drop out of every live count (they now have a non-zero <code>exception_id</code>). A separate "excepted" metric counts them so the accepted risk is never invisible. Asset roll-ups are recalculated on approval, revoke and expiry, so severity totals move the moment the decision changes.</p>
+<p>On approval, the exception stamps its id onto every matching open/reopened finding, and those findings immediately drop out of every live count (they now have a non-zero <code>exception_id</code>). A separate "excepted" metric counts them so the accepted risk is never invisible. Asset roll-ups are recalculated on approval, revoke and expiry, so severity totals move the moment the decision changes. Because a scope such as "this vulnerability everywhere" should also cover the copy the next scan finds, every active exception is re-applied to newly arrived matching findings after each sync and in the nightly sweep — additively, never moving a finding from one exception to another.</p>
 
 <p>Each night, approved exceptions past their expiry date flip to <code>expired</code> and their findings return to the open counts (only <em>approved</em> exceptions are honoured). <strong>Revoking</strong> an exception explicitly clears the stamp from its findings straight away. Reference numbers are auto-assigned (<code>EXC-0001</code>, …) so every decision is citable.</p>
 
@@ -85,7 +85,7 @@
 
 <h3>What the screen gives you</h3>
 
-<p>Tiles for in-the-programme / covered / overdue / not covered (each one a filter), a <strong>forward workload</strong> chart of what still needs action by quarter, and the server table: treatment plan, timeframe with its due date, programme state, RAG, owner team, site, open critical and high findings, and last scan. Filter by coverage, state, timeframe, environment tier, RAG or project alongside the portal's own search, team and site, then <strong>Export CSV</strong> — which exports everything matching the filter, not just the page you can see.</p>
+<p>Tiles for in-the-programme / covered / overdue / not covered (each one a filter), a <strong>forward workload</strong> chart of what still needs action by quarter, and the server table: treatment plan, timeframe with its due date, programme state, RAG, owner team, site, open critical and high findings, and last scan. Filter by coverage, programme state, timeframe, environment tier (<em>Critical</em> — prod / preprod — or <em>Lower</em> — test / dev / DR), RAG or project alongside the portal's own search, team, owner and site, then <strong>Export CSV</strong> — which exports everything matching the filter, not just the page you can see.</p>
 <p>You mostly arrive here from the dashboard rather than by filtering: a bar's green or red band opens that half, its total opens both, and the <em>Past end of life</em> and <em>Ends within 6 months</em> tiles open the machines they count. Those two tiles need their own filter to do it, because this screen holds more than the tiles do — it also carries the programme rows whose hostname matches no asset in the inventory, and the end-of-life machines the programme never assessed. Whichever number you clicked, the list you land on adds up to it.</p>
 
 <p>Machines the programme has never assessed are included deliberately. They are past end of life and written down nowhere else, which makes them the most interesting rows on the screen. Programme rows with no matching asset are kept too, marked <em>not in inventory</em>: the programme knowing about a server the inventory does not is itself worth seeing.</p>

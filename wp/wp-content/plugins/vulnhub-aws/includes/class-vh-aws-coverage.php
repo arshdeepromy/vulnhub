@@ -52,6 +52,22 @@ final class VulnHub_AWS_Coverage {
 	private static ?array $ids = null;
 
 	public static function init(): void {
+		/*
+		 * AWS is a system that knows about machines, so it belongs in the
+		 * same list as Tenable and the CMDB. Without it there was no way to
+		 * ask the question that matters here: the CMDB says a server lives
+		 * in an AWS account, and AWS has never heard of it. Registered from
+		 * this plugin so the option only appears where AWS is connected.
+		 */
+		add_filter(
+			'vulnhub_asset_sources',
+			static function ( array $sources ): array {
+				$sources['aws'] = __( 'AWS', 'vulnhub' );
+
+				return $sources;
+			}
+		);
+
 		add_filter( 'vulnhub_assets_query', array( __CLASS__, 'assets_query' ), 10, 2 );
 		add_filter( 'vulnhub_dashboard_widgets', array( __CLASS__, 'register' ) );
 		add_filter( 'vulnhub_dashboard_default_layout', array( __CLASS__, 'place' ) );
@@ -77,6 +93,7 @@ final class VulnHub_AWS_Coverage {
 		$moved = 0;
 
 		if ( 'aws' === $connector ) {
+			self::stamp_source();
 			$moved += self::register_missing()['created'];
 			$moved += self::retire_gone();
 		}
@@ -269,6 +286,61 @@ final class VulnHub_AWS_Coverage {
 	 *
 	 * @return int Records changed.
 	 */
+	/**
+	 * Mark every asset AWS itself can see as known by AWS -- and unmark those
+	 * it cannot.
+	 *
+	 * The point is the disagreement. A CMDB record can claim a machine lives
+	 * in a particular AWS account; only AWS can say whether an instance is
+	 * actually there. Stamping the source turns that into an ordinary filter:
+	 * "known by CMDB, not in AWS" is the list of claims nobody has checked.
+	 *
+	 * The stamp follows `aws_instance_id` against the live instance list, not
+	 * `cloud_provider`, which is itself usually the CMDB's claim.
+	 *
+	 * @return int Rows changed.
+	 */
+	public static function stamp_source(): int {
+		global $wpdb;
+
+		$a     = vh_table( 'assets' );
+		$live  = self::instances();
+		$today = gmdate( 'Y-m-d' );
+		$n     = 0;
+
+		$rows = (array) $wpdb->get_results( // phpcs:ignore WordPress.DB
+			"SELECT id, aws_instance_id, sources_json FROM {$a}
+			 WHERE aws_instance_id <> '' OR LOCATE(CONCAT(CHAR(34), 'aws', CHAR(34)), sources_json) > 0",
+			ARRAY_A
+		);
+
+		foreach ( $rows as $r ) {
+			$have = json_decode( (string) ( $r['sources_json'] ?: '{}' ), true );
+			$have = is_array( $have ) ? $have : array();
+			$iid  = (string) $r['aws_instance_id'];
+			$seen = '' !== $iid && isset( $live[ $iid ] );
+
+			if ( $seen ) {
+				$have['aws'] = $today;
+			} elseif ( isset( $have['aws'] ) ) {
+				unset( $have['aws'] );
+			} else {
+				continue;
+			}
+
+			$next = $have ? (string) wp_json_encode( $have ) : '';
+
+			if ( $next === (string) $r['sources_json'] ) {
+				continue;
+			}
+
+			$wpdb->update( $a, array( 'sources_json' => $next ), array( 'id' => (int) $r['id'] ) ); // phpcs:ignore WordPress.DB
+			++$n;
+		}
+
+		return $n;
+	}
+
 	public static function stamp_names(): int {
 		global $wpdb;
 

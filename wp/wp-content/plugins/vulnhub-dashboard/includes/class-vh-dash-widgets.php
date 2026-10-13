@@ -3952,6 +3952,7 @@ final class VulnHub_Dash_Widgets {
 				'microsoft-power-bi-desktop' => '#F2C811', 'microsoft-sql-server' => '#CC2927',
 				'oracle-sql-developer' => '#F80000', 'salesforce-data-loader' => '#00A1E0', 'aws-cli' => '#FF9900',
 				'hp-one-agent' => '#0096D6', 'commvault' => '#E92128', 'soapui' => '#5AA700', 'zoom' => '#2D8CFF',
+				'microsoft-defender' => '#0F6CBD',
 			)
 		);
 		if ( isset( $brand[ $slug ] ) ) {
@@ -4027,6 +4028,8 @@ final class VulnHub_Dash_Widgets {
 		$icons = (array) apply_filters( 'vulnhub_product_icons', array(
 			// Windows: the one logo simple enough to render exactly inline.
 			'os_windows_glyph' => '<path fill="#fff" d="M3 5.5l7-1v6.5H3zM11 4.3L21 3v8.9h-10zM3 12.5h7V19l-7-1zM11 12.5h10V21l-10-1.4z"/>',
+			// Defender: a plain shield of our own, not Microsoft's mark.
+			'microsoft-defender' => '<path fill="#fff" d="M12 2.5l7.5 2.8v6.1c0 4.6-3.1 8.6-7.5 10.1-4.4-1.5-7.5-5.5-7.5-10.1V5.3z"/><path fill="none" stroke="#0F6CBD" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M8.6 12.1l2.4 2.4 4.4-4.6"/>',
 		) );
 
 		$inner = '';
@@ -4148,6 +4151,28 @@ final class VulnHub_Dash_Widgets {
 			. '</p>';
 	}
 
+	/**
+	 * The findings list behind one product row: narrow as the row (slug AND
+	 * kind, see docs/FILTERS.md §8) and carrying the two cuts its counts are
+	 * made with (§8a). The widget, the Products page and Control gaps all
+	 * link through here so the three cannot drift apart.
+	 *
+	 * @param array<string,mixed> $r Product row from product_rows().
+	 */
+	public static function product_findings_url( array $r ): string {
+		return VulnHub_Dash_Portal::portal_url(
+			'vulnerabilities',
+			array(
+				'product'  => (string) ( $r['product_slug'] ?? '' ),
+				'pkind'    => (string) ( $r['product_kind'] ?? '' ),
+				'life'     => 'reportable',
+				'state'    => 'open_any',
+				'sev_not'  => 'info',
+				'excepted' => 'exclude',
+			)
+		);
+	}
+
 	public static function render_product_exposure(): void {
 		$rows = self::product_rows();
 		if ( ! $rows ) {
@@ -4161,18 +4186,7 @@ final class VulnHub_Dash_Widgets {
 		foreach ( $rows as $r ) {
 			$assets = (int) $r['assets'];
 			$pct    = (int) round( 100 * $assets / $max );
-			$url    = VulnHub_Dash_Portal::portal_url(
-				'vulnerabilities',
-				array(
-					'product'  => (string) $r['product_slug'],
-					'pkind'    => (string) ( $r['product_kind'] ?? '' ),
-					'life'     => 'reportable',
-					'state'    => 'open_any',
-					// Same two cuts this widget's own counts are made with.
-					'sev_not'  => 'info',
-					'excepted' => 'exclude',
-				)
-			);
+			$url    = self::product_findings_url( $r );
 
 			echo '<li class="vh-prodrow">';
 			echo self::product_icon( (string) $r['product_slug'], (string) $r['component_class'], (string) $r['product'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped

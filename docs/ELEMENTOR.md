@@ -18,9 +18,9 @@ growing its own query belongs in `Repo` instead.**
 | Widget | What it draws |
 | --- | --- |
 | VulnHub dashboard board | The reader's own saved widget arrangement, exactly as the portal dashboard shows it |
-| VulnHub panel | Any single one of the dashboard panels, at a chosen grid width — 36 in core, plus any another plugin registers on `vulnhub_dashboard_widgets` (vulnhub-threat, vulnhub-hosting and vulnhub-departments add one each) |
+| VulnHub panel | Any single one of the dashboard panels, at a chosen grid width — 38 in core, plus any another plugin registers on `vulnhub_dashboard_widgets` (vulnhub-threat, vulnhub-hosting, vulnhub-departments and vulnhub-aws add one each) |
 | VulnHub KPI tiles | A repeater of headline numbers, 21 measures to choose from |
-| VulnHub Tenable coverage | Tenable coverage by any dimension, as bars, a donut, one meter or a table |
+| VulnHub Tenable coverage | Tenable coverage by any of seven dimensions, as bars, a donut, one meter or a table |
 | VulnHub coverage gaps | The chase list: assets with no Tenable record or a stale scan |
 | VulnHub device explorer | The estate, filtered, with the CMDB / Intune / Tenable identifiers each record carries |
 | VulnHub teams and owners | A wall of teams with their assets, criticals and ownership gaps |
@@ -46,8 +46,9 @@ Widgets depend on `vulnhub-app` and `vulnhub-elementor` only — **not** on
 `vulnhub-app-redesign` (`app-redesign.css`), which is where the redesign's
 component and light-theme rules live. A widget on an Elementor page is therefore
 styled by `app.css` alone, and can look different from the same panel inside the
-portal. The editor canvas likewise loads only `app.css`, versioned by the plugin
-constant rather than the file's mtime.
+portal. The editor canvas likewise loads only `app.css` (from
+`VulnHub_El_Widgets::editor_styles()`) plus this plugin's `elementor.css`,
+both now versioned by the file's mtime like the portal's own assets.
 
 ## 2. The chrome
 
@@ -68,6 +69,10 @@ page of content. The navigation and the footer strip are replaceable, so:
   the two chromes are alternatives, never combined.
 * `vulnhub_portal_notice` fires between the chrome and `<main>` on every portal
   view, sign-in included.
+* A portal-only user (`VulnHub_Dash_Portal::is_portal_only_user()`) never sees
+  the WordPress admin bar anywhere on the site: `show_admin_bar` is filtered to
+  false at priority 98, so an Elementor page outside the portal does not hand
+  them a bar full of wp-admin links they cannot use.
 * The location's rendered HTML is memoised per request. Both the filter and the
   action ask for it, and rendering a template twice is wrong as well as slow.
 
@@ -144,8 +149,9 @@ administration screen from another plugin.
   a quote.
 * A widget with only an icon in it has empty `textContent`. Assert on
   `innerHTML` when testing that a widget drew something.
-* The plugin header comment in `vulnhub-elementor.php` still says "twenty-one"
-  dashboard panels; the registry has grown past that.
+* The plugin header comment in `vulnhub-elementor.php` used to say
+  "twenty-one" dashboard panels. *(since changed: it now says "every dashboard
+  widget in the registry", which cannot go stale.)*
 
 ## Testing
 
@@ -154,7 +160,7 @@ node dev/elementorpass.js      # opens the real editor; renders widgets on a scr
 ```
 
 `dev/elementorpass.js` reads the document ids from the
-`vulnhub_elementor_documents` option through `wp.sh` by itself. `VH_DOCS` is an
+`vulnhub_elementor_documents` option through `wp.sh option get` by itself. `VH_DOCS` is an
 optional override carrying the same JSON:
 
 ```
@@ -162,4 +168,4 @@ DOCS=$(./wp.sh eval 'echo wp_json_encode(get_option("vulnhub_elementor_documents
 VH_DOCS="$DOCS" node dev/elementorpass.js
 ```
 
-Both scripts sign in with `.admin_pass`; see `docs/BROWSER-PASS.md`.
+It signs in with `.admin_pass`; see `docs/BROWSER-PASS.md`.

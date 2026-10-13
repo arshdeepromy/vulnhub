@@ -264,7 +264,9 @@ final class Scheduler {
 		 * uuid, a Tenable chip and 25 Tenable findings, until housekeeping
 		 * caught up hours later.
 		 */
-		Coverage::recalculate();
+		if ( $connector->recalculate_after_sync() ) {
+			Coverage::recalculate();
+		}
 	}
 
 	/**
@@ -300,7 +302,9 @@ final class Scheduler {
 		// A sync is the only thing that can change what Tenable has seen, so
 		// coverage is only ever wrong between a sync and the next nightly
 		// housekeeping run. Close that window here.
-		Coverage::recalculate();
+		if ( $connector->recalculate_after_sync() ) {
+			Coverage::recalculate();
+		}
 	}
 
 	/**

@@ -994,6 +994,35 @@ final class VulnHub_Jira_Client {
 	}
 
 	/**
+	 * The attachments on an issue: GET /rest/api/3/issue/{key}?fields=attachment.
+	 *
+	 * Metadata only -- name, type, size, who and when. The bytes are a
+	 * separate call, made when somebody opens one.
+	 */
+	public function issue_attachments( string $key ): \VulnHub\Core\Http_Response {
+		return $this->get_issue( $key, array( 'attachment' ) );
+	}
+
+	/**
+	 * GET /rest/api/3/attachment/content/{id}?redirect=false — the file itself.
+	 *
+	 * `redirect=false` asks Jira to answer with the bytes rather than a 303
+	 * to the media service. Following that redirect would carry the
+	 * Authorization header to a second host, and is a second round trip for
+	 * nothing. Accept is widened for this one call: the JSON default would
+	 * be answered with a 406 for anything that is not JSON.
+	 */
+	public function attachment_content( string $id ): \VulnHub\Core\Http_Response {
+		return $this->call(
+			'GET',
+			self::API . '/attachment/content/' . rawurlencode( $id ),
+			array( 'redirect' => 'false' ),
+			null,
+			array( 'Accept' => '*/*' )
+		);
+	}
+
+	/**
 	 * POST /rest/api/3/issue/{issueIdOrKey}/attachments — multipart, field `file`.
 	 */
 	public function attach( string $key, string $filename, string $bytes, string $mime = 'application/octet-stream' ): \VulnHub\Core\Http_Response {

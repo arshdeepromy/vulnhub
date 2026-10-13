@@ -15,7 +15,7 @@ Node at the copy that ships with `@playwright/mcp`; there is nothing to install.
 cd /path/to/vulnhub
 export NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules
 
-node dev/browserpass.js                  # 24 screens x desktop (1440) + phone (390)
+node dev/browserpass.js                  # 22 screens x desktop (1440) + phone (390)
 node dev/browserpass.js --theme=dark     # the same, with data-theme stamped
 node dev/browserpass.js --theme=light    # dark is the default, so light is the one to ask for
 node dev/browserpass.js --only=assets    # every screen whose name CONTAINS "assets"
@@ -28,6 +28,12 @@ node dev/probe.js <url> <width>          # every element past the viewport, with
 
 Do **not** run these under `sudo` — Playwright's browsers live in
 `$HOME/.cache/ms-playwright` for the user that installed them, and root cannot see them.
+
+**Checked 2026-09-26:** on the current host neither `node` nor that
+`@playwright/mcp` copy is installed, there is no `~/.cache/ms-playwright`, and
+`dev/shots/` does not exist. Install Node and Playwright (with its Chromium)
+for the user who will run the passes, and point `NODE_PATH` at wherever
+`playwright` lands, before relying on any command on this page.
 
 `browserpass.js` writes `dev/shots/<screen>--<viewport>[-<theme>].png` plus a
 report: `report.json`, or `report-<theme>.json` when `--theme` is given.
@@ -65,7 +71,7 @@ Host header, so a cookie minted for one host is not recognised on another.
 | `browserpass.js` | Renders every screen in the table below at desktop and phone width; see *What it checks per screen*. |
 | `interact.js` | 25 functional assertions: primary nav, totals, severity filter, search, hit, reset, pager, sort, theme toggle, account menu, chart table view, assets. |
 | `probe.js` | Lists every element whose right edge is past the viewport at one URL and width, with its ancestry. |
-| `designaudit.js` | Static design audit: controls with no readable label, text the colour of its background, text clipped by its own box, tap targets too small to hit. 20 screens; `--only=` and `--theme=`; writes `dev/shots/design-audit[-<theme>].json`. |
+| `designaudit.js` | Static design audit: controls with no readable label, text the colour of its background, text clipped by its own box, tap targets too small to hit. 18 screens (browserpass's list without the EOL, no-EDR and no-patch filters and the lifecycle section); `--only=` and `--theme=`; writes `dev/shots/design-audit[-<theme>].json`. |
 | `boardpass.js` | Dashboard board: packing leaves no measured gaps, a moved widget stays moved after reload, the board holds at a narrow viewport. |
 | `dragpass.js` | Pointer-drag of a widget: it follows the pointer, a landing gap opens, the page auto-scrolls at the edge. |
 | `exportpass.js` | Export control end to end: the product filter survives Apply, the CSV honours the filter, assets are versioned by mtime. |
@@ -86,12 +92,15 @@ tickets; exceptions) and 10 administration sections (overview, integrations,
 imports, rules, teams, activity, audit, settings, lifecycle, appearance).
 
 **Not covered** — check these by hand or extend `PAGES`: `/products/`,
-`/vendors/`, `/alerts/`, `/docs/`, `/departments/`, a vulnerability detail page
-(`?vuln=<id>`), `/sign-in/`, the Vulnerabilities `?tab=products` and
-`?tab=vuln_assets` tabs, and the administration sections added since the list
-was written (people, Jira routing, documentation, threat context, AWS accounts,
-AI access, advisory feeds, departments, and every `screen-*` mirror other than
-lifecycle).
+`/vendors/`, `/alerts/`, `/docs/`, `/departments/`, `/eol-plan/`,
+`/inventory-sources/`, `/cloud-posture/`, `/cloud-network/`, `/aws-cost/`,
+`/aws-savings/`, `/appstream-cleanup/`, a ticket page (`/tickets/?ticket=<id>`),
+a vulnerability detail page (`?vuln=<id>`), `/sign-in/`, the Vulnerabilities
+`?tab=products` and `?tab=vuln_assets` tabs, and the administration sections
+added since the list was written (security, people, Jira routing,
+documentation, threat context, AWS accounts, AI access, advisory feeds,
+departments, EOS remediation plan, and every `screen-*` mirror other than
+lifecycle). `docs/PORTAL.md` lists every registered view.
 
 ## What it checks per screen
 
@@ -177,6 +186,9 @@ It does not go higher than 26px: a y-axis label is right-anchored 36 units in,
 and past that a five-figure number reaches further left than the panel's own
 padding. Charts in a narrow *desktop* widget (a 3- or 4-column panel) still
 scale down the same way and are not covered by a viewport media query.
+*(since changed: `.vh-chart-wrap` is now a container-query context, so axis
+text follows the panel's own width as well; the viewport steps remain as the
+fallback. See `docs/PORTAL.md`, Known GUI issues.)*
 
 ### 5. The portal's findings table could not be sorted at all
 
@@ -213,7 +225,9 @@ count how many visual rows a row of cards actually occupies, and check
   only matters off the portal.
 - **Findings and asset lists restack as cards below 640px**
   (`.vh-tablewrap--cards`): each row becomes a card with its column names as
-  labels. Tickets, exceptions and the detail-page tables still scroll
-  horizontally inside `.vh-tablewrap`, which is the intended pattern for those.
+  labels. The ticket page's assets table, both Inventory sources tables and the
+  EOL plan do the same. The Tickets list, Exceptions and the other detail-page
+  tables still scroll horizontally inside `.vh-tablewrap`, which is the
+  intended pattern for those.
 - Team names truncate in the "Exposure by team" panel at phone width. The full
   figures are in that panel's table view.

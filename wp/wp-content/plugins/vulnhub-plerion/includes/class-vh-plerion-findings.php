@@ -58,6 +58,10 @@ final class VulnHub_Plerion_Findings {
 				sla_due varchar(40) NOT NULL DEFAULT '',
 				is_exempted tinyint(1) NOT NULL DEFAULT 0,
 				raw_json longtext NULL,
+				cause_key char(32) NOT NULL DEFAULT '',
+				cause_stem varchar(191) NOT NULL DEFAULT '',
+				cause_account varchar(24) NOT NULL DEFAULT '',
+				env_tier varchar(16) NOT NULL DEFAULT '',
 				first_seen datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
 				last_seen datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
 				PRIMARY KEY  (id),
@@ -65,9 +69,15 @@ final class VulnHub_Plerion_Findings {
 				KEY severity (severity),
 				KEY account_id (account_id),
 				KEY detection_id (detection_id),
-				KEY resource_type (resource_type)
+				KEY resource_type (resource_type),
+				KEY cause_key (cause_key)
 			) {$charset};"
 		);
+
+		// The cross-account key arrived after rows were stored; key them
+		// (once, and again whenever its rules change).
+		require_once __DIR__ . '/class-vh-plerion-cause.php';
+		VulnHub_Plerion_Cause::maybe_backfill();
 	}
 
 	/**
@@ -83,10 +93,13 @@ final class VulnHub_Plerion_Findings {
 			return;
 		}
 
+		require_once __DIR__ . '/class-vh-plerion-cause.php';
+		$k = VulnHub_Plerion_Cause::parse( $r );
+
 		$wpdb->query( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 			$wpdb->prepare(
-				"INSERT INTO " . self::table() . " (finding_prn, detection_id, severity, status, source, message, resource_type, asset_prn, account_id, region, resource_name, resource_url, first_observed, last_observed, sla_due, is_exempted, raw_json, first_seen, last_seen)
-				 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%s,%s,%s)
+				"INSERT INTO " . self::table() . " (finding_prn, detection_id, severity, status, source, message, resource_type, asset_prn, account_id, region, resource_name, resource_url, first_observed, last_observed, sla_due, is_exempted, raw_json, cause_key, cause_stem, cause_account, env_tier, first_seen, last_seen)
+				 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%s,%s,%s,%s,%s,%s,%s)
 				 ON DUPLICATE KEY UPDATE
 					detection_id=VALUES(detection_id), severity=VALUES(severity), status=VALUES(status),
 					source=VALUES(source), message=VALUES(message), resource_type=VALUES(resource_type),
@@ -94,6 +107,8 @@ final class VulnHub_Plerion_Findings {
 					resource_name=VALUES(resource_name), resource_url=VALUES(resource_url),
 					first_observed=VALUES(first_observed), last_observed=VALUES(last_observed),
 					sla_due=VALUES(sla_due), is_exempted=VALUES(is_exempted), raw_json=VALUES(raw_json),
+					cause_key=VALUES(cause_key), cause_stem=VALUES(cause_stem),
+					cause_account=VALUES(cause_account), env_tier=VALUES(env_tier),
 					last_seen=VALUES(last_seen)",
 				$prn,
 				(string) ( $r['detection_id'] ?? '' ),
@@ -112,6 +127,10 @@ final class VulnHub_Plerion_Findings {
 				(string) ( $r['sla_due'] ?? '' ),
 				! empty( $r['is_exempted'] ) ? 1 : 0,
 				(string) ( $r['raw_json'] ?? '' ),
+				$k['cause_key'],
+				$k['cause_stem'],
+				$k['cause_account'],
+				$k['env_tier'],
 				$now,
 				$now
 			)
@@ -144,7 +163,7 @@ final class VulnHub_Plerion_Findings {
 	/**
 	 * A filtered page of findings.
 	 *
-	 * @param array<string,mixed> $a Filters: severity, account, resource_type, detection, search, limit, offset.
+	 * @param array<string,mixed> $a Filters: severity, account, resource_type, detection, cause, search, limit, offset.
 	 * @return array{rows:array<int,array<string,mixed>>,total:int}
 	 */
 	public static function query( array $a ): array {
@@ -158,6 +177,7 @@ final class VulnHub_Plerion_Findings {
 		if ( ! empty( $a['account'] ) ) { $where[] = 'account_id = %s'; $params[] = (string) $a['account']; }
 		if ( ! empty( $a['resource_type'] ) ) { $where[] = 'resource_type = %s'; $params[] = (string) $a['resource_type']; }
 		if ( ! empty( $a['detection'] ) ) { $where[] = 'detection_id = %s'; $params[] = (string) $a['detection']; }
+		if ( ! empty( $a['cause'] ) ) { $where[] = 'cause_key = %s'; $params[] = (string) $a['cause']; }
 
 		if ( ! empty( $a['search'] ) ) {
 			$where[] = '( message LIKE %s OR resource_name LIKE %s OR detection_id LIKE %s )';

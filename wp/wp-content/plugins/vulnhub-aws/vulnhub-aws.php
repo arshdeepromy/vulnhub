@@ -202,3 +202,46 @@ VulnHub_AWS_Cost_Collector::init();
 require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-cost-recs.php';
 require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-cost-pages.php';
 VulnHub_AWS_Cost_Pages::init();
+
+/**
+ * How each EC2 instance runs (always on, scheduled, auto-scaling, off), read
+ * from the cost snapshot and the capture, and what that does to its online
+ * dot. See VulnHub_AWS_Run_Profile.
+ */
+require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-run-profile.php';
+VulnHub_AWS_Run_Profile::init();
+
+/**
+ * Serverless entry points: the API Gateway routes and Lambda function URLs
+ * that anyone on the internet can invoke, the function behind each, and what
+ * that function's role can reach. Kept in its own table because
+ * `vh_vulnhub_asset_exposure` is keyed by an asset row and a Lambda function
+ * is not an asset -- writing it there would silently drop every row.
+ */
+require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-serverless.php';
+add_action( 'init', array( 'VulnHub_AWS_Serverless', 'install' ), 5 );
+
+/*
+ * Domain names. Shared on purpose: the serverless card uses it first, but
+ * the same store answers "what is this server called" for the network map
+ * and the asset register, so it does not belong to any one page.
+ */
+require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-domains.php';
+add_action( 'init', array( 'VulnHub_AWS_Domains', 'install' ), 5 );
+
+/*
+ * Operator-supplied names and edge coverage. Not AWS, but they answer the
+ * same question and feed the same store, so they sit beside it.
+ */
+require_once VULNHUB_AWS_DIR . 'includes/class-vh-domain-import.php';
+add_action( 'init', array( 'VulnHub_Domain_Import', 'install' ), 5 );
+require_once VULNHUB_AWS_DIR . 'includes/class-vh-aws-serverless-page.php';
+VulnHub_AWS_Serverless_Page::init();
+
+/*
+ * Internet exposure: the public surface end to end, across DNS, the CDN,
+ * the WAF export and AWS. Loaded after the serverless page because it
+ * borrows that page's icon vocabulary.
+ */
+require_once VULNHUB_AWS_DIR . 'includes/class-vh-internet-exposure-page.php';
+VulnHub_Internet_Exposure_Page::init();

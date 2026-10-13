@@ -21,6 +21,95 @@ if ( ! defined( 'ABSPATH' ) ) {
 final class VulnHub_Dash_Charts {
 
 	/**
+	 * The online dot that sits after a host name.
+	 *
+	 * Drawn from Repo::online_state() so every screen agrees, and titled with
+	 * what was heard and when -- a bare green dot with no explanation is a
+	 * decoration, not a fact. Nothing is drawn when no system has ever heard
+	 * from the machine: an empty space says "we do not know", which is true,
+	 * where a grey dot would say "offline", which we cannot tell.
+	 *
+	 * @param array<string,mixed> $asset Asset row.
+	 */
+	public static function online_dot( array $asset ): string {
+		$state = \VulnHub\Core\Repo::online_state( $asset );
+		$tone  = (string) ( $state['tone'] ?? '' );
+
+		// Nothing has ever heard from it and nothing knows better: no dot.
+		if ( '' === $tone ) {
+			return '';
+		}
+
+		$note = (string) ( $state['note'] ?? '' );
+
+		if ( 'warn' === $tone || 'down' === $tone ) {
+			return sprintf(
+				'<span class="vh-online vh-online--%1$s" title="%2$s"><span class="screen-reader-text">%3$s</span></span>',
+				esc_attr( $tone ),
+				esc_attr( $note ),
+				'down' === $tone ? esc_html__( 'Off', 'vulnhub' ) : esc_html__( 'Stopped', 'vulnhub' )
+			);
+		}
+
+		if ( 'off' === $tone ) {
+			return sprintf(
+				'<span class="vh-online vh-online--off" title="%s" aria-hidden="true"></span>',
+				esc_attr(
+					'' !== $note ? $note : sprintf(
+						/* translators: 1: what heard it, 2: how long ago. */
+						__( 'Last heard from by %1$s %2$s.', 'vulnhub' ),
+						$state['via'],
+						vh_ago( $state['at'] )
+					)
+				)
+			);
+		}
+
+		$title = '' !== $note ? $note : sprintf(
+			/* translators: 1: what heard it, 2: how long ago, 3: the window in hours. */
+			__( 'Online: heard from by %1$s %2$s, inside the %3$s window for this kind of asset.', 'vulnhub' ),
+			$state['via'],
+			vh_ago( $state['at'] ),
+			24 === $state['hours'] ? __( '24-hour', 'vulnhub' ) : __( 'seven-day', 'vulnhub' )
+		);
+
+		return sprintf(
+			'<span class="vh-online vh-online--on" title="%s"><span class="screen-reader-text">%s</span></span>',
+			esc_attr( $title ),
+			esc_html__( 'Online', 'vulnhub' )
+		);
+	}
+
+	/**
+	 * "Online status ?" -- the rule, in the open, next to the thing it governs.
+	 *
+	 * A <details> rather than a tooltip: it works with no JavaScript, it can
+	 * be read on a phone, and the rule is three sentences, which is more than
+	 * a hover should carry.
+	 */
+	public static function online_help(): string {
+		ob_start();
+		?>
+		<details class="vh-online-help">
+			<summary>
+				<span class="vh-online vh-online--on" aria-hidden="true"></span>
+				<?php esc_html_e( 'Online status', 'vulnhub' ); ?>
+				<span class="vh-online-help__q" aria-hidden="true">?</span>
+			</summary>
+			<div class="vh-online-help__body">
+				<p><?php esc_html_e( 'A green dot beside a host name means something that talks to the machine has heard from it recently: a Defender check-in, a Tenable agent connection, an Intune sync, or a completed Tenable scan.', 'vulnhub' ); ?></p>
+				<p><?php esc_html_e( 'Recently means within 24 hours for a server and within seven days for anything else -- a laptop that has not reported since Friday is at the weekend, not missing.', 'vulnhub' ); ?></p>
+				<p><?php esc_html_e( 'A hollow dot means we have heard from it before, but not inside that window. No dot at all means no system has ever reported seeing it -- which is not the same as offline. Hover any dot to see what heard it and when.', 'vulnhub' ); ?></p>
+				<p><?php esc_html_e( 'EC2 instances also follow how AWS says they run. A scheduled instance stays green out of hours if something heard from it during its last scheduled window. Orange means AWS reports it stopped and nothing heard from it in its last window (or it was stopped recently). Red means AWS reports it stopped for more than a week. Nothing is scanned or contacted to decide this.', 'vulnhub' ); ?></p>
+			</div>
+		</details>
+		<?php
+
+		return (string) ob_get_clean();
+	}
+
+
+	/**
 	 * Severity is a semantic-heat scale, so hue never carries it alone: every
 	 * mark also gets its text label, a fixed left-to-right order, and a 2px
 	 * surface gap. See docs/PALETTE.md.

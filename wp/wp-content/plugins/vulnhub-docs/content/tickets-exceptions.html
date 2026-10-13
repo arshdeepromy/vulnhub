@@ -2,14 +2,14 @@
 
 <h2>Tickets — driving remediation</h2>
 
-<p>A <strong>ticket</strong> is a remediation task, tracked in Jira, linked to one or more findings. You can raise one from a finding (or a group of findings), and VulnHub keeps it in step with Jira.</p>
+<p>A <strong>ticket</strong> is a piece of work tracked in Jira. There are two kinds. A <strong>vulnerability ticket</strong> is linked to one or more findings and asks for them to be fixed. An <strong>asset request</strong> is raised from a filtered list on <em>Assets &amp; owners</em> — "get these machines into Tenable", "these CMDB rows have left" — and remembers exactly which assets were on screen, so its page can later say which are done, which are outstanding and which stopped mattering because they were decommissioned. VulnHub keeps both in step with Jira.</p>
 
 <h3>How tickets flow</h3>
 <div class="vh-defs">
-  <div><span class="k">Raise</span><span class="v">From a finding, VulnHub creates a Jira issue (routed to the owning team's project) and links the findings to it. The finding then shows its ticket.</span></div>
+  <div><span class="k">Raise</span><span class="v">From a finding or a selection of findings, VulnHub drafts a Jira issue (routed by <em>Jira routing</em> to the right service desk and team), shows you everything it will send — with the finding list attached as a CSV — and creates it only when you press <em>Send to Jira</em>. The findings then show their ticket. An asset request is raised the same way from <strong>Raise Jira ticket</strong> on the assets list; if you raised it in Jira by hand, <em>I already raised it in JSM</em> records its key against the list without sending anything.</span></div>
   <div><span class="k">Sync</span><span class="v">Ticket status is pulled back from Jira. The <em>Ticket flow</em> widget shows the split by status category — To do / In progress / Done.</span></div>
   <div><span class="k">Reopen</span><span class="v">If a still-detected issue was closed, the reopener flags it — a closed ticket is a <em>claim</em>, not proof.</span></div>
-  <div><span class="k">Verify</span><span class="v">When a ticket closes, VulnHub waits a settling period (<em>Settings → Closure verification delay</em>, so the scanner has time to run again), then re-checks each covered finding against current Tenable data through a vulnerability export narrowed to those plugins. It does not trigger a scan itself.</span></div>
+  <div><span class="k">Verify</span><span class="v">When a ticket closes, VulnHub waits a settling period (<em>Settings → Closure verification delay</em>, default 24 hours, so the scanner has time to run again), then re-checks each covered finding against current Tenable data through a vulnerability export narrowed to those plugins. It does not trigger a scan itself. You can also press <strong>Verify</strong> on a ticket (or <strong>Verify all tickets</strong>) at any time: it reads the ticket's status, assignee and latest comment from Jira and re-checks its findings against what Tenable already holds. Launching a rescan from Verify is off unless it is switched on in the Tenable settings, and even then servers are never rescanned from here. Without anyone pressing it, each ticket is also checked at 10:00 the morning after its assets' scheduled Tenable scan, and on its due date. Tickets already verified fixed are skipped.</span></div>
 </div>
 
 <h3>Verification — "closed" vs "actually fixed"</h3>
@@ -21,13 +21,36 @@
   <div><span class="k">Cannot verify</span><span class="v">The asset has not been rescanned since the ticket closed, so remediation is unproven either way.</span></div>
   <div><span class="k">Not required</span><span class="v">No verification applies to this ticket (for example, it is still open).</span></div>
 </div>
-<p>The dashboard's "Closed but still detected" headline tile counts the <em>still detected</em> tickets — the closures you cannot trust.</p>
+<p>The dashboard's "Closed but still detected" headline tile counts the <em>still detected</em> tickets — the closures you cannot trust. Assets <em>set aside</em> on a ticket (below) are left out of its verdict, and the verdict says how many findings that was.</p>
 
 <h3>The Tickets screen</h3>
-<p>Four tiles (<em>Open</em>, <em>Closed</em>, <em>Awaiting verification</em>, <em>Closed but still detected</em>), filters for Search (key or summary), Status (To do / In progress / Done) and Verification, and a table of Key (opens Jira), Summary, Status, Assignee, Findings and Verification. Tickets are raised from the Vulnerabilities list, either per row or for the selected rows.</p>
+<p>The screen opens with two reports before the list. <strong>Raised vs not raised</strong> shows, per severity, how many open findings on reported assets are already on a ticket and how many are not, with Severity, Patch and Operating-system controls; every segment opens exactly those findings, and a "not raised" number is the quickest way to raise the next batch. The <strong>Ticket report</strong> measures SLA outcome (<em>Met SLA</em>, <em>On track</em>, <em>Closed late</em>, <em>Overdue</em>, <em>No due date</em>), time to resolve and raised vs resolved over the last 12 weeks; its numbers filter the list below. Both export CSV.</p>
+<p>Under <em>All tickets</em> sit four tiles (<em>Open</em>, <em>Closed</em>, <em>Awaiting verification</em>, <em>Closed but still detected</em>), a <strong>For you</strong> strip, <em>Open</em> / <em>Closed</em> / <em>All</em> tabs (Open is the default), filters for Search (key or summary), Status (To do / In progress / Done), Request type and Verification, and a table of Key, Type, Summary, Status, Assigned to, Latest comment, Covers, Verification and Last check. Where a service desk routes by team rather than by person, <em>Assigned to</em> names the team and says so.</p>
+
+<h3>For you — what is waiting on you</h3>
+<p>The <em>For you</em> strip counts open tickets that need something from the person looking, and each count filters the list:</p>
+<div class="vh-defs">
+  <div><span class="k">Mentioned you</span><span class="v">Somebody @mentioned your Jira account, or wrote your name, in a comment, and you have not commented since.</span></div>
+  <div><span class="k">Waiting on your reply</span><span class="v">Somebody has mentioned you since your last comment. Merely being the newest commenter on a ticket you raised is not enough — routing notes and status updates are not asking you anything. Your next comment clears it.</span></div>
+  <div><span class="k">Assigned to you</span><span class="v">The Jira assignee is your account.</span></div>
+  <div><span class="k">Overdue, current list sent</span><span class="v">Past its due date and you have already sent the current list, so the ticket is the other team's to finish and yours to chase. This one is highlighted.</span></div>
+  <div><span class="k">Overdue</span><span class="v">Past its due date, but the current list has not been sent — sending it is the next step.</span></div>
+</div>
+<p>Nothing here calls Jira: the comments were summarised when the ticket was last read. If no Jira account matches your email and name, the strip says so rather than guessing.</p>
+
+<h3>Working a ticket without opening Jira</h3>
+<div class="vh-defs">
+  <div><span class="k">View</span><span class="v">Read the ticket's comments and reply — as an <em>Internal note</em> (only agents see it) or a <em>Reply to customer</em>.</span></div>
+  <div><span class="k">Change status</span><span class="v">Move the ticket to any status its Jira workflow offers from where it is now, with an optional comment posted alongside.</span></div>
+  <div><span class="k">Verify</span><span class="v">Re-check the ticket now (see above). The <em>Last check</em> column shows when it was last checked and what it found, and when the next automatic check is due.</span></div>
+</div>
+<p>A ticket's own page shows its progress bar (findings or assets done out of the total), its findings (filter by Open, Reopened, Fixed, <em>Resolved: out of service</em> or <em>Set aside</em>; group them by asset; pick your columns, which are remembered for you on every ticket) and a <em>By department</em> tab. <strong>Send an updated list to Jira</strong> attaches today's list of what is still open and leaves an internal note saying so.</p>
+
+<h3>Setting assets aside</h3>
+<p>On a ticket's findings grouped by asset, select machines and press <strong>Set aside for this ticket</strong>, choosing <em>Resolved</em> (dealt with another way) or <em>Out of scope</em> (not this ticket's business). Their findings stop counting as outstanding on <em>this</em> ticket only — the same machine stays in scope on every other ticket and everywhere else — and closure verification skips them. <strong>Take back</strong> reverses it.</p>
 
 <h3>SLAs</h3>
-<p>Each team has per-severity SLA targets (by default: Critical 7 days, High 30, Medium 90, Low 180). A finding's <strong>due date</strong> is set from its team's SLA, and the "Past SLA" / "Findings within SLA" figures are computed against it.</p>
+<p>SLA targets are per severity (by default: Critical 7 days, High 30, Medium 90, Low 180). <em>Settings → SLA source</em> decides whether each team's own targets apply (set under Ownership → Teams, the default) or one organisation-wide set. A finding's <strong>due date</strong> is set from those targets, and the "Past SLA" / "Findings within SLA" figures are computed against it. An asset request is due a fixed number of days after it is raised (30 by default).</p>
 
 <h3>Automations</h3>
 <p>Ticket creation can be automated: rules match on finding attributes and raise (grouped) tickets on events, with throttles and per-run caps, so a flood of new findings doesn't create a flood of tickets. Automations are configured in the admin area.</p>
@@ -39,7 +62,7 @@
 <h3>Raising one</h3>
 <p>From a finding, request an exception. You choose:</p>
 <div class="vh-defs">
-  <div><span class="k">Scope</span><span class="v"><strong>This finding</strong> (one finding on one asset), <strong>this asset</strong> (all its findings), <strong>this vulnerability</strong> (across all assets), or <strong>a team</strong> (one vulnerability across a team).</span></div>
+  <div><span class="k">Scope</span><span class="v"><strong>This finding</strong> (one finding on one asset), <strong>this asset</strong> (all its findings), <strong>this vulnerability</strong> (across all assets), <strong>a team</strong> (one vulnerability across a team), or <strong>a bundling application</strong> (every bundled library or file inside one application, now and as found — offered only when the finding is such a component, and from the <em>Request exception</em> control on a product in the <em>By product</em> tab).</span></div>
   <div><span class="k">Reason</span><span class="v">False positive, compensating control, no fix available, business impact, end of life, not exploitable, accepted risk, or other.</span></div>
   <div><span class="k">Justification</span><span class="v">Required, and at least 20 characters — the record an auditor will read.</span></div>
   <div><span class="k">Expiry</span><span class="v">Required by the form, which defaults it to 90 days out; the server rejects a date in the past. Exceptions are temporary, reviewed decisions.</span></div>
@@ -51,6 +74,6 @@
 <p>Tiles for <em>Awaiting approval</em>, <em>Active</em>, <em>Findings suppressed</em> (still tracked, not counted as open) and <em>Expiring in 30 days</em>; a Status filter (Draft, Pending approval, Approved, Rejected, Expired, Revoked); and a table of Ref, Title, Reason, Findings, Status, Requested by and Expires. <em>Find a finding to except</em> takes a requester to the Vulnerabilities list.</p>
 
 <h3>The lifecycle of an exception</h3>
-<p>An exception moves <em>draft → pending → approved</em> (or <em>rejected</em>). Approval requires the approver capability. On approval it stamps the matching open findings, which immediately drop out of the live counts (a separate "excepted" figure keeps them visible). Each night, approved exceptions past their expiry flip to <em>expired</em> and their findings return to the counts — which is what the <em>Exceptions expiring</em> widget is warning you about. <strong>Revoking</strong> one clears its findings straight away. Every exception carries a reference (<code>EXC-0001</code>, …) so decisions are citable.</p>
+<p>An exception moves <em>draft → pending → approved</em> (or <em>rejected</em>). Approval requires the approver capability. On approval it stamps the matching open findings, which immediately drop out of the live counts (a separate "excepted" figure keeps them visible). New findings that match an active exception's scope — the next scan's copy of the same vulnerability, say — are covered too, after every sync and every night. Each night, approved exceptions past their expiry flip to <em>expired</em> and their findings return to the counts — which is what the <em>Exceptions expiring</em> widget is warning you about. <strong>Revoking</strong> one clears its findings straight away. Every exception carries a reference (<code>EXC-0001</code>, …) so decisions are citable.</p>
 
 <div class="vh-note"><p><strong>Why this matters for the numbers.</strong> An excepted finding is not deleted and not ignored — it is <em>accounted for</em>. That is the difference between a dashboard you can defend in an audit and one you can't. See <a href="?doc=lifecycle">Finding lifecycle &amp; scoping</a> for exactly how exceptions interact with counts.</p></div>

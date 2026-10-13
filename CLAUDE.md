@@ -1,6 +1,6 @@
 # VulnHub — working notes for Claude
 
-Vulnerability, asset and ownership intelligence, built as ~19 WordPress plugins
+Vulnerability, asset and ownership intelligence, built as WordPress plugins
 on a Docker Compose stack. `README.md` covers installing it. This file covers
 **changing** it: the shape of the codebase, the rules that are not obvious from
 reading it, and what "done" means here.
@@ -13,30 +13,38 @@ obvious version was tried first and broke something.
 
 | Plugin | Owns |
 |---|---|
-| `vulnhub-core` | Data model, `Repo`, connector base class, settings + encrypted secrets, scheduler, EOL/OS/vendor/product vocabularies, `VH_Action` |
+| `vulnhub-core` | Data model and schema, `Repo`, `Tickets`, connector base class, settings + encrypted secrets, scheduler, caps/roles, the `vulnhub/v1` REST API, EOL/OS/vendor/product vocabularies, `VH_Action` |
 | `vulnhub-dashboard` | The whole front end: portal shell, views, widgets, filters, CSV export |
-| `vulnhub-tenable`, `-intune`, `-cmdb`, `-jira`, `-aws`, `-plerion`, `-departments` | Connectors to outside systems |
+| `vulnhub-tenable`, `-intune`, `-cmdb`, `-jira`, `-aws`, `-plerion`, `-checkpoint`, `-departments` | Connectors to outside systems |
 | `vulnhub-import` | Streaming, resumable, de-duplicating CSV import |
 | `vulnhub-eos`, `-hosting`, `-rules`, `-threat`, `-alerts` | Analysis layered on the model |
 | `vulnhub-auth`, `-backup`, `-docs`, `-elementor`, `-mcp` | Platform services |
+| `vulnhub-replica` | Instance sync: one instance keeps a read-only copy of another, by sync key, as chunked packages of what changed; copy mode stops the copy acting on any real system |
 
 | Doc | When |
 |---|---|
-| `docs/CORE-API.md` | **Before writing any integration.** Data model, `Repo`, connector contract |
+| `docs/CORE-API.md` | **Before writing any integration.** Data model, `Repo`, connector contract, hooks, cron events, REST routes, caps, schema |
 | `docs/PORTAL.md` | Front end: request path, views, widgets, filter vocabulary |
 | `docs/FILTERS.md` | Every number is a promise that clicking it gives exactly those rows |
 | `docs/JIRA-OAUTH.md` | Jira OAuth 3LO connect flow, token refresh, the write allowlist, JSM requests and attachments |
 | `docs/TICKETS.md` | Vulnerability vs scope tickets, the Raise Jira ticket dialog, per-asset outcomes, JSM readiness |
 | `docs/SYNC.md` | Staged sync: download → process → finalize, watermarks, resumability |
 | `docs/CMDB-ASSETS.md` | Jira Assets/AQL back end, attribute mapping, per-object-type mapping |
-| `docs/COVERAGE.md`, `docs/LIFECYCLE.md` | What "not scanned" and "in service" mean, and to which assets |
+| `docs/COVERAGE.md` | What "not scanned" means, which assets it is asked about, and what the Intune/CMDB imports now carry so the answer holds |
+| `docs/LIFECYCLE.md` | Patch availability and end of life: "can this be fixed?", the checked-in EOL table, Windows matched by build |
 | `docs/PLERION.md` | Cloud posture: cloud assets, CSPM findings kept out of the vulnerability model, the exposure map |
+| `docs/CHECKPOINT.md` | Check Point firewall policy: the read-only guarantees, what a run reads, how internet exposure is worked out from rules and NAT, and where it feeds the threat context |
+| `docs/CONTROL-GAPS.md` | The cross-account grouping key on Plerion findings, and the Control gaps page: repeated causes, thresholds, suggested control layers |
 | `docs/AWS-NETWORK.md` | AWS SSO device login, what the network capture stores, and how the Cloud Network map is built |
 | `docs/AWS-COST.md` | AWS cost snapshot (Cost Explorer, CloudWatch, Price List), the confirmed / needs-confirmation savings rules, and shared decisions |
 | `docs/APPSTREAM.md` | AppStream duplicate cleanup: detecting one-shot streaming assets and deleting them through Tenable |
 | `docs/EOS.md`, `docs/ATTACK-PATHS.md` | Retirement programme; reachability |
+| `docs/ELEMENTOR.md` | `vulnhub-elementor`: VulnHub widgets for Elementor, and the portal header/footer handed to the Theme Builder |
+| `docs/REPLICATION.md` | Instance sync: sync keys, fingerprints, the package/chunk/apply cycle, what never travels, and the copy-mode guards |
 | `docs/BROWSER-PASS.md` | How to actually drive the product in a browser |
 | `docs/PALETTE.md`, `docs/PERFORMANCE.md`, `docs/BACKUP.md` | Colour record, measured timings, backup/restore |
+| `docs/LOADTEST.md` | Measured CSV import runs against large generated Tenable fixtures |
+| `docs/security-scan-2026-09-09.md`, `docs/product-detection-2026-09-09.md`, `docs/in-service-scoping-brief.md` | Point-in-time records (a security scan, a product-detection analysis, a task brief). History, not current behaviour |
 
 ## Rules that cost us something to learn
 

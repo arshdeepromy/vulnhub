@@ -663,6 +663,11 @@ final class VulnHub_Backup_Runner {
 					if ( str_contains( (string) $file->getPathname(), '/uploads/vulnhub-backup/' ) ) {
 						continue;
 					}
+					// Ticket attachments are a cache of the ticketing system's
+					// files, fetched again on demand -- not data this site owns.
+					if ( str_contains( (string) $file->getPathname(), '/uploads/vulnhub-attachments/' ) ) {
+						continue;
+					}
 					$file_list[] = $file->getPathname();
 				}
 			}

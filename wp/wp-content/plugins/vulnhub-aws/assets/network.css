@@ -273,6 +273,41 @@
 	min-width: 0; padding: 9px 18px; border-radius: 999px;
 	background: rgba( 56, 189, 248, .10 ); border-color: rgba( 56, 189, 248, .34 );
 }
+/*
+ * A destination with detail. Closed it stays a pill with the button beside
+ * the name; open it turns into a panel, the detail on its own row below.
+ */
+.vh-estate-card--dest .vh-estate-disc { margin-top: 0; }
+.vh-estate-card--dest.is-open {
+	flex-wrap: wrap; align-items: center;
+	width: min( 560px, 100% ); max-width: none;
+	border-radius: 16px; padding: 12px 16px 14px;
+	z-index: 3;
+	/* Opaque when open: the connectors run behind this card, and through a
+	 * translucent tint they read as strike-throughs on the text. */
+	background: linear-gradient( rgba( 167, 139, 250, .10 ), rgba( 167, 139, 250, .10 ) ), var( --vh-raised-solid, #0e1526 );
+}
+.vh-estate-card--dest.is-open .vh-estate-disc { flex: 1 0 100%; margin-top: 4px; }
+.vh-estate-card--dest.is-open .vh-estate-disc__btn { margin-left: 33px; }
+.vh-estate-dest-grid {
+	display: grid; grid-template-columns: minmax( 120px, 34% ) 1fr;
+	gap: 9px 14px; margin: 10px 0 0; padding-top: 10px;
+	border-top: 1px solid rgba( 148, 163, 184, .18 );
+	font-size: 12px; line-height: 1.45; cursor: auto;
+}
+.vh-estate-dest-grid dt { color: var( --vh-muted, #94a3b8 ); margin: 0; }
+.vh-estate-dest-grid dd { margin: 0; min-width: 0; }
+.vh-estate-dest-line { display: block; overflow-wrap: anywhere; }
+.vh-estate-dest-line + .vh-estate-dest-line { margin-top: 2px; }
+.vh-estate-dest-note {
+	margin-top: 12px !important; padding-top: 10px;
+	border-top: 1px solid rgba( 148, 163, 184, .14 );
+}
+@media ( max-width: 640px ) {
+	.vh-estate-dest-grid { grid-template-columns: 1fr; gap: 2px; }
+	.vh-estate-dest-grid dd { margin-bottom: 8px; }
+	.vh-estate-card--dest.is-open .vh-estate-disc__btn { margin-left: 0; }
+}
 .vh-estate-card--onprem { background: rgba( 167, 139, 250, .10 ); border-color: rgba( 167, 139, 250, .34 ); }
 .vh-estate-card--firewall { border-color: rgba( 52, 211, 153, .40 ); box-shadow: inset 0 1px 0 rgba( 52, 211, 153, .12 ); }
 .vh-estate-card--igw      { border-color: rgba( 248, 113, 113, .40 ); }

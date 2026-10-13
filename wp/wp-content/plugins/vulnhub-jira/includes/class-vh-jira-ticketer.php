@@ -144,6 +144,73 @@ final class VulnHub_Jira_Ticketer {
 		add_filter( 'vulnhub_ticket_transitions', array( $this, 'ticket_transitions' ), 10, 2 );
 		add_filter( 'vulnhub_apply_ticket_transition', array( $this, 'apply_ticket_transition' ), 10, 5 );
 		add_filter( 'vulnhub_refresh_ticket_attachment', array( $this, 'refresh_attachment' ), 10, 3 );
+		add_filter( 'vulnhub_ticket_attachments', array( $this, 'ticket_attachments' ), 10, 3 );
+		add_filter( 'vulnhub_ticket_attachment_bytes', array( $this, 'ticket_attachment_bytes' ), 10, 4 );
+		add_filter( 'vulnhub_ticket_own_account', array( $this, 'own_account' ) );
+	}
+
+	/**
+	 * Answer `vulnhub_ticket_attachments`: the files on a ticket.
+	 *
+	 * Without `$fresh` this is what the last poll stored, and costs nothing.
+	 * With it, Jira is asked now and the row is updated -- the refresh
+	 * button, for a file somebody has only just added.
+	 *
+	 * @param array<string,mixed>|null $result Result from an earlier ITSM plugin.
+	 * @param array<string,mixed>      $ticket Ticket row.
+	 * @return array<string,mixed>|null
+	 */
+	public function ticket_attachments( ?array $result, array $ticket, bool $fresh = false ): ?array {
+		if ( null !== $result ) {
+			return $result;
+		}
+
+		$connector = vulnhub_jira_connector();
+
+		if ( ! $connector || 'jira' !== (string) ( $ticket['provider'] ?? '' ) ) {
+			return null;
+		}
+
+		if ( ! $fresh ) {
+			return array( 'ok' => true, 'message' => '', 'attachments' => \VulnHub\Core\Tickets::attachments( $ticket ) );
+		}
+
+		return $connector->attachments( (string) ( $ticket['external_key'] ?? '' ), (int) $ticket['id'] );
+	}
+
+	/**
+	 * Answer `vulnhub_ticket_attachment_bytes`: one file's contents.
+	 *
+	 * @param array<string,mixed>|null $result     Result from an earlier ITSM plugin.
+	 * @param array<string,mixed>      $ticket     Ticket row.
+	 * @param array<string,mixed>      $attachment One entry from Tickets::attachments().
+	 * @return array<string,mixed>|null
+	 */
+	public function ticket_attachment_bytes( ?array $result, array $ticket, array $attachment, int $cap = 0 ): ?array {
+		if ( null !== $result ) {
+			return $result;
+		}
+
+		$connector = vulnhub_jira_connector();
+
+		if ( ! $connector || 'jira' !== (string) ( $ticket['provider'] ?? '' ) ) {
+			return null;
+		}
+
+		return $connector->attachment_bytes( (string) ( $attachment['id'] ?? '' ), (int) ( $attachment['size'] ?? 0 ), max( 1, $cap ) );
+	}
+
+	/**
+	 * Answer `vulnhub_ticket_own_account`: the account this site acts as.
+	 */
+	public function own_account( string $id = '' ): string {
+		if ( '' !== $id ) {
+			return $id;
+		}
+
+		$connector = vulnhub_jira_connector();
+
+		return $connector ? $connector->own_account_id() : '';
 	}
 
 	/**

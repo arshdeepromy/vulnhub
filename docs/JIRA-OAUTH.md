@@ -60,7 +60,8 @@ refresh token and the connection stops working an hour after connecting.
    - Stores both tokens encrypted.
    - Picks the `cloudId` from `GET /oauth/token/accessible-resources`: the
      resource whose URL matches the configured site, or the only resource if no
-     site is set. When several sites come back and none matches, it
+     site is set (or it is still the `yoursite.atlassian.net` placeholder).
+     When several sites come back and none matches, it
      **refuses** rather than guessing.
    - Reads `/myself` through the gateway to record who connected.
 3. **Use.** `access_token()` refreshes when fewer than 60 seconds remain.
@@ -106,7 +107,11 @@ It is enforced in `VulnHub_Jira_Client::call()`, the one method every request
 goes through, including in mock mode. No caller can bypass it: not the ticketer,
 reopener, automation, routing, or anything added later.
 
-- **Reads** are never refused.
+- **Reads** are never refused. That includes the enhanced JQL search
+  (`POST /rest/api/3/search/jql`), which is a read sent as a POST and is named
+  in `READ_ONLY_POSTS`. The allowlist once treated it as a write it could not
+  place, refused it, and every ticket-status poll came back "not returned".
+  Only exact paths on that list are exempt.
 - **Writes** are checked against the project they target:
   - `POST /issue`: `fields.project.key`, or the project looked up from its id.
   - `POST /servicedeskapi/request` and `/servicedesk/{id}/…`: the desk's
@@ -156,6 +161,11 @@ arriving together would both find nothing open and both create an issue.
 - **A lock older than 120 seconds belongs to a raise that died,** so it is taken
   over rather than blocking for ever.
 
+A reviewed raise from the screen (`send_draft()`, see `docs/TICKETS.md`) takes
+one site-wide lock of the same kind (group key `manual-raise`), so a second
+Send while one is in flight is refused with "Another ticket is being raised
+right now."
+
 ## Client methods added
 
 | Method | Endpoint |
@@ -170,6 +180,26 @@ arriving together would both find nothing open and both create an issue.
 Core's `Http` JSON-encodes array bodies, so uploads build the multipart body as
 a string, which `Http` sends as-is. The mock site answers all of these.
 
+`request_comment()` is what the ticket page's comment box uses
+(`VulnHub_Jira_Connector::post_comment()`), because only the service desk API
+can mark a comment internal. On a 404 (the issue is not a service desk
+request) a public reply falls back to `comment()` on the issue API, and an
+internal note is refused rather than posted where the customer can read it.
+`request_attach()` and `create_request()` have no caller yet.
+
+## Mock mode
+
+With the connector in mock mode (`is_mock()`: the connector's own `mock`
+setting, else the platform's), `client()` is wired to `VulnHub_Jira_Mock`, a
+simulated Jira Cloud site. It is a fake transport, not canned answers:
+`respond()` takes the method, path, query and body the live client would have
+sent and returns a response shaped like the real API, so normalisation,
+persistence, ADF and remote links run exactly as they do live. Its state
+(issues keyed per project, comments, links, transitions, attachments) is kept
+in the Jira connector setting `mock_state`, and issues move through To Do, In
+Progress and Done on a fixed pace. The project allowlist is checked before the
+mock answers, so it can be tested without a live site.
+
 ## Not done yet
 
 - The ticketer still raises issues through `POST /rest/api/3/issue`, with the
@@ -177,4 +207,5 @@ a string, which `Http` sends as-is. The mock site answers all of these.
   `create_request()` would keep the JSM portal, request type and SLAs, but it
   changes which fields can be set (labels, priority and due date are not all
   request fields), so it is a separate change.
-- No MCP tools for raise, get, comment and attach yet.
+- No MCP tools for raise, get, comment and attach yet. The MCP server's only
+  ticket tool, `vulnhub_list_tickets`, reads VulnHub's own records.

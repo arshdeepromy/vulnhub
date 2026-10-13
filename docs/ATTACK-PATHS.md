@@ -115,18 +115,27 @@ So they are not counted there. They move to the *inside* lane, where they can
 genuinely be used, and the widget says so on the card rather than quietly
 dropping them.
 
-Which assets count as reachable is a setting (**Threat context → Which assets
-the internet can reach**):
+Which assets count as reachable is a setting (`vulnhub_threat_exposure_rule`,
+**Threat context → Which assets the internet can reach**):
 
 | Rule | Matches |
 |---|---|
-| `servers_and_cloud` *(default)* | servers, cloud instances, and anything tagged `internet-facing`, `dmz`, `public-facing`, `edge` or `perimeter` — **175 assets** here |
+| `observed` *(default in code)* | evidence only: a reachability tag; what the cloud connector says is reachable (`vulnhub_cloud_reachable_assets`, filled by `vulnhub-aws` from the network map and the live reachability walk); a public address; or the scanner saw it listening on a web or mail service. Being typed `server` earns nothing |
+| `servers_and_cloud` | servers, cloud instances, and anything tagged `internet-facing`, `dmz`, `public-facing`, `edge` or `perimeter` — **175 assets** here (when it was the rule) |
 | `cloud_only` | cloud instances only |
 | `tagged` | only the tags. Strictest, and where to move once tagging is trustworthy |
 | `all` | assume no perimeter at all |
 
+The settings screen lists only the last four and still labels
+`servers_and_cloud` "(default)"; with the option unset the code uses
+`observed`, and no radio button shows as selected.
+
 Verdicts live in `vulnhub_asset_exposure` with a `source` column. A rule pass
-rewrites its own decisions and leaves anything marked `manual` alone.
+rewrites its own decisions and leaves anything marked `manual` alone. Each
+verdict also records its `basis` — `evidence`, `ruled_out` (looked, nothing
+published), `unknown` (never scanned) or `asserted` (by rule) — because a "no"
+that means "checked" and a "no" that means "nobody looked" are different
+answers; the widget counts unscanned servers separately.
 
 ---
 
@@ -187,7 +196,7 @@ triage, so it is the first thing each row says, and it sets the tier:
 | **Review** | every other vulnerable service with a way in |
 
 Each row also says whether it is **already raised**: the tickets its findings
-are on, each linking to its ticket page with its status ("SD-… · To Do"),
+are on, each linking to its ticket page with its status ("ABC-123 · To Do"),
 "N of M raised" when only some are, and *Not raised* otherwise. The CSV carries
 the same as *On a ticket* and *Tickets*.
 
@@ -302,8 +311,10 @@ CSV agree (review 12 / 12 / 12, latent 14 / 14 / 14).
 | `vulnhub_cve_intel` | 13,239 | one row per CVE: vector, KEV, EPSS, route |
 | `vulnhub_vuln_paths` | 11,746 | one row per scanner definition: rolled-up route and evidence |
 | `vulnhub_asset_exposure` | 848 | one row per asset: can the internet reach it, and why |
+| `vulnhub_asset_ports` | — | what each host reported listening (port, protocol, remote, service), rebuilt after a Tenable sync |
 
-All three belong to `vulnhub-threat`. Nothing in core's schema changes, so
+All four belong to `vulnhub-threat` (schema `vulnhub_threat_db_version`,
+currently `1.3.0`). Nothing in core's schema changes, so
 deactivating the plugin leaves the estate data exactly as it was.
 
 The one exception is deliberate and switchable: with **"write the verdict back
@@ -318,11 +329,11 @@ is correct, because the vendor's answer should beat an inference.
 
 ```bash
 ./wp.sh vulnhub threat status      # feed freshness and coverage
-./wp.sh vulnhub threat refresh     # download everything and re-place (~3 min)
+./wp.sh vulnhub threat refresh     # download everything and re-place (~3 min); --force re-downloads
 ./wp.sh vulnhub threat classify    # re-place from what is already downloaded
 ```
 
-`refresh` is also a daily cron event. It runs in the **cron container**, not
+`refresh` is also a daily cron event (`vulnhub_threat_refresh`). It runs in the **cron container**, not
 in a web request: it downloads ~100 MB and rewrites 13,000 rows, which is
 minutes of work with no timeout over it. The "Download the feeds again now"
 button queues the event rather than doing the work inline, so the worst a
@@ -353,5 +364,17 @@ what makes `?route=edge&poc=1` work, and what makes every number on the widget
 land on exactly the rows it counted. A number you cannot click is a number
 nobody can act on.
 
-The dashboard's findings screen passes `route` and `poc` through from the
-query string. Both are inert when this plugin is not active.
+The dashboard's findings screen passes `route` (`edge`, `maybe`, `inside`,
+`user`), `delivery` (`mail`, `web`, `file` — one door of the user
+lane, which wins over `route`), `poc` and `expo` through from the query string.
+All are inert when this plugin is not active.
+
+
+## Firewall policy as evidence
+
+`vulnhub-checkpoint` adds ways in read from Check Point access and NAT rules
+to `vulnhub_internet_paths` and reasons to `vulnhub_cloud_reachable_assets`,
+both merged with (not replacing) what `vulnhub-aws` supplies. Its ways carry
+`firewall: policy` and `via: direct|nat`; the widget labels both. A rule-read
+door ranks with an inspected one in `firewall_of()`, and `way_rank()` orders
+`direct`, `nat`, `lb`, `observed`. See `docs/CHECKPOINT.md`.

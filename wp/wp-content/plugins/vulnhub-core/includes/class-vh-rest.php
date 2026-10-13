@@ -239,6 +239,42 @@ final class Rest {
 			)
 		);
 
+		/*
+		 * Attachments. All three are view-level: reading a ticket's files is
+		 * reading the ticket. The list is what the last poll stored unless
+		 * `fresh` asks Jira now; the file and its preview are fetched once
+		 * and then served from this site's own copy.
+		 */
+		register_rest_route(
+			self::NS,
+			'/tickets/(?P<id>\d+)/attachments',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'ticket_attachments' ),
+				'permission_callback' => array( $this, 'can_view' ),
+			)
+		);
+
+		register_rest_route(
+			self::NS,
+			'/tickets/(?P<id>\d+)/attachments/(?P<att>[A-Za-z0-9_-]+)/preview',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'ticket_attachment_preview' ),
+				'permission_callback' => array( $this, 'can_view' ),
+			)
+		);
+
+		register_rest_route(
+			self::NS,
+			'/tickets/(?P<id>\d+)/attachments/(?P<att>[A-Za-z0-9_-]+)/file',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'ticket_attachment_file' ),
+				'permission_callback' => array( $this, 'can_view' ),
+			)
+		);
+
 		register_rest_route(
 			self::NS,
 			'/exceptions',
@@ -877,6 +913,131 @@ final class Rest {
 		}
 
 		return new WP_REST_Response( $result );
+	}
+
+	/**
+	 * The files on a ticket, newest first, ready for the page.
+	 */
+	public function ticket_attachments( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$ticket = Tickets::get( (int) $request['id'] );
+
+		if ( ! $ticket ) {
+			return new WP_Error( 'vulnhub_not_found', __( 'Ticket not found.', 'vulnhub' ), array( 'status' => 404 ) );
+		}
+
+		$fresh = in_array( $request->get_param( 'fresh' ), array( true, 1, '1', 'true', 'yes' ), true );
+
+		/**
+		 * Filters reading the files on one ticket.
+		 *
+		 * @param array<string,mixed>|null $result {ok, message, attachments}.
+		 * @param array<string,mixed>      $ticket Ticket row.
+		 * @param bool                     $fresh  Ask the ticketing system now.
+		 */
+		$result = apply_filters( 'vulnhub_ticket_attachments', null, $ticket, $fresh );
+
+		if ( null === $result ) {
+			return new WP_Error( 'vulnhub_no_itsm', __( 'No ticketing integration is active.', 'vulnhub' ), array( 'status' => 409 ) );
+		}
+
+		return new WP_REST_Response( self::described_attachments( $ticket, (array) $result ) );
+	}
+
+	/**
+	 * Decorate a list result for the page -- shared with the ticket page's
+	 * first render so the two cannot drift.
+	 *
+	 * @param array<string,mixed> $ticket Ticket row.
+	 * @param array<string,mixed> $result {ok, message, attachments}.
+	 * @return array<string,mixed>
+	 */
+	public static function described_attachments( array $ticket, array $result ): array {
+		/** Filters the ticketing account this site acts as. */
+		$own  = (string) apply_filters( 'vulnhub_ticket_own_account', '' );
+		$sent = Tickets::list_sent( $ticket );
+		$file = is_array( $sent ) ? (string) ( $sent['file'] ?? '' ) : '';
+
+		$result['attachments'] = array_map(
+			static fn( $a ): array => Attachments::describe( (int) $ticket['id'], (array) $a, $own, $file ),
+			(array) ( $result['attachments'] ?? array() )
+		);
+		$result['fetch_cap'] = size_format( Attachments::fetch_cap() );
+
+		return $result;
+	}
+
+	/**
+	 * Resolve `{id}/attachments/{att}` to the ticket and the file, or an error.
+	 *
+	 * @return array{0:array<string,mixed>,1:array<string,mixed>}|WP_Error
+	 */
+	private function attachment_target( WP_REST_Request $request ): array|WP_Error {
+		$ticket = Tickets::get( (int) $request['id'] );
+
+		if ( ! $ticket ) {
+			return new WP_Error( 'vulnhub_not_found', __( 'Ticket not found.', 'vulnhub' ), array( 'status' => 404 ) );
+		}
+
+		$att = Tickets::attachment( $ticket, (string) $request['att'] );
+
+		if ( ! $att ) {
+			return new WP_Error( 'vulnhub_not_found', __( 'That file is not on this ticket. Refresh the list of attachments.', 'vulnhub' ), array( 'status' => 404 ) );
+		}
+
+		return array( $ticket, $att );
+	}
+
+	/**
+	 * What the preview pop-up shows for one file.
+	 */
+	public function ticket_attachment_preview( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$target = $this->attachment_target( $request );
+
+		if ( $target instanceof WP_Error ) {
+			return $target;
+		}
+
+		[ $ticket, $att ] = $target;
+		$name             = (string) ( $att['filename'] ?? '' );
+
+		// Nothing to fetch for a file that cannot be previewed anyway: say
+		// so straight away and leave the download to the button.
+		$kind = Attachments::kind( $name, (string) ( $att['mime'] ?? '' ) );
+
+		if ( 'none' === $kind ) {
+			return new WP_REST_Response( Attachments::preview( '', $name ) );
+		}
+
+		$local = Attachments::local( $ticket, $att );
+
+		if ( ! $local['ok'] ) {
+			return new WP_REST_Response( array( 'ok' => false, 'kind' => 'none', 'name' => $name, 'message' => $local['message'] ) );
+		}
+
+		return new WP_REST_Response( Attachments::preview( $local['path'], $name, (string) ( $att['mime'] ?? '' ) ) );
+	}
+
+	/**
+	 * The file itself -- inline for the kinds the preview shows inline,
+	 * otherwise (and with `download`) as a download. Does not return.
+	 */
+	public function ticket_attachment_file( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$target = $this->attachment_target( $request );
+
+		if ( $target instanceof WP_Error ) {
+			return $target;
+		}
+
+		[ $ticket, $att ] = $target;
+		$local            = Attachments::local( $ticket, $att );
+
+		if ( ! $local['ok'] ) {
+			return new WP_Error( 'vulnhub_attachment', $local['message'], array( 'status' => 502 ) );
+		}
+
+		Attachments::stream( $local['path'], (string) ( $att['filename'] ?? 'attachment' ), in_array( $request->get_param( 'download' ), array( 1, '1', 'true' ), true ) );
+
+		return new WP_REST_Response( null, 204 );
 	}
 
 	/**

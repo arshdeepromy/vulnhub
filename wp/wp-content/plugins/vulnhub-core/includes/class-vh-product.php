@@ -33,6 +33,9 @@ final class VH_Product {
 	public const OS_WINDOWS = 'os_windows';
 	public const THIRD      = 'third_party';
 
+	/** One product for every Defender plugin, whatever Tenable calls it. */
+	public const DEFENDER   = 'Microsoft Defender';
+
 	/**
 	 * Classify one vulnerability.
 	 *
@@ -45,6 +48,14 @@ final class VH_Product {
 
 		if ( self::is_linux( $title, $family ) ) {
 			return self::pack( self::OS_LINUX, self::linux_group( $title, $family ), 'os_package', self::linux_package( $title ) );
+		}
+		// Ahead of the Windows test: Defender is fixed through its own channel
+		// (antimalware platform, engine, signatures), not a Windows KB, and
+		// its signature check alone is ~180 findings a day -- inside "Windows /
+		// Microsoft updates" it buried the KB work and could not be ticketed
+		// apart from it.
+		if ( self::is_defender( $title ) ) {
+			return self::pack( self::THIRD, self::DEFENDER, 'application', '' );
 		}
 		if ( self::is_windows( $title, $family ) ) {
 			return self::pack( self::OS_WINDOWS, 'Windows / Microsoft updates', 'os_update', '' );
@@ -97,6 +108,17 @@ final class VH_Product {
 			return strtolower( $m[1] );
 		}
 		return '';
+	}
+
+	/**
+	 * Microsoft Defender in any of Tenable's spellings: "Windows Defender
+	 * Antimalware/Antivirus Signature Definition Check", "Security Updates for
+	 * Windows Defender (...)", "Windows Defender < 4.18... DoS", "Security
+	 * Updates for Microsoft Malware Protection Engine", "Microsoft Defender
+	 * for Endpoint ...", and KB titles for the antimalware platform.
+	 */
+	private static function is_defender( string $t ): bool {
+		return (bool) preg_match( '/\b(?:Windows|Microsoft) Defender\b|\bMalware Protection Engine\b|\bAntimalware (?:Platform|Engine)\b/i', $t );
 	}
 
 	private static function is_windows( string $t, string $fam ): bool {
@@ -819,7 +841,16 @@ final class VH_Product {
 	 * "https://host/x" matches at "s://host/x" and every URL in the output
 	 * gets reported as an install path.
 	 */
-	private const ANY_PATH_RE = '#(?:(?<![A-Za-z])[A-Za-z]:[\\\\/]+[^\r\n]+)|(?:/(?:home|root|Users|opt|usr|var|srv|etc)/[^\r\n]+)#i';
+	private const ANY_PATH_RE = '#(?:(?<![A-Za-z])[A-Za-z]:[\\\\/]+[^\r\n]+)|(?:(?<![\w:./\\\\])/[\w.+@$~-]+/[^\r\n]*)#i';
+
+	/**
+	 * The labels a scanner puts an install path behind.
+	 *
+	 * "Path" covers "Install path" too, since the match is not anchored;
+	 * "Oracle Home" is its own label and was the one carrying every Oracle
+	 * and WebLogic path on this estate.
+	 */
+	private const PATH_LABEL_RE = '/(?:Path|Oracle Home|Location|Directory)\s*:\s*([^\r\n]+)/i';
 
 	/**
 	 * Trim a path captured to end-of-line back to just the path.
@@ -859,6 +890,126 @@ final class VH_Product {
 	}
 
 	/**
+	 * The package a finding is about, with the version found and the version
+	 * that fixes it, out of the plugin output.
+	 *
+	 * A distribution's package checks report no file path at all -- there is
+	 * nothing to point at, because the fix is "update this package" -- so on
+	 * a Linux estate the Install path column was empty on almost every row
+	 * and looked like data we had failed to import. The output does carry
+	 * the answer, in one of two shapes:
+	 *
+	 *     Name : openssh-server   Version : 8.7p1-49.el9_7   Fixed version : 9.9p1-9.el9_8
+	 *     Remote package installed : curl-7.76.1-35.el9_7.3
+	 *
+	 * Returns name, installed and fixed; each may be ''.
+	 *
+	 * @return array{name:string,installed:string,fixed:string}
+	 */
+	public static function package_evidence( string $output ): array {
+		$out = array( 'name' => '', 'installed' => '', 'fixed' => '' );
+
+		if ( '' === $output ) {
+			return $out;
+		}
+
+		$text = self::normalise_output( $output );
+		$one  = static fn( string $re ): string => preg_match( $re, $text, $m ) ? self::trim_field( $m[1] ) : '';
+
+		$out['name']      = $one( '/(?<![\w-])Name\s*:\s*([^\r\n]+)/i' );
+		$out['installed'] = $one( '/Installed version\s*:\s*([^\r\n]+)/i' );
+		$out['fixed']     = $one( '/Fixed version\s*:\s*([^\r\n]+)/i' );
+
+		// The multi-field shape labels the installed version plainly "Version".
+		if ( '' === $out['installed'] ) {
+			$out['installed'] = $one( '/(?<![\w-])Version\s*:\s*([^\r\n]+)/i' );
+		}
+
+		// "Remote package installed : curl-7.76.1" is name and version in one.
+		if ( '' === $out['name'] && '' === $out['installed'] ) {
+			$pkg = $one( '/Remote package installed\s*:\s*([^\r\n]+)/i' );
+
+			if ( '' !== $pkg ) {
+				$out['name'] = $pkg;
+			}
+		}
+
+		/*
+		 * The distro-CVE plugins ("Linux Distros Unpatched Vulnerability")
+		 * name no single package. They list every package on the host the
+		 * CVE touches, one per line:
+		 *
+		 *     The following packages were identified as being present ...
+		 *       - bind9-host_1:9.18.39-0ubuntu0.24.04.7
+		 *       - bind9-libs_1:9.18.39-0ubuntu0.24.04.7
+		 *
+		 * That list is the only evidence these carry, and it is the largest
+		 * family on a Linux estate, so it is worth naming rather than
+		 * leaving the row blank. The first few, and how many more.
+		 */
+		if ( '' === $out['name'] && '' === $out['installed']
+			&& preg_match_all( '/^\s*-\s*([A-Za-z0-9][\w.+-]*)/m', $text, $mm )
+		) {
+			$names = array_values( array_unique( $mm[1] ) );
+			$shown = array_slice( $names, 0, 3 );
+			$more  = count( $names ) - count( $shown );
+
+			$out['name'] = implode( ', ', $shown );
+
+			if ( $more > 0 ) {
+				/* translators: %d: how many more packages. */
+				$out['name'] .= ' ' . sprintf( _n( '+%d more', '+%d more', $more, 'vulnhub' ), $more );
+			}
+		}
+
+		return $out;
+	}
+
+	/**
+	 * One line of evidence for a finding: where the vulnerable copy is, or
+	 * failing that which package and version was found.
+	 *
+	 * The order is the useful one. A path is the most specific thing a
+	 * scanner can say, and where there is none it is because the check is
+	 * about a package rather than a file -- in which case the version found
+	 * and the version that fixes it is the answer to the same question.
+	 * Empty only when the output says neither.
+	 */
+	public static function evidence_text( string $output ): string {
+		$path = self::install_path( $output );
+
+		if ( '' !== $path ) {
+			return $path;
+		}
+
+		$e = self::package_evidence( $output );
+
+		if ( '' === $e['name'] && '' === $e['installed'] ) {
+			return '';
+		}
+
+		$out = trim( $e['name'] . ' ' . $e['installed'] );
+
+		if ( '' !== $e['fixed'] ) {
+			$out .= " \u{2192} " . $e['fixed'];
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Trim one labelled value back to itself, dropping a following
+	 * "Label : value" the single-line format ran onto the same line.
+	 */
+	private static function trim_field( string $value ): string {
+		$value = trim( $value );
+		$value = (string) preg_split( '/\s{2,}/', $value )[0];
+		$value = (string) preg_replace( '/\s+[A-Z][A-Za-z ]{2,24}\s*:.*$/', '', $value );
+
+		return trim( $value );
+	}
+
+	/**
 	 * The install path out of a finding's plugin output, Windows or Unix.
 	 *
 	 * The one line a patch engineer needs to find the vulnerable copy on the
@@ -886,8 +1037,20 @@ final class VH_Product {
 		 * everything after "Path :" returns the service name glued to the
 		 * path.
 		 */
-		if ( preg_match( '/Path\s*:\s*([^\r\n]+)/i', $text, $m ) ) {
-			if ( preg_match( self::ANY_PATH_RE, self::trim_path( $m[1] ), $p ) ) {
+		if ( preg_match( self::PATH_LABEL_RE, $text, $m ) ) {
+			$value = self::trim_path( $m[1] );
+
+			/*
+			 * A labelled value that is already a path is taken whole. The
+			 * pattern below cannot span a space, and a Unix install
+			 * directory legitimately contains one; trim_path() has already
+			 * cut any following label off the end.
+			 */
+			if ( preg_match( '#^(?:[A-Za-z]:[\\\\/]|/[^/])#', $value ) ) {
+				return $value;
+			}
+
+			if ( preg_match( self::ANY_PATH_RE, $value, $p ) ) {
 				return self::trim_path( $p[0] );
 			}
 		}
