@@ -2437,7 +2437,11 @@ final class VulnHub_Dash_App {
 						 * @param array<string,mixed> $a    The asset row.
 						 */
 						echo apply_filters( 'vulnhub_asset_hostname_mark', '', $a ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- filtered markup is escaped by its producer.
-					?><a class="vh-mono" href="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $a['id'] ) ) ); ?>"><strong><?php echo esc_html( (string) $a['hostname'] ); ?></strong></a>
+					?><a class="vh-mono" href="<?php echo esc_url( self::page_url( 'assets', array( 'asset' => (int) $a['id'] ) ) ); ?>"><strong><?php echo esc_html( (string) $a['hostname'] ); ?></strong></a><?php
+						// Straight after the name, before the lifecycle chip: it is
+						// a property of the machine, not of the row.
+						echo VulnHub_Dash_Charts::online_dot( $a ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+						?>
 						<?php if ( ! $vh_in_svc ) : ?>
 							<span class="vh-chip vh-chip--warn"><?php echo esc_html( (string) ( vh_lifecycle_statuses()[ (string) $a['lifecycle_status'] ]['label'] ?? $a['lifecycle_status'] ) ); ?></span>
 						<?php endif; ?>
@@ -3266,18 +3270,7 @@ final class VulnHub_Dash_App {
 					foreach ( $rows as $vh_r ) :
 						$vh_assets = (int) $vh_r['assets'];
 						$vh_pct    = (int) round( 100 * $vh_assets / $max );
-						$vh_url    = VulnHub_Dash_Portal::portal_url(
-							'vulnerabilities',
-							array(
-								'product'  => (string) $vh_r['product_slug'],
-								'pkind'    => (string) $vh_r['product_kind'],
-								'life'     => 'reportable',
-								'state'    => 'open_any',
-								// The two cuts the counts above were made with.
-								'sev_not'  => 'info',
-								'excepted' => 'exclude',
-							)
-						);
+						$vh_url    = VulnHub_Dash_Widgets::product_findings_url( $vh_r );
 						$vh_search = strtolower( trim( (string) $vh_r['product'] . ' ' . (string) ( $vh_r['product_kind'] ?? '' ) . ' ' . (string) ( $vh_r['bundles'] ?? '' ) ) );
 						?>
 						<li class="vh-prodrow" data-vh-name="<?php echo esc_attr( $vh_search ); ?>">
@@ -3486,7 +3479,7 @@ final class VulnHub_Dash_App {
 
 			<div class="vh-page-head">
 				<div>
-					<h1 class="vh-mono"><?php echo esc_html( (string) $a['hostname'] ); ?></h1>
+					<h1 class="vh-mono"><?php echo esc_html( (string) $a['hostname'] ); ?><?php echo VulnHub_Dash_Charts::online_dot( $a ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></h1>
 					<p class="vh-sub">
 						<?php
 						echo $a['operating_system']
@@ -3814,6 +3807,15 @@ final class VulnHub_Dash_App {
 							<?php endif; ?>
 						</dl>
 					<?php endif; ?>
+					<?php
+					/*
+					 * Where the machine sits in the network: which firewall is in
+					 * front of it and how it reaches the rest (vulnhub-checkpoint).
+					 *
+					 * @param array<string,mixed> $a The asset row.
+					 */
+					do_action( 'vulnhub_asset_detail_network', $a );
+					?>
 				</section>
 
 				<section class="vh-panel">
@@ -3988,6 +3990,7 @@ final class VulnHub_Dash_App {
 		<div class="vh-page-head">
 			<div>
 				<h1><?php esc_html_e( 'Assets &amp; owners', 'vulnhub' ); ?></h1>
+				<?php echo VulnHub_Dash_Charts::online_help(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 				<?php $vh_own = Repo::summary(); ?>
 				<p class="vh-sub">
 					<?php
@@ -4812,7 +4815,7 @@ final class VulnHub_Dash_App {
 							</td>
 							<td><span class="vh-chip vh-chip--<?php echo 'done' === $t['status_category'] ? 'good' : 'neutral'; ?>"><?php echo esc_html( (string) $t['status'] ); ?></span></td>
 							<td><?php echo VulnHub_Dash_Tickets::assigned_html( $t ); // phpcs:ignore WordPress.Security.EscapeOutput ?></td>
-							<td class="vh-col-comment"><?php echo VulnHub_Dash_Tickets::last_comment_html( $t ); // phpcs:ignore WordPress.Security.EscapeOutput ?></td>
+							<td class="vh-col-comment"><?php echo VulnHub_Dash_Tickets::last_comment_html( $t ) . VulnHub_Dash_Tickets::attachments_badge( $t ); // phpcs:ignore WordPress.Security.EscapeOutput ?></td>
 							<td>
 								<?php
 								echo esc_html(

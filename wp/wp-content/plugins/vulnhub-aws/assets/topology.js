@@ -70,11 +70,44 @@
 
 	/* ---------------------------------------------------------------- cards */
 
-	function destCard( node ) {
+	function destCard( node, redraw ) {
 		var c = el( 'div', 'vh-estate-card vh-estate-card--dest vh-estate-card--' + node.kind );
 		c.id = 'n-' + node.id;
 		c.appendChild( medallion( node.kind, false ) );
 		c.appendChild( el( 'span', 'vh-estate-name', node.label ) );
+
+		// A destination may carry detail other plugins added (the firewalls
+		// on-premises, the routes that reach it): behind a disclosure, so the
+		// top band stays a row of names until someone asks.
+		//
+		// The card is a pill while closed. Opened, it becomes a panel: the
+		// detail drops onto its own full-width row under the name, keys sit in
+		// a column of their own, and a list value is one line per item. Inside
+		// the pill the detail was a flex item beside the name and got squeezed
+		// to a few characters wide.
+		var rows = ( node.meta || [] ).filter( function ( m ) { return m && m.v && ( ! Array.isArray( m.v ) || m.v.length ); } );
+		if ( rows.length || node.note ) {
+			var d    = disclosure( 'What is here', 'vh-estate-why vh-estate-dest-detail' );
+			var grid = el( 'dl', 'vh-estate-dest-grid' );
+			rows.forEach( function ( m ) {
+				grid.appendChild( el( 'dt', null, m.k ) );
+				var dd = el( 'dd' );
+				( Array.isArray( m.v ) ? m.v : [ m.v ] ).forEach( function ( line ) {
+					dd.appendChild( el( 'span', 'vh-estate-dest-line', line ) );
+				} );
+				grid.appendChild( dd );
+			} );
+			d.body.appendChild( grid );
+			if ( node.note ) { d.body.appendChild( el( 'p', 'vh-estate-dest-note', node.note ) ); }
+			d.details.addEventListener( 'toggle', function () {
+				c.classList.toggle( 'is-open', d.details.open );
+				if ( redraw ) { redraw(); }
+			} );
+			// The card selects its lane on click; opening the panel should not.
+			d.root.addEventListener( 'click', function ( e ) { e.stopPropagation(); } );
+			c.appendChild( d.root );
+		}
+
 		return c;
 	}
 
@@ -96,7 +129,9 @@
 		} );
 
 		if ( node.note ) {
-			var d = disclosure( 'Why this lane exists', 'vh-estate-why' );
+			// A card that is not a lane (an on-premises firewall another
+			// plugin added) can name its own button.
+			var d = disclosure( node.why || 'Why this lane exists', 'vh-estate-why' );
 			d.body.appendChild( el( 'p', null, node.note ) );
 			if ( redraw ) { d.details.addEventListener( 'toggle', redraw ); }
 			c.appendChild( d.root );
@@ -515,7 +550,7 @@
 
 			var row = el( 'div', 'vh-estate-row' );
 			band.nodes.forEach( function ( node ) {
-				var card = 'dest' === band.id ? destCard( node )
+				var card = 'dest' === band.id ? destCard( node, redraw )
 					: ( 'work' === band.id ? workCard( node, redraw ) : midCard( node, redraw ) );
 
 				if ( 'dest' !== band.id ) { bindTip( card, node ); }

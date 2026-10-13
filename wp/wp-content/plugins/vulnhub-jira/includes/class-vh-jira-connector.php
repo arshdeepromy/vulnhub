@@ -71,7 +71,17 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 		'labels',
 		'updated',
 		'resolutiondate',
+		// Metadata only -- it rides on the poll that already runs, so the
+		// list on the ticket page costs no extra call. See attachments().
+		'attachment',
 	);
+
+	/**
+	 * The most attachments kept on one ticket row. A ticket with more is
+	 * real but rare; the newest are the ones anybody is looking for, and
+	 * the row's JSON stays bounded.
+	 */
+	public const MAX_ATTACHMENTS = 200;
 
 	/**
 	 * Lazily-built REST client.
@@ -1191,6 +1201,25 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 			$team_name = $team_raw;
 		}
 
+		$payload = array(
+			'labels'         => array_values( (array) ( $fields['labels'] ?? array() ) ),
+			'duedate'        => (string) ( $fields['duedate'] ?? '' ),
+			'updated'        => (string) ( $fields['updated'] ?? '' ),
+			'resolutiondate' => (string) ( $fields['resolutiondate'] ?? '' ),
+			'status_colour'  => (string) ( $category['colorName'] ?? '' ),
+			'team_name'      => $team_name,
+		);
+
+		/*
+		 * Only when Jira actually sent the field. An answer without it --
+		 * a narrower read somewhere else -- says nothing about the files,
+		 * and Tickets::upsert() keeps the last list rather than emptying
+		 * it. An empty array does replace it: everything was removed.
+		 */
+		if ( array_key_exists( 'attachment', $fields ) ) {
+			$payload['attachments'] = self::normalise_attachments( (array) $fields['attachment'] );
+		}
+
 		return array(
 			'provider'        => 'jira',
 			'external_id'     => (string) ( $issue['id'] ?? '' ),
@@ -1206,15 +1235,173 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 			'assignee'        => (string) ( $assignee['displayName'] ?? '' ),
 			'assignee_id'     => (string) ( $assignee['accountId'] ?? '' ),
 			'reporter'        => (string) ( $fields['reporter']['displayName'] ?? '' ),
-			'payload'         => array(
-				'labels'         => array_values( (array) ( $fields['labels'] ?? array() ) ),
-				'duedate'        => (string) ( $fields['duedate'] ?? '' ),
-				'updated'        => (string) ( $fields['updated'] ?? '' ),
-				'resolutiondate' => (string) ( $fields['resolutiondate'] ?? '' ),
-				'status_colour'  => (string) ( $category['colorName'] ?? '' ),
-				'team_name'      => $team_name,
-			),
+			'payload'         => $payload,
 		);
+	}
+
+	/* =================================================================
+	 * Attachments
+	 * ============================================================== */
+
+	/**
+	 * Jira's attachment objects, reduced to what the ticket page shows.
+	 *
+	 * Newest first and capped at MAX_ATTACHMENTS. `content` and `thumbnail`
+	 * URLs are deliberately not kept: they point at Jira, need Jira's
+	 * credentials, and the browser is never sent there -- every byte comes
+	 * through this site (see attachment_bytes()).
+	 *
+	 * @param array<int,mixed> $raw `fields.attachment`.
+	 * @return array<int,array<string,mixed>>
+	 */
+	public static function normalise_attachments( array $raw ): array {
+		$out = array();
+
+		foreach ( $raw as $a ) {
+			if ( ! is_array( $a ) || '' === (string) ( $a['id'] ?? '' ) ) {
+				continue;
+			}
+
+			$author = is_array( $a['author'] ?? null ) ? (array) $a['author'] : array();
+
+			$out[] = array(
+				'id'        => preg_replace( '/[^0-9A-Za-z_-]/', '', (string) $a['id'] ),
+				'filename'  => vh_trim( (string) ( $a['filename'] ?? 'attachment' ), 240 ),
+				'mime'      => vh_trim( (string) ( $a['mimeType'] ?? '' ), 120 ),
+				'size'      => max( 0, (int) ( $a['size'] ?? 0 ) ),
+				// UTC, like every other stamp: Jira sends the site's offset.
+				'created'   => (string) ( vh_to_mysql( $a['created'] ?? '' ) ?? '' ),
+				'author'    => vh_trim( (string) ( $author['displayName'] ?? '' ), 120 ),
+				'author_id' => (string) ( $author['accountId'] ?? '' ),
+			);
+		}
+
+		usort( $out, static fn( array $x, array $y ): int => strcmp( (string) $y['created'], (string) $x['created'] ) );
+
+		return array_slice( $out, 0, self::MAX_ATTACHMENTS );
+	}
+
+	/**
+	 * Read an issue's attachments from Jira now, and keep them on the row.
+	 *
+	 * The poll already carries the list; this is the "refresh" button, for
+	 * a file somebody says they have just added.
+	 *
+	 * @return array{ok:bool,message:string,attachments:array<int,array<string,mixed>>}
+	 */
+	public function attachments( string $key, int $ticket_id = 0 ): array {
+		if ( ! $this->is_enabled() ) {
+			return array( 'ok' => false, 'message' => __( 'Jira is not enabled.', 'vulnhub' ), 'attachments' => array() );
+		}
+		if ( '' === trim( $key ) ) {
+			return array( 'ok' => false, 'message' => __( 'That ticket has no Jira issue key.', 'vulnhub' ), 'attachments' => array() );
+		}
+
+		$response = $this->client()->issue_attachments( $key );
+
+		if ( ! $response->ok() ) {
+			return array(
+				'ok'          => false,
+				'message'     => sprintf(
+					/* translators: 1: issue key, 2: HTTP status, 3: error message. */
+					__( 'Could not read the attachments on %1$s (HTTP %2$d): %3$s', 'vulnhub' ),
+					$key,
+					$response->status,
+					vh_trim( $response->error_message(), 160 )
+				),
+				'attachments' => array(),
+			);
+		}
+
+		$fields = (array) ( $response->data()['fields'] ?? array() );
+		$list   = self::normalise_attachments( (array) ( $fields['attachment'] ?? array() ) );
+
+		if ( $ticket_id > 0 ) {
+			\VulnHub\Core\Tickets::set_attachments( $ticket_id, $list );
+		}
+
+		return array( 'ok' => true, 'message' => '', 'attachments' => $list );
+	}
+
+	/**
+	 * Download one attachment's bytes from Jira.
+	 *
+	 * The expected size comes from the metadata, and is checked twice:
+	 * before the call, so nothing over the cap is fetched at all, and after
+	 * it, so a short read is a failure rather than a truncated file shown
+	 * as if it were the whole thing.
+	 *
+	 * @return array{ok:bool,message:string,bytes:string,mime:string}
+	 */
+	public function attachment_bytes( string $id, int $expected, int $cap ): array {
+		$fail = static fn( string $m ): array => array( 'ok' => false, 'message' => $m, 'bytes' => '', 'mime' => '' );
+
+		if ( ! $this->is_enabled() ) {
+			return $fail( __( 'Jira is not enabled.', 'vulnhub' ) );
+		}
+		if ( $expected > $cap ) {
+			return $fail(
+				sprintf(
+					/* translators: 1: file size, 2: limit. */
+					__( 'This file is %1$s, over the %2$s this site will fetch. Open it in Jira.', 'vulnhub' ),
+					size_format( $expected ),
+					size_format( $cap )
+				)
+			);
+		}
+
+		$response = $this->client()->attachment_content( $id );
+
+		if ( ! $response->ok() ) {
+			return $fail(
+				sprintf(
+					/* translators: 1: HTTP status, 2: error message. */
+					__( 'Jira would not hand over the file (HTTP %1$d): %2$s', 'vulnhub' ),
+					$response->status,
+					vh_trim( $response->error_message(), 160 )
+				)
+			);
+		}
+
+		$bytes = $response->body;
+
+		if ( strlen( $bytes ) > $cap ) {
+			return $fail( sprintf( __( 'Jira sent more than the %s this site will keep.', 'vulnhub' ), size_format( $cap ) ) );
+		}
+		if ( $expected > 0 && strlen( $bytes ) !== $expected ) {
+			return $fail(
+				sprintf(
+					/* translators: 1: bytes received, 2: bytes expected. */
+					__( 'The download was incomplete (%1$s of %2$s). Try again.', 'vulnhub' ),
+					size_format( strlen( $bytes ) ),
+					size_format( $expected )
+				)
+			);
+		}
+
+		return array( 'ok' => true, 'message' => '', 'bytes' => $bytes, 'mime' => $response->header( 'content-type' ) );
+	}
+
+	/**
+	 * The Jira account this site acts as -- so a file this site uploaded
+	 * can be told apart from one a person added in Jira.
+	 *
+	 * One /myself call a day at most. Empty when Jira cannot say, which
+	 * just means nothing is marked as sent from here.
+	 */
+	public function own_account_id(): string {
+		$cached = get_transient( 'vulnhub_jira_own_account' );
+
+		if ( is_string( $cached ) ) {
+			return $cached;
+		}
+
+		$me = $this->is_enabled() ? $this->client()->myself() : null;
+		$id = $me && $me->ok() ? (string) ( $me->data()['accountId'] ?? '' ) : '';
+
+		set_transient( 'vulnhub_jira_own_account', $id, $me && $me->ok() ? DAY_IN_SECONDS : 10 * MINUTE_IN_SECONDS );
+
+		return $id;
 	}
 
 	/**

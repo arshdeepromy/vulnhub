@@ -13,9 +13,9 @@ platform — and until this plugin it was invisible here.
 
 ## What the programme data is
 
-The programme reconciles four systems (JSM Assets as the canonical inventory,
-BigFix and SNOW as independent technical scans, and the Architecture team's
-manual planning layer, which is the only source of *intent*) and produces one
+The programme reconciles four systems (the CMDB as the canonical inventory,
+two independent software-inventory tools as technical scans, and a manual
+planning layer kept by the architects, which is the only source of *intent*) and produces one
 row per server carrying a treatment plan, a timeframe, an environment tier and
 a RAG rating.
 
@@ -164,8 +164,13 @@ when it was imported, then:
 Programme filters: `coverage` (`covered` / `not_covered` / `overdue` /
 `uncovered`), `state`, `timeframe`, `tier`, `rag`, `project`, and `key` (an EOL
 release key, shown as a removable chip). Alongside them, the portal's own
-vocabulary: `search`, `team`, `site`, `life`. Filters survive Apply and
+vocabulary: `search`, `team`, `owner`, `site`, `life`. Filters survive Apply and
 sorting, exactly as the assets list does.
+
+`owner` is the portal-wide Owner control (`vh_owner_filter()`): `has` keeps
+rows whose matched asset has a named owner, `none` those whose asset has
+none (*Has an owner* / *Missing an owner*). It reads the asset, so a
+programme row that matches no asset drops out under either value.
 
 `eol` (`past` / `soon`) restricts the screen to assets in the inventory whose
 release is in that state — it is what the widget's headline tiles link through,
@@ -175,8 +180,9 @@ tile and the screen cannot drift apart. In the repository the argument is
 called `eol_status`; `eol` is the querystring name.
 
 **Export CSV** covers the whole filtered set, not the visible page, through
-`admin-post.php?action=vulnhub_eos_export_csv`. The filename names the filter,
-and the button carries the count so you know what you are about to download.
+`admin-post.php?action=vulnhub_eos_export_csv` (capped at 20,000 rows). The
+filename names the filter, and the button carries the count so you know what
+you are about to download.
 
 **A bug worth remembering**, found by exporting rather than by reading the
 code: the export carries an **allow-list** of filter names from the screen to
@@ -191,14 +197,16 @@ builder, or the CSV quietly stops matching the screen.
 ## Importing
 
 **Administration → Data → EOS remediation plan.** Upload the workbook's
-*Reconciled* sheet as CSV; it previews first, and only commits when you say so.
+*Reconciled* sheet as CSV (up to 8 MB); it previews first, and only commits
+when you say so. The last import is recorded in the `vulnhub_eos_last_import`
+option, which is the date every screen quotes.
 Re-running is idempotent, and the intended cadence is monthly, matching the
 programme's own refresh proposal.
 
 Rows are matched to assets on **normalised hostname** — lower-cased, trimmed,
 and cut at the first dot — with a fallback to the first label of an asset's
 FQDN. That fallback is not decoration: one host matched only because the asset
-is named `jira` while its FQDN is `appsrv14.…`.
+is named `intranet` while its FQDN is `appsrv14.…`.
 
 **The import never creates assets.** A programme row with no matching asset is
 kept and shown as *not in inventory*: the programme knowing about a server the
@@ -225,7 +233,8 @@ nobody has written them down anywhere.
 
 ## Storage
 
-One table, `vh_vulnhub_eos_plan`, keyed by hostname, holding the programme's
+One table, `{prefix}vulnhub_eos_plan` (`VH_EOS_Schema::table()`, its own
+schema version in the `vulnhub_eos_db_version` option), keyed by hostname, holding the programme's
 columns plus a parsed `deadline`, the `asset_id` when matched, and a batch id
 per import run. Coverage is not a column — see above.
 

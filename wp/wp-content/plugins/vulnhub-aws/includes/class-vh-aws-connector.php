@@ -389,7 +389,18 @@ final class VulnHub_AWS_Connector extends Connector {
 
 			foreach ( $regions as $region ) {
 				$records += VulnHub_AWS_Network::capture( $client, $acct, $region, $now );
+				$records += VulnHub_AWS_Serverless::capture( $client, $acct, $region, $now );
+				$records += VulnHub_AWS_Domains::capture_apigw( $client, $acct, $region, $now );
 			}
+
+			/*
+			 * Route 53 is global, so it runs once per account rather than
+			 * per region. It runs after the network capture above, because
+			 * it matches records against the addresses that capture just
+			 * stored -- hence dropping the cached index first.
+			 */
+			VulnHub_AWS_Domains::forget_indexes();
+			$records += VulnHub_AWS_Domains::capture_dns( $client, $acct, $now );
 
 			$this->bump( 'processed', $records - $before );
 			++$ok;

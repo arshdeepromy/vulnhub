@@ -118,6 +118,8 @@ and pills keep the ramp.
 |---|---|---|
 | `--vh-series-1` | `#5ea3ff` (identical to sev-low) | `#2a78d6` |
 | `--vh-series-2` | `#ff9a3c` (identical to sev-high) | `#eb6834` |
+| `--vh-series-1-ink` (series colour as text) | `#5ea3ff` | `#1a55a0` |
+| `--vh-series-2-ink` | `#ff9a3c` | `#8a4a12` |
 
 In dark mode the two series colours are the same hexes as Low and High
 severity. A chart that puts a series next to a severity mark cannot tell them
@@ -133,9 +135,10 @@ apart by colour.
 | `--vh-neutral-bg` | `rgba(120,160,210,.10)` | `rgba(11,11,11,.05)` |
 | `--vh-thead-bg` (table header band) | `rgba(7,11,20,.6)` | `#f4f5f7` |
 
-`--vh-good-ink` and `--vh-warn-ink` are also defined in `app.css` as well as
-`app-redesign.css`, so an Elementor page — which loads only `app.css` — still
-has them.
+`--vh-good-ink` and `--vh-warn-ink` are defined in `app.css` as well as
+`app-redesign.css`, so an Elementor page — which loads `app.css` but not the
+redesign — still has them. `--vh-bad-ink` is only in `app-redesign.css`'s dark
+block and the light block, so it is unresolved on an Elementor page.
 
 ### Severity pills
 
@@ -144,7 +147,7 @@ a white label is gone.
 
 | Pill | Fill | Label | Where set |
 |---|---|---|---|
-| Critical | `--vh-bad-bg` | `--vh-pill-fg-critical`: `#ff8c94` dark, `#93171f` light | tokens |
+| Critical | `--vh-bad-bg` (a `--vh-pill-critical` token is also defined in both themes but the rule does not read it) | `--vh-pill-fg-critical`: `#ff8c94` dark, `#93171f` light | tokens |
 | High | `--vh-pill-high`: `rgba(255,154,60,.16)` dark, `rgba(224,109,31,.12)` light | `--vh-pill-fg-high`: `#ffb36b` dark, `#9a4a0e` light | tokens (2026-09-16) |
 | Medium | `--vh-pill-medium`: `rgba(245,208,74,.16)` dark, `rgba(240,192,32,.20)` light | `--vh-pill-fg-medium`: `#f5d04a` dark, `#7a5c00` light | tokens (2026-09-16) |
 | Low | `--vh-pill-low` | `--vh-pill-fg-low`: `#8fb8ff` dark, `#1d62b8` light | tokens |
@@ -188,7 +191,7 @@ colour. Here is their actual state:
 | A text label on every severity mark | **Partly** | Pills always spell the word. Stacked-bar segments carry only `aria-label`, a tooltip and the scale legend. Line series rely on the legend. Segment bars print a count, not the severity, and hide it when the segment is under 34px. |
 | Fixed order, critical → info | **Holds for severity charts** | `severity_order()` drives stacks and the scale legend. The trend legend runs Critical → Low with no Info. Segment bars take their order from the caller. |
 | A 2px gap between adjacent segments | **Holds** | `.vh-stack__track` and `.vh-segbars__track` both use `gap: 2px`. Donut slices are stroked 2px in `--vh-surface`. In dark mode that stroke (`#0b1220`) is close to, but not exactly, the card colour. |
-| A table view on every chart | **Does not hold** | Only `donut()`, `funnel()` and `coverage_bars()` add "View as table", plus a few widgets (top assets, patching, EOL). `line_chart`, `bar_chart`, `severity_stack` and `segment_bars` do not, so trend, age buckets, top vulnerabilities, family mix and team exposure have no table. They offer only the widget CSV export. |
+| A table view on every chart | **Does not hold** | Only `donut()`, `funnel()` and `coverage_bars()` add "View as table", plus a few widgets that call `table_view()` themselves (top assets, patching, the two EOL widgets, the two *What we can act on* widgets, the EOL plan's workload). `line_chart`, `bar_chart`, `severity_stack` and `segment_bars` do not, so trend, age buckets, top vulnerabilities, family mix and team exposure have no table. They offer only the widget CSV export. |
 
 ---
 
@@ -306,10 +309,11 @@ had literal colours scattered through its component rules.
     defines `--vh-crit #b4232c`, `--vh-high #d97706`, `--vh-med #ca8a04`,
     `--vh-low #2563eb`, `--vh-info #64748b` and `--vh-ok #15803d`. The high
     and medium steps differ from the portal's.
-11. **The Elementor editor canvas loads only `app.css`.** It does not load the
-    redesign's tokens (such as `--vh-raised-2` and the `-ink` status tokens) or
-    the light block. Elementor widgets on front-end pages also depend on
-    `vulnhub-app` alone, not `vulnhub-app-redesign`.
+11. **The Elementor editor canvas loads only `app.css`** (plus the plugin's
+    own `elementor.css`). It does not load the redesign's tokens (such as
+    `--vh-raised-2` and `--vh-bad-ink`) or the light block. Elementor widgets
+    on front-end pages likewise depend on `vulnhub-app` and
+    `vulnhub-elementor`, not `vulnhub-app-redesign`.
 12. **Dark-mode series and severity collide:** `series-1 = sev-low` and
     `series-2 = sev-high`.
 

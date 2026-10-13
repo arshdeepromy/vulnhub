@@ -8,10 +8,10 @@
 # that touches hundreds of thousands of rows (confirmed: OOM-killed at both
 # 2g and 4g on a real Tenable account).
 #
-# wordpress:php8.3-apache is Debian; wordpress:cli-php8.3 is Alpine -- same
+# wordpress:php8.5-apache is Debian; wordpress:cli-php8.5 is Alpine -- same
 # Dockerfile handles both by detecting which package manager is present,
 # using $PHPIZE_DEPS (defined by the official php images for exactly this).
-ARG BASE_IMAGE=wordpress:php8.3-apache
+ARG BASE_IMAGE=wordpress:php8.5-apache
 FROM ${BASE_IMAGE}
 
 USER root

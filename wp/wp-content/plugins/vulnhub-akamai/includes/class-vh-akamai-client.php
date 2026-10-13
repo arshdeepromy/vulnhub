@@ -182,7 +182,7 @@ final class VulnHub_Akamai_Client {
 	 * @param string $target Path with query string, exactly as sent.
 	 */
 	private function auth_header( string $method, string $target, string $body, string $timestamp = '', string $nonce = '' ): string {
-		$timestamp = '' !== $timestamp ? $timestamp : gmdate( 'Ymd\THis+0000' );
+		$timestamp = '' !== $timestamp ? $timestamp : gmdate( 'Ymd\TH:i:s+0000' );
 		$nonce     = '' !== $nonce ? $nonce : self::nonce();
 
 		$auth = sprintf(

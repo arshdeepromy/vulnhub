@@ -94,12 +94,23 @@ The download links carry the core `wp_rest` nonce (`_wpnonce`). Without it the
 REST API ignores the login cookie, treats the request as anonymous, and the
 download answers **401 rest_forbidden**.
 
+Every other route under `vulnhub-backup/v1` (`backup/now`, `jobs`,
+`jobs/<id>`, `jobs/<id>/pass`, `jobs/<id>/cancel`, the `restore/*` routes) needs
+the Manage capability **and** the plugin's own `vulnhub_backup` nonce, sent as
+the `X-VH-Backup-Nonce` header (or `_vh_nonce`). The download route checks the
+capability only, because a plain browser link cannot add a header. The one
+exception to both is `restore/jobs/<id>/watch` (see *Following it on screen*).
+
 ---
 
 ## Restoring
 
-Upload the one file. Restore **sniffs the first bytes** rather than trusting
-the extension:
+Upload the one file. The upload is chunked and resumable
+(`restore/upload/begin`, `…/chunk`, `…/status`, `…/finish`), with the chunk
+size worked out from PHP's upload limits. `begin` refuses a file over 4 GB (the
+`vulnhub_backup_restore_max_bytes` filter changes that) or one that would leave
+less than 2 GB free on the staging volume. Restore then **sniffs the first
+bytes** rather than trusting the extension:
 
 - gzip magic → the new single-archive path
 - `PK` → the old three-file `.zip` bundle
@@ -199,6 +210,30 @@ was restoring from), `object-cache.php` from older bundles, and the logs. The
 swap is safe to resume if a pass dies between the rename and the phase change.
 
 ---
+
+## Off-box copies, schedule and retention
+
+**S3 auto-backup settings** on the same screen (connector settings id
+`backup_s3`: `enabled`, `bucket`, `region`, `prefix` default `vulnhub-backups`,
+`interval` default `manual`, `retention_count` default 10, keys stored as
+encrypted secrets). Saving is audited as `backup.settings_saved`.
+
+- **Upload.** With S3 enabled, the `upload` phase puts the one archive at
+  `<prefix>/<backup name>.tar.gz` — the same file the screen offers for
+  download. At 100 MB and above it is a multipart upload in 32 MB parts,
+  checkpointed like every other phase; below that, one PutObject. It also makes
+  sure the bucket has a lifecycle rule that aborts incomplete multipart
+  uploads, so a dead job does not leave billed fragments behind. Enabled but
+  missing a key or bucket fails the job rather than quietly skipping. The
+  client is `VulnHub_Backup_S3`, plain SigV4, no SDK.
+- **Retention.** The last phase keeps the newest `retention_count` sets
+  locally and in the bucket, counting one backup as one unit whether it is a
+  packed object or an older install's folder of three.
+- **Schedule.** `VulnHub_Backup_Scheduler` keeps `vulnhub_backup_run_cron` on
+  the chosen core interval while S3 is enabled and the interval is not
+  `manual`; a tick that finds a backup already in flight does nothing.
+
+Local sets can be deleted from the screen (`admin_post_vulnhub_backup_delete`).
 
 ## Running one, and what it costs
 

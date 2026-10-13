@@ -126,6 +126,9 @@ final class VulnHub_Plerion_Findings_Page {
 			'severity'      => isset( $_GET['severity'] ) ? sanitize_text_field( wp_unslash( $_GET['severity'] ) ) : '',
 			'account'       => isset( $_GET['account'] ) ? sanitize_text_field( wp_unslash( $_GET['account'] ) ) : '',
 			'resource_type' => isset( $_GET['rtype'] ) ? sanitize_text_field( wp_unslash( $_GET['rtype'] ) ) : '',
+			// Arrive from Control gaps: one cause group, or one detection.
+			'cause'         => isset( $_GET['cause'] ) && preg_match( '/^[a-f0-9]{32}$/', (string) wp_unslash( $_GET['cause'] ) ) ? (string) wp_unslash( $_GET['cause'] ) : '',
+			'detection'     => isset( $_GET['detection'] ) ? sanitize_text_field( wp_unslash( $_GET['detection'] ) ) : '',
 			'search'        => isset( $_GET['search'] ) ? sanitize_text_field( wp_unslash( $_GET['search'] ) ) : '',
 			'limit'         => 50,
 			'offset'        => isset( $_GET['p'] ) ? max( 0, ( absint( wp_unslash( $_GET['p'] ) ) - 1 ) * 50 ) : 0,
@@ -144,6 +147,7 @@ final class VulnHub_Plerion_Findings_Page {
 		echo '</div></div>';
 
 		self::render_tiles( $summary );
+		self::render_scope_banner( $args );
 		self::render_filters( $args );
 		self::render_table( $result, $args );
 	}
@@ -173,8 +177,51 @@ final class VulnHub_Plerion_Findings_Page {
 		echo '</div>';
 	}
 
+	/**
+	 * Says so when the list is narrowed to one cause group or detection,
+	 * since neither has a control of its own on this page.
+	 */
+	private static function render_scope_banner( array $args ): void {
+		$label = '';
+
+		if ( '' !== (string) $args['cause'] && class_exists( 'VulnHub_Plerion_Cause' ) ) {
+			$d = VulnHub_Plerion_Cause::describe( (string) $args['cause'] );
+
+			$label = $d
+				? sprintf(
+					/* translators: 1: resource name stem, 2: detection id, 3: resource type. */
+					__( 'Showing one repeated cause: %1$s (%2$s on %3$s), across every account and environment it appears in.', 'vulnhub' ),
+					'' !== (string) $d['stem'] ? (string) $d['stem'] : __( 'account setting', 'vulnhub' ),
+					(string) $d['detection_id'],
+					(string) $d['resource_type']
+				)
+				: __( 'Showing one repeated cause.', 'vulnhub' );
+		} elseif ( '' !== (string) $args['detection'] ) {
+			/* translators: %s: detection id. */
+			$label = sprintf( __( 'Showing one detection: %s.', 'vulnhub' ), (string) $args['detection'] );
+		}
+
+		if ( '' === $label ) {
+			return;
+		}
+
+		printf(
+			'<div class="vh-panel vh-cg-scope"><p>%s <a href="%s">%s</a></p></div>',
+			esc_html( $label ),
+			esc_url( remove_query_arg( array( 'cause', 'detection', 'p' ) ) ),
+			esc_html__( 'Show all findings', 'vulnhub' )
+		);
+	}
+
 	private static function render_filters( array $args ): void {
 		echo '<form method="get" class="vh-filters">';
+
+		// Keep a cause or detection scope through Filter.
+		foreach ( array( 'cause', 'detection' ) as $keep ) {
+			if ( '' !== (string) $args[ $keep ] ) {
+				printf( '<input type="hidden" name="%s" value="%s">', esc_attr( $keep ), esc_attr( (string) $args[ $keep ] ) );
+			}
+		}
 
 		printf(
 			'<input type="search" name="search" value="%s" placeholder="%s" aria-label="%s">',

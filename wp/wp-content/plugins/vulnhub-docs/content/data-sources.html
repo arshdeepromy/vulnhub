@@ -46,6 +46,14 @@
 
 <h3>AWS — cloud reachability</h3>
 <p>The AWS connector is unusual: it does <em>not</em> create assets. It reads security groups, route tables and load balancers (and Amazon Inspector's network-reachability findings) to decide which EC2 instances are genuinely reachable from the internet — <code>direct</code> (a security group open to <code>0.0.0.0/0</code> on a public IP with an internet gateway route) or <code>elb</code> (behind an internet-facing load balancer). It then feeds that verdict into the reachability engine for instances Tenable already inventoried.</p>
+<p>That verdict is about machines, and a Lambda function is not one — it has no
+network interface and no security group, so the reachability rule can only ever
+answer <em>not reachable</em> about a function the whole internet can call. The
+same connector therefore also reads API Gateway routes, Lambda function URLs
+and function resource policies, and a route counts as open only when it asks
+the caller for nothing at all. Those land on <strong>Serverless exposure</strong>
+rather than on an asset, with the account, the runtime and its support state,
+the path in, and what the function's role can reach.</p>
 
 <h3>Threat context — the public feeds</h3>
 <p>Nightly, the threat plugin pulls three free, unauthenticated feeds — NVD (for CVSS vectors), CISA KEV (known-exploited), and FIRST EPSS (exploit probability) — and rebuilds the attack-path and exploitability data. None of your estate ever leaves the box to fetch these. See <a href="?doc=classification">Routes, delivery &amp; reachability</a> and <a href="?doc=scoring">Severity, KEV, EPSS &amp; VPR</a>.</p>

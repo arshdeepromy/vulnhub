@@ -35,6 +35,7 @@ add_action(
 	 */
 	static function ( $connectors ): void {
 		require_once VULNHUB_PLERION_DIR . 'includes/class-vh-plerion-client.php';
+		require_once VULNHUB_PLERION_DIR . 'includes/class-vh-plerion-cause.php';
 		require_once VULNHUB_PLERION_DIR . 'includes/class-vh-plerion-findings.php';
 		require_once VULNHUB_PLERION_DIR . 'includes/class-vh-plerion-connector.php';
 
@@ -57,7 +58,35 @@ add_action(
  * Plerion publishes no security-group rules. Two screens disagreeing about
  * the same estate, one of them with less to go on, is worse than one.
  */
+require_once VULNHUB_PLERION_DIR . 'includes/class-vh-plerion-cause.php';
 require_once VULNHUB_PLERION_DIR . 'includes/class-vh-plerion-findings.php';
 require_once VULNHUB_PLERION_DIR . 'includes/class-vh-plerion-findings-page.php';
 
 VulnHub_Plerion_Findings_Page::init();
+
+/**
+ * wp vulnhub plerion-causes [--dry-run]
+ *
+ * Re-key every stored Plerion finding with the cross-account grouping key
+ * (see class-vh-plerion-cause.php). Upserts key new rows as they arrive and
+ * a RULES bump re-keys automatically, so this is for checking what a rule
+ * change would do (--dry-run) or forcing it now.
+ */
+if ( defined( 'WP_CLI' ) && WP_CLI ) {
+	WP_CLI::add_command(
+		'vulnhub plerion-causes',
+		static function ( array $args, array $assoc ): void {
+			$dry = isset( $assoc['dry-run'] );
+			$res = VulnHub_Plerion_Cause::backfill( $dry );
+
+			WP_CLI::success(
+				sprintf(
+					'%s %d of %d stored finding(s).',
+					$dry ? 'Would re-key' : 'Re-keyed',
+					(int) $res['changed'],
+					(int) $res['checked']
+				)
+			);
+		}
+	);
+}

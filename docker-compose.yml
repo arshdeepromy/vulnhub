@@ -91,7 +91,7 @@ services:
     build:
       context: ./docker/wp-redis
       args:
-        BASE_IMAGE: wordpress:php8.3-apache
+        BASE_IMAGE: wordpress:php8.5-apache
     container_name: vulnhub-wp
     mem_limit: 2g
     memswap_limit: 2g
@@ -121,7 +121,7 @@ services:
     build:
       context: ./docker/wp-redis
       args:
-        BASE_IMAGE: wordpress:cli-php8.3
+        BASE_IMAGE: wordpress:cli-php8.5
     container_name: vulnhub-wpcli
     # 4g, not 2g: a live Tenable sync on a real account processed 255k+
     # findings across 12k+ vulnerability definitions in one unbounded
@@ -158,7 +158,7 @@ services:
     build:
       context: ./docker/wp-redis
       args:
-        BASE_IMAGE: wordpress:cli-php8.3
+        BASE_IMAGE: wordpress:cli-php8.5
     container_name: vulnhub-cron
     # See wpcli's identical note: scheduled syncs run through this container.
     mem_limit: 4g

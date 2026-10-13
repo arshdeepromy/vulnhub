@@ -35,6 +35,7 @@ require_once VULNHUB_DASH_DIR . 'includes/class-vh-dash-export.php';
 require_once VULNHUB_DASH_DIR . 'includes/class-vh-dash-tickets.php';
 require_once VULNHUB_DASH_DIR . 'includes/class-vh-dash-ticket-report.php';
 require_once VULNHUB_DASH_DIR . 'includes/class-vh-dash-ticket-signals.php';
+require_once VULNHUB_DASH_DIR . 'includes/class-vh-dash-control-gaps.php';
 VulnHub_Dash_Ticket_Report::hooks();
 require_once VULNHUB_DASH_DIR . 'includes/class-vh-dash-sources.php';
 
@@ -67,6 +68,7 @@ add_action(
 		VulnHub_Dash_Tickets::init();
 		VulnHub_Dash_Ticket_Signals::init();
 		VulnHub_Dash_Sources::init();
+		VulnHub_Dash_Control_Gaps::init();
 	},
 	20
 );

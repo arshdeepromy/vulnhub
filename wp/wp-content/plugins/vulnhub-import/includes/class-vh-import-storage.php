@@ -514,7 +514,6 @@ final class VulnHub_Import_Storage {
 
 			if ( false !== $finfo ) {
 				$mime = (string) finfo_file( $finfo, $path );
-				finfo_close( $finfo );
 
 				$allowed = array( 'text/csv', 'text/plain', 'text/tab-separated-values', 'application/csv', 'application/vnd.ms-excel' );
 

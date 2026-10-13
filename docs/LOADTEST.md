@@ -9,6 +9,13 @@ does (193 slices, 9 s); `api.sh` starts the job; the `vulnhub-cron` container
 runs every pass from then on. Nothing here is a special code path — it is the
 production import.
 
+Of the harness, only `dev/loadtest.php` (`wp eval-file dev/loadtest.php
+<storage_key> <filename> [budget]`, which drives the reader and runner
+directly against an already-staged upload) and `check-pages.sh` are in the
+repository. `gen_tenable.py`, `upload.sh` and `api.sh` were kept beside the
+fixtures and are not committed; `dev/importpass.js` covers the browser side of
+the upload (`docs/BROWSER-PASS.md`).
+
 ## Run 1 — cold, into a 112-asset fleet
 
 | | |
@@ -234,3 +241,12 @@ a bare `exception_id` key had `GROUP BY severity` scanning 416,890 rows.
 
 Re-running the migration is idempotent: `Install::run()` twice leaves the same
 twelve indexes and dbDelta reports nothing further to do.
+
+*(since changed: the findings table has grown more keys since schema 13 --
+schema is at 38 as of 2026-09-26.)* `vuln_state_exc` is now
+`(vuln_id, state, exception_id, severity, ticket_id, asset_id)`, there is an
+`exc_state_first (exception_id, state, first_found, severity)`, and the
+single-column keys are now `severity`, `ticket_id`, `due_at`, `archived_at`,
+`fingerprint`, `verification_state`, `path_zone`, `app_fix` and
+`bundle_app_slug`: 17 keys including the primary. Read the live list with
+`SHOW INDEX FROM` the findings table rather than trusting this one.

@@ -293,6 +293,7 @@ final class VulnHub_Threat_Widget {
 		$via  = match ( $i['via'] ) {
 			'lb'       => sprintf( /* translators: %s: load balancer and listener. */ __( 'via load balancer %s', 'vulnhub' ), $i['front'] ),
 			'observed' => sprintf( /* translators: %s: address. */ __( 'answers on %s; firewall not read', 'vulnhub' ), $i['front'] ),
+			'nat'      => sprintf( /* translators: %s: public address. */ __( 'through static NAT on %s', 'vulnhub' ), $i['front'] ),
 			default    => sprintf( /* translators: %s: address. */ __( 'on %s', 'vulnhub' ), $i['front'] ),
 		};
 		$top  = (array) ( $i['vulns'][0] ?? array() );
@@ -399,6 +400,7 @@ final class VulnHub_Threat_Widget {
 		[ $label, $tip ] = match ( $fw ) {
 			'none'      => array( __( 'no firewall in front', 'vulnhub' ), __( 'Nothing in this VPC sends inbound traffic through the inline firewall: the security group is the only control.', 'vulnhub' ) ),
 			'inspected' => array( __( 'through the inline firewall', 'vulnhub' ), __( 'The internet gateway sends arriving traffic to the inline firewall before it reaches the machine.', 'vulnhub' ) ),
+			'policy'    => array( __( 'allowed by firewall policy', 'vulnhub' ), __( 'A Check Point access rule accepts this port from outside; the rule is named on the Firewall policy page.', 'vulnhub' ) ),
 			default     => array( __( 'firewall: not known yet', 'vulnhub' ), __( 'The VPC uses the inline firewall for something, but the capture has not read whether it inspects inbound traffic. The next network capture reads it.', 'vulnhub' ) ),
 		};
 

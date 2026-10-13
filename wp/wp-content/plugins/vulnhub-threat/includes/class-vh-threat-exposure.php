@@ -357,7 +357,9 @@ final class VulnHub_Threat_Exposure {
 	private static function firewall_of( array $ways ): string {
 		$seen = array_map( static fn( array $w ): string => (string) ( $w['firewall'] ?? 'unknown' ), $ways );
 
-		foreach ( array( 'none', 'unknown', 'inspected' ) as $f ) {
+		// `policy`: a Check Point rule read and found to accept it -- known,
+		// and passing through a firewall, so ranked with `inspected`.
+		foreach ( array( 'none', 'unknown', 'inspected', 'policy' ) as $f ) {
 			if ( in_array( $f, $seen, true ) ) {
 				return $f;
 			}
@@ -606,7 +608,7 @@ final class VulnHub_Threat_Exposure {
 
 	/** Lower is a wider door. @param array<string,mixed> $w */
 	private static function way_rank( array $w ): int {
-		return self::reach_rank( (string) $w['reach'] ) * 3 + array_search( (string) $w['via'], array( 'direct', 'lb', 'observed' ), true );
+		return self::reach_rank( (string) $w['reach'] ) * 4 + (int) array_search( (string) $w['via'], array( 'direct', 'nat', 'lb', 'observed' ), true );
 	}
 
 	private static function reach_rank( string $reach ): int {

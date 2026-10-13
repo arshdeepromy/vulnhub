@@ -5,6 +5,13 @@ upload. This adds a fourth — Jira Service Management **Assets** (formerly
 Insight) — read-only, over one endpoint, with the same mapping screen and the
 same dry run the CSV importer has always had.
 
+The back end is the connector's *Source system* setting (`source`):
+`servicenow` (ServiceNow Table API, the default), `assets` (this document),
+`confluence` (an HTML table on a Confluence page) or `csv` (an upload, whose
+rows are stored and re-imported by each scheduled run). Whichever is chosen,
+the `cmdb` connector syncs on its own schedule (daily by default) and inline
+when run by hand; see `docs/SYNC.md` for how that fits with the others.
+
 The short version: an Assets object is flattened into a `name => value` row, and
 from that point on it *is* a spreadsheet row. It goes through the same detector,
 the same mapping, the same normaliser, the same identity matching and the same
@@ -145,12 +152,12 @@ same alias table does the work, just over a narrower set of columns.
 Each run logs the difference, which is the part worth reviewing:
 
 ```
-Assets: Servers — 395 object(s); this type binds os_version ← OS Version (not "OS Version (Cherwell)")
+Assets: Servers — 395 object(s); this type binds os_version ← OS Version (not "OS Version (legacy)")
 Assets: Computing Devices — 791 object(s); this type binds hostname ← Name (not "Host Name")
 ```
 
 The second line is the bug above, now visible. The first is the same class of
-problem in a field nobody had noticed: `OS Version (Cherwell)` exists only on
+problem in a field nobody had noticed: `OS Version (legacy)` exists only on
 Computing Devices, so every Server had been importing with no OS version.
 
 ### Vendor-prefixed columns
@@ -182,7 +189,11 @@ still empty" into "the support group attribute is called Service Owner Group".
 
 ## Object type is authoritative
 
-`Servers` → `server`, `Computing Devices` → `workstation`. The object type is a
+`Servers` → `server`, `Computing Devices` → `workstation`
+(`VulnHub_Cmdb_Connector::assets_asset_type()`: any type whose name contains
+"server" is a server; one naming a computing device, computer, workstation,
+desktop, laptop, notebook or endpoint is a workstation; anything else goes
+through `Schema::asset_type()`). The object type is a
 class a human chose in Assets, which is stronger evidence than anything inferred
 from an OS string — and stronger than what `Schema::asset_type()` can make of
 it, since "Computing Devices" matches none of its patterns. The record is marked
@@ -280,8 +291,9 @@ The API token is the only secret in this feature.
 
 1. **Integrations → CMDB**: set *Source system* to
    **Jira Service Management Assets (AQL)**, fill in the account email, the
-   token, the cloud id, the workspace id, the schema id and the object types,
-   and save. Enable the connector.
+   token, the cloud id, the workspace id, the schema id and the object types
+   (*Object types to read*, comma-separated; the default is
+   `Servers, Computing Devices`), and save. Enable the connector.
 2. **Test connection** → *"Connected. N objects match."*
 3. **CMDB → Jira Assets → Fetch and preview**. This reads the workspace and
    stages a dry run: how many assets would be created, how many updated, what

@@ -167,6 +167,15 @@ abstract class Connector {
 	}
 
 	/**
+	 * Should coverage be recalculated after this connector syncs? Yes for
+	 * anything that brings in what the scanner has seen. A connector that
+	 * copies another instance's already-computed state answers no.
+	 */
+	public function recalculate_after_sync(): bool {
+		return true;
+	}
+
+	/**
 	 * Default schedule slug (see Scheduler::intervals()).
 	 */
 	public function default_interval(): string {
@@ -263,6 +272,26 @@ abstract class Connector {
 			return array(
 				'ok'      => false,
 				'message' => __( 'Connector is disabled.', 'vulnhub' ),
+				'run_id'  => 0,
+				'stats'   => $this->stats,
+			);
+		}
+
+		/**
+		 * Lets an instance refuse a connector's sync outright. An instance
+		 * that is a copy of another answers for every connector but its own
+		 * replica sync: two instances syncing the same scanner and ticketing
+		 * system would both act on them.
+		 *
+		 * @param string              $blocked   '' to allow, or the reason it is refused.
+		 * @param string              $connector Connector id.
+		 * @param array<string,mixed> $args      Sync options.
+		 */
+		$blocked = (string) apply_filters( 'vulnhub_connector_sync_blocked', '', $this->id(), $args );
+		if ( '' !== $blocked ) {
+			return array(
+				'ok'      => false,
+				'message' => $blocked,
 				'run_id'  => 0,
 				'stats'   => $this->stats,
 			);

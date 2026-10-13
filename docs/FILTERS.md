@@ -112,7 +112,7 @@ and FQDN on the other, and stopped there.
 Both lists now include the owner: the person's display name, their email and
 their UPN, and the team behind them. Team matters as much as person, because
 on unassigned kit the team is the only thing the column shows -- searching
-`Windows` has to find every asset whose owner cell reads "Platform Services
+`Windows` has to find every asset whose owner cell reads "Server Team
 Windows", none of which has a person attached.
 
 Email and UPN are matched but never displayed by the search. They are what a
@@ -333,10 +333,24 @@ answer "which of this product's findings are its own?".
   to `comp=app` / `comp=bundled`. The grouping query gains `bundled_findings`,
   `bundled_assets` and `app_assets` (about +0.6 s uncached on this estate; the
   tab is cached).
+- **The *Exposure by product* widget and the Products page** draw the same
+  split, from `VulnHub_Dash_Widgets::product_split_html()` -- one renderer, so
+  the three places cannot drift. `product_rows_live()` carries the same three
+  columns, and `summary_products` stores them (schema v39; a read against the
+  older table falls back to the live aggregate rather than emptying the
+  widget). A row with nothing bundled keeps a single solid bar: since the
+  gradient those bars used to carry ran series-1 to series-2, it read as a
+  split that was not there, so plain bars are now solid series-1 and the
+  second colour means "bundled" wherever it appears.
 
 **Checked:** for four rows (a meeting client, an office suite, a chat client, a
 browser) app + bundled equals the row, each segment's link returns exactly its
 count, and the export with `comp` returns the same rows as the list.
+
+**Checked again (2026-09-27), after the widget and Products page joined in:**
+the office-suite row reads the same three numbers in all three places, the
+segment links carry `comp`, and the rows with nothing bundled draw one solid
+bar.
 
 ## 12. Owner: one dropdown, everywhere an asset can be filtered
 
@@ -359,6 +373,9 @@ labels), and the wp-admin Assets and Findings screens.
   older bookmarks use it. With no control of its own it shows as a removable
   chip, *User devices missing a user*; wp-admin carries it (and `unowned`)
   as hidden fields.
+- The single-vulnerability panel and the vulnerabilities list name `owner`
+  among their `hidden_filters()` own controls, and the tab links and product
+  links carry it, so a narrowed list keeps it through Apply and across tabs.
 
 **Checked**: Assets any/has/none = 1,102 / 520 / 582 (520 + 582 = 1,102);
 `needs_user` still 73; open findings has/none = 18,294 / 239,615 against

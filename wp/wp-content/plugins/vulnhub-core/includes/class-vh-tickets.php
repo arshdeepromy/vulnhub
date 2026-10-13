@@ -76,7 +76,7 @@ final class Tickets {
 				 */
 				'tenable_agent_dark'     => array(
 					'label'    => __( 'Tenable agent went dark', 'vulnhub' ),
-					'help'     => __( 'The agent is installed but has stopped reporting. Met once Tenable sees it check in again.', 'vulnhub' ),
+					'help'     => __( 'The agent is installed but has stopped reporting. Met once Tenable sees it check in again after the ticket was raised (within the last 14 days); being offline overnight does not undo that.', 'vulnhub' ),
 					'resolved' => 'tenable_agent_dark',
 					'scope'    => true,
 				),
@@ -90,6 +90,19 @@ final class Tickets {
 					'label'    => __( 'CMDB gap', 'vulnhub' ),
 					'help'     => __( 'Add these assets to the CMDB. Met once the CMDB reports the asset.', 'vulnhub' ),
 					'resolved' => 'cmdb',
+					'scope'    => true,
+				),
+				/*
+				 * The other direction from a CMDB gap: the CMDB *has* the
+				 * record and says it is in service, but the machine is not
+				 * where the record says (typically gone from AWS). Filed as a
+				 * CMDB gap it opened fully met -- the CMDB "reports the
+				 * asset", which is exactly the problem.
+				 */
+				'cmdb_cleanup'           => array(
+					'label'    => __( 'CMDB clean-up', 'vulnhub' ),
+					'help'     => __( 'Correct CMDB records for assets that are not where the CMDB says. Met once the record is taken out of service, or the asset is seen in AWS again and matched to its CMDB record.', 'vulnhub' ),
+					'resolved' => 'cmdb_cleanup',
 					'scope'    => true,
 				),
 				'intune_gap'             => array(
@@ -205,7 +218,10 @@ final class Tickets {
 			// A sync replaces the provider's fields, not the record of the last
 			// check, which only this site knows.
 			$kept = $existing ? json_decode( (string) $existing['payload_json'], true ) : null;
-			foreach ( array( 'last_check', 'next_check', 'last_comment', 'conversation', 'list_sent' ) as $own ) {
+			// `attachments` is the provider's, but an answer that did not ask for
+			// the field must not read as "every file was removed": it is kept
+			// only when the incoming payload says nothing about it.
+			foreach ( array( 'last_check', 'next_check', 'last_comment', 'conversation', 'list_sent', 'attachments' ) as $own ) {
 				if ( is_array( $kept ) && is_array( $kept[ $own ] ?? null ) && ! isset( $payload[ $own ] ) ) {
 					$payload[ $own ] = $kept[ $own ];
 				}
@@ -724,10 +740,51 @@ final class Tickets {
 	 * as done, because it is. Without the join the expression is exactly what
 	 * it always was.
 	 */
+	public static function agent_back_days(): int {
+		/**
+		 * Filters how recent a Tenable agent check-in must be for a dark-agent
+		 * ticket to count the asset as back. Matches the 14-day "dark" filter
+		 * the Assets page raises these tickets from.
+		 */
+		return max( 1, (int) apply_filters( 'vulnhub_agent_back_days', 14 ) );
+	}
+
+	/**
+	 * How recently AWS must have reported an asset for a CMDB clean-up ticket
+	 * to count it as found. The AWS sync runs daily; a week tolerates a
+	 * missed run or two without letting a long-gone instance count.
+	 */
+	public static function cloud_seen_days(): int {
+		return max( 1, (int) apply_filters( 'vulnhub_cmdb_cleanup_seen_days', 7 ) );
+	}
+
+	/**
+	 * Outcome of one ticket asset as SQL. See the per-kind notes inside.
+	 */
 	public static function outcome_sql( string $kind, string $ta = 'ta', string $a = 'a', string $as = '' ): string {
 		$in_service = "'" . implode( "','", array_map( 'esc_sql', vh_in_service_statuses() ) ) . "'";
 		$test       = (string) ( self::kinds()[ $kind ]['resolved'] ?? '' );
 		$aside      = '' !== $as ? "WHEN {$as}.asset_id IS NOT NULL THEN 'aside' " : '';
+
+		/*
+		 * CMDB clean-up is met two ways, and both are "the CMDB is right now":
+		 *  - the record left service (retired, decommissioned) or the asset
+		 *    is gone from the inventory altogether;
+		 *  - the machine turned up: AWS has reported it within
+		 *    cloud_seen_days() and it is matched to the CMDB record (both
+		 *    sources on the one asset row). An in-service record for a
+		 *    machine that exists is a correct record.
+		 * sources_json holds the date each source last reported the asset.
+		 */
+		if ( 'cmdb_cleanup' === $test ) {
+			$cut = esc_sql( gmdate( 'Y-m-d', time() - self::cloud_seen_days() * DAY_IN_SECONDS ) );
+
+			return "CASE WHEN {$a}.id IS NULL THEN 'resolved'
+				WHEN {$a}.lifecycle_status NOT IN ({$in_service}) THEN 'resolved'
+				WHEN LOCATE('\"cmdb\"', {$a}.sources_json) > 0
+					AND JSON_UNQUOTE( JSON_EXTRACT( {$a}.sources_json, '" . '$.aws' . "' ) ) >= '{$cut}' THEN 'resolved'
+				{$aside}ELSE 'open' END";
+		}
 
 		if ( 'cleanup' === $test ) {
 			return "CASE WHEN {$a}.id IS NULL THEN 'resolved'
@@ -759,10 +816,21 @@ final class Tickets {
 			 * has been uninstalled since is still not reporting, so it stays
 			 * open rather than passing for done -- getting it back is the
 			 * same job by a different route.
+			 *
+			 * "Checked in" means Tenable's `last_connect` moved past the day
+			 * the asset was put on the ticket, and is recent enough not to
+			 * count as dark again (agent_back_days()). It used to be
+			 * `agent_status = 'on'`, which is Tenable's *online right now*:
+			 * every agent marked on had connected within the last two hours.
+			 * A workstation whose agent came back on Tuesday and was shut down
+			 * for the night read as dark again by evening, so the ticket said
+			 * "still outstanding" about machines that were plainly back, and
+			 * the count went up and down with the time of day.
 			 */
 			case 'tenable_agent_dark':
 				$irrelevant .= " OR {$a}.agent_coverage_state IN ('" . esc_sql( Agent_Coverage::NOT_POSSIBLE ) . "','" . esc_sql( Agent_Coverage::OUT_OF_SCOPE ) . "')";
-				$met         = "{$a}.agent_status = 'on'";
+				$met         = "{$a}.agent_last_connect IS NOT NULL AND {$a}.agent_last_connect > {$ta}.created_at"
+					. " AND {$a}.agent_last_connect >= '" . esc_sql( gmdate( 'Y-m-d H:i:s', time() - self::agent_back_days() * DAY_IN_SECONDS ) ) . "'";
 				break;
 			case 'defender':
 				$irrelevant .= " OR {$a}.defender_coverage_state IN ('" . esc_sql( Defender_Coverage::OUT_OF_SCOPE ) . "','" . esc_sql( Defender_Coverage::OTHER_DEVICE ) . "')";
@@ -1222,7 +1290,7 @@ final class Tickets {
 					a.id AS live_id, a.coverage_state AS now_coverage, a.defender_coverage_state AS now_defender,
 					a.lifecycle_status AS now_lifecycle, a.sources_json AS now_sources,
 					a.tenable_last_scan, a.defender_last_seen, a.ipv4,
-					a.agent_coverage_state AS now_agent, a.agent_status, a.agent_last_connect,
+					a.agent_coverage_state AS now_agent, a.agent_status, a.agent_last_connect, a.aws_instance_id,
 					tas.reason AS aside_reason, tas.note AS aside_note, tas.set_at AS aside_at,
 					{$sql} AS outcome" . $from . '
 				 ORDER BY FIELD(outcome, \'open\', \'resolved\', \'aside\', \'retired\', \'removed\'), ta.hostname ASC
@@ -1383,6 +1451,46 @@ final class Tickets {
 	 */
 	public static function set_conversation( int $ticket_id, array $conversation ): void {
 		self::set_payload_value( $ticket_id, 'conversation', $conversation );
+	}
+
+	/**
+	 * The files on a ticket, newest first, as the last read of the issue
+	 * left them (the poll carries them; see VulnHub_Jira_Connector).
+	 *
+	 * @param array<string,mixed> $ticket Ticket row.
+	 * @return array<int,array<string,mixed>>
+	 */
+	public static function attachments( array $ticket ): array {
+		$payload = json_decode( (string) ( $ticket['payload_json'] ?? '' ), true );
+
+		return is_array( $payload ) && is_array( $payload['attachments'] ?? null ) ? array_values( $payload['attachments'] ) : array();
+	}
+
+	/**
+	 * One file on a ticket by its provider id, or null.
+	 *
+	 * The only way a file is ever fetched: an id that is not on this
+	 * ticket's own list is refused, so the download route cannot be used
+	 * to read an attachment off some other issue.
+	 *
+	 * @param array<string,mixed> $ticket Ticket row.
+	 * @return array<string,mixed>|null
+	 */
+	public static function attachment( array $ticket, string $id ): ?array {
+		foreach ( self::attachments( $ticket ) as $a ) {
+			if ( is_array( $a ) && '' !== $id && (string) ( $a['id'] ?? '' ) === $id ) {
+				return $a;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $list Normalised attachments.
+	 */
+	public static function set_attachments( int $ticket_id, array $list ): void {
+		self::set_payload_value( $ticket_id, 'attachments', array_values( $list ) );
 	}
 
 	/**

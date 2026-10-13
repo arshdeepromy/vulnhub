@@ -8,6 +8,43 @@ assets are expected to be scanned at all.
 
 ---
 
+## The states, and when they are worked out
+
+Scan coverage is a stored column, `assets.coverage_state`, written by
+`VulnHub\Core\Coverage::recalculate()` in two set-based statements over the
+whole estate: first `tenable_last_scan` (the newest `last_found` of any Tenable
+finding on the asset, the only evidence of a scan there is), then the state.
+The rules are tried in this order:
+
+| State | Label | Rule | Gap? |
+|---|---|---|---|
+| `out_of_scope` | Out of scope | lifecycle status not in the scannable scope (`vh_scannable_statuses()`) | no |
+| `other_device` | Not a scanning target | asset type not a scannable type (printers, switches, video units…) | no |
+| `no_contact` | No recent contact | no Tenable uuid, no Tenable finding, and the newest contact date from any system is older than the contact window | **yes** |
+| `not_in_tenable` | Not in Tenable | no Tenable uuid and no Tenable finding | **yes** |
+| `never_scanned` | Never scanned | Tenable holds it but has never returned a finding | no |
+| `stale` | Scan is stale | last Tenable finding older than the scan window | no |
+| `covered` | Covered | scanned inside the window | no |
+
+`never_scanned` and `stale` count as *in Tenable* (`in_tenable_states()`),
+flagged apart as unscanned (`unscanned_states()`): a machine the scanner already
+holds is a scan to chase, not an onboarding job. "Not in Tenable" needs both
+tests, the uuid *and* the findings, because a CSV import carries no asset id.
+
+Two windows, both on **Settings → Freshness windows**: *Scan freshness window*
+(`coverage_window_days`, default 30) and *Last-contact window*
+(`contact_window_days`, default 45). "Contact" is the newest of
+`last_intune_sync`, `cmdb_last_scan` and `last_seen` (`Coverage::contact_sql()`).
+
+It runs after every scheduled sync (`Scheduler::run_sync()`), every queued
+manual one (`run_sync_now()`), every finished CSV import, every lifecycle move
+(`Lifecycle::set()`), and in nightly housekeeping — see `docs/SYNC.md`. It
+ends by firing `vulnhub_coverage_recalculated`, which is what recomputes
+Defender coverage and agent coverage (below) at priority 5, so the three
+states on one row are always the same age, and what re-warms the dashboard.
+
+---
+
 ## What the Intune CSV import was losing
 
 The Graph connector has always captured a device's last check-in. The CSV
@@ -54,8 +91,8 @@ whole point of the next section.
 ## Dates were being read two months wrong
 
 `strtotime()` treats a slashed date as American, always. An Intune export
-produced on a New Zealand machine writes `07/09/2026` meaning 7 September, and
-PHP read it as 9 July. For a last check-in that is not cosmetic: it is the
+produced on a machine with a day-first locale writes `07/09/2026` meaning
+7 September, and PHP read it as 9 July. For a last check-in that is not cosmetic: it is the
 field that decides whether an unscanned asset is reported as live work or as a
 record nobody retired, against a 45-day window.
 
@@ -65,15 +102,18 @@ and the Tenable asset export, since they all go through `vh_to_mysql()`:
 - a field above 12 settles it from the file itself, whatever the setting says;
 - anything already unambiguous (ISO, dashes, a written month) is untouched;
 - only genuinely ambiguous dates fall back to **Settings → Date order in
-  imports**, which defaults to the site's *timezone* rather than its admin
-  language — almost every install outside the US is left on `en_US`, so the
-  language would have told every non-American customer their files were
-  American.
+  imports** (`import_date_order`: `auto`, `dmy` or `mdy`; `vh_date_order()`).
+  *Automatic* reads the site's *timezone* rather than its admin language —
+  almost every install outside the US is left on `en_US`, so the language
+  would have told every non-American customer their files were American. A
+  United States or Philippines zone means month first, any other named zone
+  day first; only a raw UTC offset, which says nothing about where anybody
+  is, falls back to the locale.
 
-This install has no WordPress timezone set, so the automatic answer was
-"American". It has been set explicitly to **day first**. Setting the site
-timezone to `Pacific/Auckland` under Settings → General would make the
-automatic answer correct as well, and would fix every date WordPress displays.
+This install had no WordPress timezone set, so the automatic answer was
+"American", and the setting was put explicitly to **day first**. (Since
+changed: the site timezone has been set under Settings → General, so the
+automatic answer now agrees, and every date WordPress displays is local.)
 
 ---
 
@@ -160,7 +200,8 @@ so they are `Agent out of scope` and are **not** counted as a gap; only
 | `agent_out_of_scope` | no agent exists for this platform, or the OS is below its minimum | no |
 | `out_of_scope` | not in service, or not a machine | no |
 
-**Where supportability comes from.** `data/agent-support-*.csv`, curated by
+**Where supportability comes from.** `vulnhub-core/data/agent-support-*.csv`
+(`Agent_Coverage::support_table()`), curated by
 hand and carrying the date it was checked. There is no Tenable API for it and
 their documentation is an HTML page with no contract, so nothing reads it at
 runtime: a docs redesign must never be able to silently reclassify an estate
@@ -208,7 +249,7 @@ changed, which is what `Agent_Status` does on the hourly
 
 **Transitions, not samples.** A row per poll over ~900 agents is ~22,000 rows a
 day and answers nothing better: the state between two identical readings is not
-in doubt. `vh_vulnhub_agent_status` gets a row only when an agent flips
+in doubt. The `vulnhub_agent_status` table (`vh_table( 'agent_status' )`) gets a row only when an agent flips
 on↔off — a few hundred a week — and `assets.agent_status`,
 `agent_last_connect` and `agent_status_since` carry what is true now, so
 "offline since" is one indexed read rather than a scan of the history.
@@ -234,10 +275,51 @@ for scanning and misleadingly for anything else.
 513 online, 141 offline, the longest dark for 26 days. 105 have been dark over
 a day, 46 over a week, none over 30 days.
 
-Filter `agent_dark=` (1/7/14/30/90 days) on Assets & owners, "dark since …"
+Filter `agent_dark=` (1/7/14/30/90 days; the *Agent* control sends it as
+`agent=dark_N`, *Offline for over N days*) on Assets & owners, "dark since …"
 beside the agent chip in the list, and on the asset page the state, Tenable's
 own last check-in, and the recorded changes behind a disclosure that says where
 the history came from.
+
+## Dropped by Tenable: asked, not inferred
+
+Tenable reclaims licences and deletes assets that have been quiet long
+enough. When it does, the findings already held here stop describing
+anything: nothing scans that machine any more, so its numbers freeze and go
+on looking current.
+
+**Absence from a sync is not evidence.** An incremental asset export holds only
+recently assessed hosts, so a machine missing from one has usually just not
+been rescanned (of eight assets whose Tenable date had fallen behind, all eight
+were still in Tenable). So `VulnHub\Core\Tenable_Dropped` *asks*, one asset at
+a time, with `GET /assets/{uuid}`, and accepts only a 404 as gone. Anything
+else that is not a 2xx (a 500, a timeout, a rate limit) changes nothing: an
+API having a bad minute must never declare an estate missing.
+
+**Gone is not the same as wrong.** An asset Tenable dropped that the CMDB has
+retired was dropped correctly. What makes it worth asking is the combination,
+so the candidates (`candidates()`) are assets that carry a Tenable uuid, are in
+the scannable lifecycle scope, and that the CMDB reported within the last 7
+days; each is asked about at most every 3 days, the worst first.
+
+- **When:** on nightly housekeeping, 40 assets per run (`verify()`), for a live,
+  enabled Tenable connector only — a handful of single-asset reads that must
+  never lengthen an import.
+- **What it writes:** `assets.tenable_dropped_at` on a 404 (kept from the first
+  proof, not the latest check) and `tenable_checked_at` on every answer. A later
+  successful read clears the mark, so a re-onboarded machine heals itself.
+  Option `vulnhub_tenable_dropped_checked_at` holds when the batch last ran.
+- **Where it shows:** *Dropped by Tenable* in the *Scan coverage* control on
+  Assets & owners (`coverage=dropped`, carried as `dropped=1`, which is
+  `Repo::assets( [ 'tenable_dropped' => 1 ] )`), honoured by the asset CSV
+  export, and a *Dropped by Tenable* line on the asset page saying when it was
+  confirmed. `Tenable_Dropped::summary()`
+  counts the assets and the open findings they carry.
+
+This is separate from the removal sweep and the full-resync prune in
+`docs/SYNC.md`, which retire Tenable-only assets. `Tenable_Dropped` retires
+nothing; it flags machines another source still vouches for, which is exactly
+where retiring would be the wrong answer.
 
 ## Coverage by site
 
@@ -444,6 +526,53 @@ raising with the CMDB's owner rather than as an agent gap.
 their names exists as an instance there), 3 reported (one instance already on
 its own record, two hostnames matching both a stopped and a running
 instance). Every placed record exports account id, account name and region.
+
+## Online dot and EC2 schedules
+
+The online dot (`Repo::online_state()`) is green when something that talks to
+the machine — Defender, the Tenable agent, Intune, a completed Tenable scan —
+has heard from it inside 24 hours for a server, seven days for anything else.
+For an EC2 instance that the Instance Scheduler switches off every evening and
+weekend, that rule is wrong twice a day. `vulnhub-aws` corrects it through the
+`vulnhub_online_state` filter (`VulnHub_AWS_Run_Profile`), reading only what
+AWS already reports — nothing is scanned or contacted.
+
+**Profile per instance**, from the newest complete cost snapshot (14 days of
+hourly CloudWatch data, tags, stop time; every account the sign-in reaches)
+plus the network capture's newer running/stopped reading where it has one:
+
+| Pattern | Rule |
+|---|---|
+| `always_on` | ran ≥ 90% of the window |
+| `scheduled` | part-time and repeating week to week, or carries a scheduler tag; its schedule is the weekday × hour slots it ran in on both weeks |
+| `autoscaling` | carries `aws:autoscaling:groupName` — part-time because it is replaced |
+| `part_time` | part-time with no pattern (rebuilt, started by hand) |
+| `off` | no running hour in the window |
+
+Cached in the `vulnhub_aws_run_profiles` option, rebuilt when a newer snapshot
+or capture lands.
+
+**Dot colours**
+
+- **Green** — the ordinary rule; or, for a scheduled instance, something heard
+  from it during its most recent scheduled window (a window is judged two hours
+  after it opens), so being dark out of hours is not held against it.
+- **Orange** — AWS reports it stopped and nothing heard from it: for a
+  scheduled instance, the stopped reading must have been taken *after* its last
+  window opened; for anything else, inside the ordinary window.
+- **Red** — AWS reports it stopped for more than seven days and nothing has
+  heard from it since. Where AWS gave no stop time but the instance ran no hour
+  in the window, the window's start is used and the tooltip says "at least".
+- Hollow and absent mean what they always did. A scheduled instance with no
+  check-in in its window and no AWS reading taken inside that window stays
+  hollow, with a tooltip saying which reading is missing.
+
+**Limits.** A stopped reading taken before a window opened proves nothing
+about that window, so orange for scheduled instances needs an AWS capture
+during scheduled hours; a nightly capture never produces one. Plerion's EC2
+list has no running state: it places instances, it never confirms one stopped.
+The schedule is inferred from what ran, not read from the scheduler's own
+definition, so the label ("Mon–Fri 08:00–21:00") is a summary.
 
 ## Checking it
 

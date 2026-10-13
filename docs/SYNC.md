@@ -13,7 +13,86 @@ checkpoint to disk, so no single failure costs more than the step it happened on
 
 ---
 
-## The two phases
+## Every connector, and how its sync runs
+
+Staged sync is one shape a sync can take; most connectors are small enough not
+to need it. Every connector extends `VulnHub\Core\Connector` and registers on
+`vulnhub_register_connectors`. The base class's `sync()` is `final` and wraps
+the connector's own `do_sync()` in the same bookkeeping for all of them: a run
+row in the sync log, a per-connector lock (transient `vulnhub_sync_lock_<id>`,
+30 minutes, so a second run is refused while one holds it), `last_sync` on the
+connector's settings, and the `vulnhub_sync_complete` action at the end. What
+differs is the default schedule and where a manual run executes:
+
+| Connector (id) | Plugin | Default schedule | Manual *Sync now* runs | What a run does |
+|---|---|---|---|---|
+| Tenable (`tenable`) | vulnhub-tenable | every 4 hours | in the background when live; inline in mock mode | the staged sync on this page: incremental, full resync, or assets-only |
+| Intune & Entra ID (`intune`) | vulnhub-intune | every 12 hours | inline | re-reads people, group memberships (when *Also sync group memberships* is ticked) and managed devices from Graph |
+| CMDB (`cmdb`) | vulnhub-cmdb | daily | inline | re-reads the configured source (ServiceNow, Jira Assets, a Confluence page) or re-imports the last uploaded CSV; see `docs/CMDB-ASSETS.md` |
+| Jira Cloud (`jira`) | vulnhub-jira | every 30 minutes | inline | polls the status of tickets VulnHub raised; `full` also re-reads closed ones |
+| Amazon AWS (`aws`) | vulnhub-aws | hourly | in the background | network capture and instance inventory; see `docs/AWS-NETWORK.md` |
+| Plerion (`plerion`) | vulnhub-plerion | hourly | inline | cloud asset inventory and exposure; see `docs/PLERION.md` |
+
+The sign-in connectors in vulnhub-auth (LDAP, Entra ID, Okta, generic OIDC)
+and the SMTP mail connector answer `supports_sync()` false: they import
+nothing, are never scheduled, and the MCP tool refuses to "sync" them.
+
+**Scheduled.** `Scheduler::ensure_schedules()` (on `vulnhub_loaded`) keeps one
+recurring `vulnhub_run_connector_sync` event per connector, with the
+connector id as its argument, at the connector's *interval* setting — the
+choices are manual only, 15 or 30 minutes, hourly, 4 or 12 hours, daily and
+weekly (`Scheduler::interval_choices()`). A disabled connector, or one set to
+*Manual only*, has its event removed. `run_sync()` runs it with
+`mode => scheduled`.
+
+**Manual.** The connector card's *Sync now* (and, for Tenable, *Full resync*
+and *Sync assets only*) posts to `POST vulnhub/v1/connectors/<id>/sync`
+(capability `vulnhub_run_sync`), with optional `full`, `assets_only` and
+`force`. The MCP tool `vulnhub_sync_connector` takes `id` and `full`. Both
+route the same way: a connector whose `async_sync()` is true is queued (see
+*Resumability* below); any other runs inside the request.
+
+**After every run.** `vulnhub_sync_complete( $connector, $status, $stats )`
+fires whether the run succeeded or failed; `$status` is `success` or
+`failed`. What listens, in priority order:
+
+| Priority | Listener | Runs for |
+|---|---|---|
+| 5 | `Lifecycle::sweep_and_recount()` — keeps findings in step with their asset's lifecycle | every run |
+| 10 | vulnhub-rules `VulnHub_Rules_Engine::after_sync()` — classification | successful `tenable`, `intune`, `cmdb` runs |
+| 10 | vulnhub-jira reopener | see `docs/TICKETS.md` |
+| 12 | vulnhub-aws `VulnHub_AWS_Coverage::on_sync()` | AWS, posture and CMDB syncs (`docs/COVERAGE.md`) |
+| 15 | `Fleets::on_sync()` — AppStream fleet records | every run; fleet config refreshed after `aws` |
+| 20 | `Mapping::after_sync()` — ownership | successful `tenable`, `intune`, `cmdb` runs |
+| 20 | the EOS plan relink, the AWS cost collector (`aws` only), the threat port map | each by its own test |
+| 25 | `Lifecycle::derive()` — lifecycle for what the CMDB does not list (`docs/LIFECYCLE.md`) | any run that did not fail |
+| 30 | `Exceptions::reapply_active()` | any run that did not fail |
+| 40 | `App_Fix` schedules its recompute two minutes out | `tenable` only |
+| 99 / 100 | dashboard cache bust, then a background re-warm | every run |
+
+Classification (10) has to finish before ownership (20) reads environment and
+criticality, which is why the rules engine is not simply another mapping rule.
+
+**Feeds that are not connectors.** CSV imports (vulnhub-import: Tenable
+vulnerability and asset exports, CMDB, Intune and Defender device exports)
+run as jobs of their own: bounded passes on `vulnhub_import_run_pass`, a
+five-minute `vulnhub_import_sweep` that re-arms a job whose event was lost,
+and a browser-driven pass through `vulnhub-import/v1/jobs/<id>/pass` while
+someone watches. A finished job runs the same housekeeping a sync triggers
+(lifecycle sweep, roll-ups, mapping, coverage) and fires
+`vulnhub_import_complete`. The department and EOS programme uploads are
+one-shot admin uploads. Two Tenable reads ride standing schedules rather
+than the sync: the hourly agent-status poll (`vulnhub_poll_agent_status`,
+`docs/COVERAGE.md`) and the daily dropped-asset check on housekeeping
+(`Tenable_Dropped`, also `docs/COVERAGE.md`).
+
+**Standing schedules** (`ensure_schedules()`): housekeeping and the metric
+snapshot daily, closure verification and the agent poll hourly, automations
+every 15 minutes, and the resume sweep every 5 minutes.
+
+---
+
+## The phases
 
 A run moves through three phases recorded in `state.json`: `download` →
 `process` → `finalize`.
@@ -84,9 +163,13 @@ the scanner has dropped (see *Pruning* below) and records `last_full_sync_at`.
 Scan-coverage states are stored on the asset, not computed per render, so they
 are recalculated by the scheduler once the connector returns —
 `Scheduler::run_sync()` for a scheduled run and `run_sync_now()` for every
-manual one (the button, REST, MCP and the resume sweep). The manual path used
-to skip it, which left an asset whose findings had just been imported reading
-"Not in Tenable" until the nightly housekeeping run caught up.
+queued one (the button, REST and MCP for a background connector, and the
+resume sweep). The queued path used to skip it, which left an asset whose
+findings had just been imported reading "Not in Tenable" until the nightly
+housekeeping run caught up. A connector that syncs inside the request
+(`async_sync()` false) goes through neither, so after a manual run of one of
+those, coverage is refreshed only if something else recalculates it (a
+lifecycle move does) or at the next scheduled run or housekeeping.
 
 ---
 
@@ -99,26 +182,35 @@ checkpoint is never read back half-written). The state carries the phase, the
 ```jsonc
 {
   "phase": "process",
+  "started": "2026-09-20 03:00:00",
   "since": 1726000000,
   "is_full": false,
+  "assets_only": false,
   "download": { "assets_chunks": 4, "vuln_chunks": 37, "bytes": 812334102, "status": "done" },
   "process":  { "stage": "vulns", "chunk": 12, "records_done": 41000,
                 "records_total": 220000, "asset_chunks": 4, "vuln_chunks": 37 }
 }
 ```
 
-If the container is killed or the host reboots mid-run, the sync resumes from the
-exact chunk it stopped on instead of restarting the whole import. Two things
-drive resumption:
+If the container is killed or the host reboots mid-run, processing resumes from
+the exact chunk it stopped on instead of restarting the whole import. A run
+interrupted while still *downloading* starts the download again (a Tenable
+export job is short-lived and its chunk numbering does not survive a new
+request), but it is still the same run: same `since`, same `is_full`. Two
+things drive resumption:
 
-- **`VulnHub_Scheduler::HOOK_RESUME`** — a 5-minute cron sweep (`resume_syncs()`)
-  that picks up any connector left in a resumable phase.
+- **`Scheduler::HOOK_RESUME`** (`vulnhub_resume_syncs`) — a 5-minute cron sweep
+  (`resume_syncs()`) that queues any connector left in a resumable phase,
+  skipping one whose sync lock is still held.
 - **`Connector::resumable_sync()`** — returns true while the phase is one of
   `download` / `process` / `finalize`.
 
 A "Sync now" from the UI schedules `HOOK_SYNC_NOW` as a single WP-cron event
-(`queue_sync()`), so the request returns immediately and the work runs in the
-cron worker rather than the web request. A connector whose `async_sync()` is true
+(`queue_sync()`, which also calls `spawn_cron()` so it starts without waiting
+for the next tick), so the request returns immediately and the work runs in the
+cron worker rather than the web request. `run_sync_now()` runs it with
+`force` and `ignore_lock`, so a stale lock left by a killed worker cannot block
+it. A connector whose `async_sync()` is true
 is **always** queued this way — including a full resync, which records the
 request on the connector (`request_full_sync()`) and then queues the same run.
 (`full=true` used to force the sync inline in the web request, and the staged
@@ -153,6 +245,56 @@ you ever suspect a staging directory has been orphaned.
 
 ---
 
+## Platform fit: server-only plugins on Windows clients
+
+Since January 2026 Windows Server 2025 has its own monthly KBs and build
+numbers, separate from Windows 11 24H2/25H2, though both still report build
+10.0.26100. Tenable's "Windows Server 2025 Security Update" plugins compare
+`ntoskrnl.exe` against the *server* build (26100.33158 for July 2026) and so
+fire on every Windows 11 workstation that is behind -- machines that are also
+missing the Windows 11 update that actually applies. Left alone, that counted
+the same workstations two or three times in every total and put a server
+package on workstation tickets.
+
+`VulnHub\Core\Platform_Fit` decides it at the root, in
+`Repo::upsert_finding()` -- the one place every scanner finding is written: a
+plugin whose title names Windows Server (or Azure Stack HCI) **and no client
+Windows**, on an asset whose OS `Os::parse()` reads as family `windows` (a
+client), lands **`suppressed`**. That is the state `vh_live_finding_states()`
+leaves out, so every count, widget, report, export, asset roll-up and ticket
+draft drops it with no change of its own. Nothing is deleted; `prev_state` keeps
+what Tenable said.
+
+Deliberately narrow:
+
+- titles naming both ("Windows 10 version 1809 / Windows Server 2019",
+  "Windows 11 Version 24H2 / Windows Server 2025") apply to both and are kept;
+- an asset with no OS string is never suppressed on a guess;
+- the reverse (client-only plugin on a server) is not suppressed.
+
+`vulnhub_platform_mismatch` filters the decision.
+
+**After every Tenable sync** (`vulnhub_sync_complete`, priority 4 -- before the
+lifecycle recount at 5) `Platform_Fit::sweep()` re-judges every existing finding
+of a server-only plugin, because a delta sync does not re-send unchanged rows
+and an asset's OS can change on its own: newly mismatched rows are suppressed,
+rows that no longer qualify are restored from `prev_state`. It also takes parked
+findings **off any ticket** they were raised on and recounts the ticket's
+`finding_count`, so the progress bar, the findings table, verification and the
+ticket report are about work that applies (leaving the link would have counted
+them as done). Each removal is in the audit log (`ticket.platform_fit`) with
+the finding ids; links are not recreated if a finding is later restored.
+
+`wp vulnhub platform-fit [--dry-run]` runs the same pass by hand, then
+recounts asset roll-ups and busts the widget cache.
+
+First run (2026-10-02): 2,786 findings of 5 "Windows Server 2025 Security
+Update" plugins checked; 2,337 on Windows 11 workstations suppressed (214 live:
+15 open, 199 reopened; 2,123 fixed); 449 on servers kept. Live findings
+251,859 -> 251,645; summed open criticals 1,538 -> 1,324. One workstation
+ticket lost 539 of its 1,318 findings (now 779, 470 done). No Server 2022 or
+2012 R2 plugin was found on a client.
+
 ## Incremental runs
 
 Most runs are incremental. "Incremental" means *what Tenable has seen since the
@@ -173,7 +315,7 @@ a run can miss.
 | Export | Filter sent | What Tenable returns |
 |---|---|---|
 | Vulnerabilities | `since` = watermark − 24h, `state` = OPEN, REOPENED, FIXED | OPEN/REOPENED findings **seen** on or after `since`, and FIXED findings **fixed** on or after `since` |
-| Assets | `last_assessed` = max(`since`, now − `asset_days`) | Assets **scanned** (credentialed or not) after that time |
+| Assets | `last_assessed` = max(`since`, now − `asset_days`), plus `is_licensed: true`, `is_deleted: false`, `is_terminated: false` | Licensed, live assets **scanned** (credentialed or not) after that time |
 
 Tenable defines `since` per state: OPEN/REOPENED findings are included when they
 were "seen on or after the since date", FIXED findings when they were "fixed on
@@ -360,7 +502,10 @@ question directly, and that is a different and better kind of evidence:
 `VulnHub_Tenable_Connector::sync_removals()` runs two small exports in the
 finalize phase of **every** run -- incremental, full and assets-only -- and
 hands the uuids to `Repo::retire_removed_tenable()`. Both cost seconds against
-the vulnerability export's minutes.
+the vulnerability export's minutes. The window is the run's own `since`, but
+never further back than 90 days (`REMOVAL_WINDOW_DAYS`). A sweep that fails is
+logged and skipped rather than failing the sync: the findings are already
+imported by then, and the next run's window covers this one again.
 
 Two exports and not one, because the flags are separate booleans: asking for
 both true in a single export means deleted **and** terminated, a much smaller
@@ -392,10 +537,18 @@ have sat there until a full resync noticed they were absent, up to a week.
 The inventory changes by the minute and the findings do not. So they have
 separate schedules, and a run consults both:
 
-| setting | question | cost here |
-|---|---|---|
-| *Refresh assets every* (`assets_interval_hours`) | is the cheap half due? | ~3 s, 574 records |
-| *Import findings at most every* (`findings_interval_hours`) | is the expensive half due? | ~15 min, 5 GB |
+| setting | question | default | cost here |
+|---|---|---|---|
+| *Refresh assets every* (`assets_interval_hours`) | is the cheap half due? | 0, *Only with a full sync* (off) | ~3 s, 574 records |
+| *Import findings at most every* (`findings_interval_hours`) | is the expensive half due? | 0, *Every sync* | ~15 min, 5 GB |
+
+The cheap half is measured from its own timestamp (option
+`vulnhub_assets_only_at_<connector>`, written when an assets-only run imports),
+the expensive half from `sync_watermark`. *Sync assets only*, or
+`assets_only=true` on the REST route, records a one-shot request in
+`vulnhub_assets_only_requested_<connector>` for the queued run to pick up; it is
+ignored alongside `full`. Like `is_full`, `assets_only` is decided once when a
+fresh run starts and carried in `state.json`.
 
 A **scheduled** run takes the assets-only path when the first is due and the
 second is not. Everything else is unchanged: *Sync now* always imports
@@ -439,7 +592,7 @@ prepares the next batch are not mistaken for a stalled sync.
 
 ## Stall detection and status
 
-`VulnHub_Logger::sync_status()` is what the connector card and the dashboard poll
+`Logger::sync_status()` is what the connector card and the dashboard poll
 for live progress. It reports the current phase, both progress bars (download
 bytes/rate/ETA and processing records), the exact last-sync timestamp and
 duration, and reaps a genuinely stuck run: a run whose heartbeat has been silent

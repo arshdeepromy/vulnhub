@@ -126,6 +126,10 @@ final class VulnHub_Dash_Export {
 				'label' => __( 'Vendor findings', 'vulnhub' ),
 				'cap'   => Caps::VIEW,
 			),
+			'control_gaps'    => array(
+				'label' => __( 'Control gaps', 'vulnhub' ),
+				'cap'   => Caps::VIEW,
+			),
 		);
 	}
 
@@ -219,6 +223,9 @@ final class VulnHub_Dash_Export {
 					'bundle_app'  => array( $vuln, __( 'Bundled in app', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['bundle_app'] ?? '' ) ),
 					'location'    => array( $asset, __( 'Location', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['location_name'] ?? '' ) ),
 					'install_path'=> array( $vuln, __( 'Install path', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['zone_path'] ?: self::install_path( (string) ( $r['output'] ?? '' ) ) ) ),
+					'found_version' => array( $vuln, __( 'Version found', 'vulnhub' ), static fn( array $r ): string => self::package_field( $r, 'installed' ) ),
+					'fixed_version' => array( $vuln, __( 'Fixed in version', 'vulnhub' ), static fn( array $r ): string => self::package_field( $r, 'fixed' ) ),
+					'package'     => array( $vuln, __( 'Package', 'vulnhub' ), static fn( array $r ): string => self::package_field( $r, 'name' ) ),
 					'path_zone'   => array( $vuln, __( 'Path zone', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['path_zone'] ?? '' ) ),
 					'cve'         => array( $vuln, __( 'CVE', 'vulnhub' ), static fn( array $r ): string => self::cve_list( $r ) ),
 					'severity'    => array( $sev, __( 'Severity', 'vulnhub' ), static fn( array $r ): string => (string) $r['severity'] ),
@@ -296,6 +303,28 @@ final class VulnHub_Dash_Export {
 					'assets'   => array( $g, __( 'Vulnerable assets', 'vulnhub' ), static fn( array $r ): string => (string) $r['assets'] ),
 					'findings' => array( $g, __( 'Open findings', 'vulnhub' ), static fn( array $r ): string => (string) $r['findings'] ),
 					'bundles'  => array( $g, __( 'Bundled libraries', 'vulnhub' ), static fn( array $r ): string => (string) ( $r['bundles'] ?? '' ) ),
+				);
+				break;
+
+			case 'control_gaps':
+				$g = __( 'Cause', 'vulnhub' );
+				$n = __( 'Spread', 'vulnhub' );
+				$c = __( 'Control', 'vulnhub' );
+
+				$cols = array(
+					'view'          => array( $g, __( 'View', 'vulnhub' ), static fn( array $r ): string => (string) $r['tab'] ),
+					'name'          => array( $g, __( 'Cause / detection / product', 'vulnhub' ), static fn( array $r ): string => (string) $r['name'] ),
+					'detail'        => array( $g, __( 'Detection / source / kind', 'vulnhub' ), static fn( array $r ): string => (string) $r['detail'] ),
+					'resource_type' => array( $g, __( 'Resource type / class', 'vulnhub' ), static fn( array $r ): string => (string) $r['resource_type'] ),
+					'severity'      => array( $g, __( 'Highest severity', 'vulnhub' ), static fn( array $r ): string => (string) $r['severity'] ),
+					'sample'        => array( $g, __( 'Example message / bundled libraries', 'vulnhub' ), static fn( array $r ): string => (string) $r['sample'] ),
+					'findings'      => array( $n, __( 'Findings', 'vulnhub' ), static fn( array $r ): string => (string) $r['findings'] ),
+					'resources'     => array( $n, __( 'Resources / assets', 'vulnhub' ), static fn( array $r ): string => (string) $r['resources'] ),
+					'accounts'      => array( $n, __( 'Accounts', 'vulnhub' ), static fn( array $r ): string => (string) $r['accounts'] ),
+					'tiers'         => array( $n, __( 'Environment tiers', 'vulnhub' ), static fn( array $r ): string => (string) $r['tiers'] ),
+					'causes'        => array( $n, __( 'Distinct causes', 'vulnhub' ), static fn( array $r ): string => (string) $r['causes'] ),
+					'layer'         => array( $c, __( 'Control layer', 'vulnhub' ), static fn( array $r ): string => (string) ( VulnHub_Dash_Control_Gaps::layers()[ (string) $r['layer'] ] ?? $r['layer'] ) ),
+					'mechanism'     => array( $c, __( 'Suggested mechanism', 'vulnhub' ), static fn( array $r ): string => (string) $r['mechanism'] ),
 				);
 				break;
 
@@ -426,6 +455,19 @@ final class VulnHub_Dash_Export {
 	 */
 	private static function install_path( string $output ): string {
 		return \VH_Product::install_path( $output );
+	}
+
+	/**
+	 * One field of the package evidence behind a finding: the package name,
+	 * the version found on the machine, or the version that fixes it. These
+	 * are what a check that reports no file path says instead, and on a
+	 * Linux estate that is most of them.
+	 *
+	 * @param array<string,mixed> $r     Finding row.
+	 * @param string              $field name|installed|fixed.
+	 */
+	private static function package_field( array $r, string $field ): string {
+		return (string) ( \VH_Product::package_evidence( (string) ( $r['output'] ?? '' ) )[ $field ] ?? '' );
 	}
 
 	private static function cve_list( array $r ): string {
@@ -842,6 +884,13 @@ final class VulnHub_Dash_Export {
 			case 'vendor_products':
 			case 'vendor_findings':
 				self::vendor_drill( $view, $out, $cols );
+				break;
+			case 'control_gaps':
+				// The tab rides in on the query string; the rows are the
+				// same VulnHub_Dash_Control_Gaps::rows() the screen draws.
+				foreach ( VulnHub_Dash_Control_Gaps::rows( sanitize_key( self::get( 'tab', 'cloud' ) ) ) as $row ) {
+					self::emit( $out, $cols, $row );
+				}
 				break;
 		}
 
@@ -1533,6 +1582,8 @@ final class VulnHub_Dash_Export {
 				__( 'Team', 'vulnhub' ),
 				__( 'Location', 'vulnhub' ),
 				__( 'Install path', 'vulnhub' ),
+				__( 'Version found', 'vulnhub' ),
+				__( 'Fixed in version', 'vulnhub' ),
 				__( 'State', 'vulnhub' ),
 				__( 'First found', 'vulnhub' ),
 				__( 'Due', 'vulnhub' ),
@@ -1560,6 +1611,8 @@ final class VulnHub_Dash_Export {
 						(string) ( $r['team_name'] ?? '' ),
 						(string) ( $r['location_name'] ?? '' ),
 						(string) ( $r['zone_path'] ?: self::install_path( (string) ( $r['output'] ?? '' ) ) ),
+						self::package_field( $r, 'installed' ),
+						self::package_field( $r, 'fixed' ),
 						(string) ( $r['state'] ?? '' ),
 						(string) ( $r['first_found'] ?? '' ),
 						(string) ( $r['due_at'] ?? '' ),

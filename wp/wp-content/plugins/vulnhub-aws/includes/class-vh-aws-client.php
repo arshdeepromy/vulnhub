@@ -46,6 +46,175 @@ final class VulnHub_AWS_Client {
 	}
 
 	/**
+	 * GET a REST service that addresses resources by path (API Gateway,
+	 * Lambda, and the other control planes that read like a web API).
+	 *
+	 * `json()` above only posts, and `query()` only speaks the old form-encoded
+	 * dialect; neither can ask for `/restapis/{id}/stages`. The signer already
+	 * canonicalises a path and a query string correctly for every service but
+	 * S3, so this is the missing third shape rather than a new mechanism.
+	 *
+	 * @param string                $service AWS service name for the signature.
+	 * @param string                $region  Region.
+	 * @param string                $path    Absolute path, starting with a slash.
+	 * @param array<string,string>  $query   Query parameters, unencoded.
+	 * @param string                $host    Override the derived host.
+	 * @return array{ok:bool,status:int,data:array<string,mixed>,error:string}
+	 */
+	public function get( string $service, string $region, string $path, array $query = array(), string $host = '' ): array {
+		$host = '' !== $host ? $host : sprintf( '%s.%s.amazonaws.com', $service, $region );
+		$url  = 'https://' . $host . $path;
+
+		if ( $query ) {
+			$url .= '?' . http_build_query( $query, '', '&', PHP_QUERY_RFC3986 );
+		}
+
+		$headers = VulnHub_AWS_SigV4::headers(
+			'GET',
+			$url,
+			'',
+			array(),
+			$region,
+			$service,
+			$this->key,
+			$this->secret,
+			$this->token
+		);
+
+		++$this->calls;
+
+		$res = wp_remote_get(
+			$url,
+			array(
+				'headers' => $headers,
+				'timeout' => $this->timeout,
+			)
+		);
+
+		return $this->decode_rest( $res );
+	}
+
+	/**
+	 * GET one of the REST-*XML* services.
+	 *
+	 * Route 53 is the reason this exists: it is a REST service like the ones
+	 * `get()` handles, but it answers in XML, so `json_decode` on its body
+	 * returns null and a perfectly good response reads as a failure. Same
+	 * signing, same shape as `query()`'s answer.
+	 *
+	 * @param array<string,string> $query Query parameters, unencoded.
+	 * @param string               $host  Override the derived host.
+	 * @return array{ok:bool,status:int,xml:?SimpleXMLElement,error:string}
+	 */
+	public function get_xml( string $service, string $region, string $path, array $query = array(), string $host = '' ): array {
+		$host = '' !== $host ? $host : sprintf( '%s.%s.amazonaws.com', $service, $region );
+		$url  = 'https://' . $host . $path;
+
+		if ( $query ) {
+			$url .= '?' . http_build_query( $query, '', '&', PHP_QUERY_RFC3986 );
+		}
+
+		$headers = VulnHub_AWS_SigV4::headers(
+			'GET',
+			$url,
+			'',
+			array(),
+			$region,
+			$service,
+			$this->key,
+			$this->secret,
+			$this->token
+		);
+
+		++$this->calls;
+
+		$res = wp_remote_get(
+			$url,
+			array(
+				'headers' => $headers,
+				'timeout' => $this->timeout,
+			)
+		);
+
+		if ( is_wp_error( $res ) ) {
+			return array(
+				'ok'     => false,
+				'status' => 0,
+				'xml'    => null,
+				'error'  => $res->get_error_message(),
+			);
+		}
+
+		$status = (int) wp_remote_retrieve_response_code( $res );
+		$raw    = (string) wp_remote_retrieve_body( $res );
+
+		$prev = libxml_use_internal_errors( true );
+		$xml  = simplexml_load_string( $raw );
+		libxml_clear_errors();
+		libxml_use_internal_errors( $prev );
+
+		if ( $status >= 200 && $status < 300 && false !== $xml ) {
+			return array(
+				'ok'     => true,
+				'status' => $status,
+				'xml'    => $xml,
+				'error'  => '',
+			);
+		}
+
+		$err = '';
+
+		if ( false !== $xml && isset( $xml->Error ) ) { // phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase
+			$err = (string) $xml->Error->Code . ': ' . (string) $xml->Error->Message; // phpcs:ignore
+		}
+
+		return array(
+			'ok'     => false,
+			'status' => $status,
+			'xml'    => null,
+			'error'  => '' !== $err ? $err : substr( $raw, 0, 300 ),
+		);
+	}
+
+	/**
+	 * Read a REST-JSON response into this class's answer shape.
+	 *
+	 * @param array<string,mixed>|WP_Error $res Response from wp_remote_*.
+	 * @return array{ok:bool,status:int,data:array<string,mixed>,error:string}
+	 */
+	private function decode_rest( $res ): array {
+		if ( is_wp_error( $res ) ) {
+			return self::fail( 0, $res->get_error_message() );
+		}
+
+		$status = (int) wp_remote_retrieve_response_code( $res );
+		$raw    = (string) wp_remote_retrieve_body( $res );
+		$data   = json_decode( $raw, true );
+		$data   = is_array( $data ) ? $data : array();
+
+		if ( $status >= 200 && $status < 300 ) {
+			return array(
+				'ok'     => true,
+				'status' => $status,
+				'data'   => $data,
+				'error'  => '',
+			);
+		}
+
+		/*
+		 * The same three places AWS hides an error, read in the same order as
+		 * json() does: a denied call with an empty body is the likeliest
+		 * answer while an IAM policy is still being fitted, and an empty
+		 * error string there sends the reader to the wrong problem.
+		 */
+		$type = (string) wp_remote_retrieve_header( $res, 'x-amzn-errortype' );
+		$type = explode( ':', $type )[0];
+		$msg  = (string) ( $data['message'] ?? $data['Message'] ?? '' );
+
+		return self::fail( $status, trim( $type . ( '' !== $msg ? ': ' . $msg : '' ) ) ?: $raw );
+	}
+
+	/**
 	 * POST a JSON body to a REST-JSON service (Inspector, and most newer APIs).
 	 *
 	 * @param array<string,mixed> $body Request body.

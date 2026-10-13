@@ -80,6 +80,8 @@ viewBox) and optionally `hidden`.
 | awscost | `/aws-cost/` | yes (*AWS Cost*); contributed by vulnhub-aws, inserted after `network` — totals, trend, accounts, services, spikes; see `docs/AWS-COST.md` |
 | awssavings | `/aws-savings/` | yes (*Cost Savings*); contributed by vulnhub-aws — the confirmed / needs-confirmation suggestions and the running plan |
 | cspm | `/cloud-posture/` | yes; contributed by vulnhub-plerion |
+| firewall | `/firewall-policy/` | yes; contributed by vulnhub-checkpoint, inserted after `network` — internet exposure from the Check Point policy; see `docs/CHECKPOINT.md` |
+| control-gaps | `/control-gaps/` | yes; lives in vulnhub-dashboard (`class-vh-dash-control-gaps.php`), inserted after `cspm` (else after Vulnerabilities). Repeated causes and the control that stops each; see `docs/CONTROL-GAPS.md` |
 | alerts | `/alerts/` | yes; contributed by vulnhub-alerts (*Advisory alerts*) |
 | docs | `/docs/` | yes; contributed by vulnhub-docs |
 | departments | `/departments/` | hidden; contributed by vulnhub-departments, reached from the *Department exposure* widget |
@@ -105,6 +107,7 @@ nav. Current users:
 - vulnhub-aws (`network`) — the live AWS network topology; see `docs/AWS-NETWORK.md`
 - vulnhub-aws (`awscost`, `awssavings`) — the AWS cost snapshot and the savings plan; see `docs/AWS-COST.md`
 - vulnhub-plerion (`cspm` Cloud Posture); see `docs/PLERION.md`
+- vulnhub-checkpoint (`firewall` Firewall policy); see `docs/CHECKPOINT.md`
 - vulnhub-tenable (`appstream`, hidden) — AppStream duplicate cleanup; see `docs/APPSTREAM.md`
 
 **Navigation-only links.** `vulnhub_portal_nav_extra` only adds a link, not a
@@ -112,7 +115,7 @@ view. Each entry takes `label`, `url`, an `icon` SVG path and `active`. Nothing
 in the product uses it today; it is there for pages built outside the portal.
 
 **Primary nav order today:** Dashboard, Vulnerabilities, Alerts, Cloud
-Posture, Assets, EOL plan, Sources, Cloud Network, AWS Cost, Cost Savings,
+Posture, Control gaps, Assets, EOL plan, Sources, Cloud Network, AWS Cost, Cost Savings,
 Tickets, Exceptions, Vendors, Docs, then the nav-extra links. Each
 contributor chooses its own position by where it inserts itself in the array
 (the AWS cost pair goes after `network`, alerts after `vulnerabilities`), so

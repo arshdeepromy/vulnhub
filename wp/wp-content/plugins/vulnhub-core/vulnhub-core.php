@@ -20,7 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 define( 'VULNHUB_VERSION', '1.0.0' );
-define( 'VULNHUB_DB_VERSION', '38' );
+define( 'VULNHUB_DB_VERSION', '39' );
 define( 'VULNHUB_FILE', __FILE__ );
 define( 'VULNHUB_DIR', plugin_dir_path( __FILE__ ) );
 define( 'VULNHUB_URL', plugin_dir_url( __FILE__ ) );
@@ -143,6 +143,21 @@ add_action(
 	5
 );
 
+/*
+ * Windows Server-only plugins reported on Windows clients: re-judge every
+ * existing one after a Tenable sync (a delta sync does not re-send unchanged
+ * findings, and an asset's OS can change on its own). Priority 4, ahead of
+ * the recount above, so the asset roll-ups it writes already leave them out.
+ */
+add_action(
+	'vulnhub_sync_complete',
+	static function ( string $connector = '' ): void {
+		\VulnHub\Core\Platform_Fit::after_sync( $connector );
+	},
+	4,
+	1
+);
+
 /**
  * Main plugin container. Boots subsystems in dependency order.
  */
@@ -249,6 +264,48 @@ register_deactivation_hook(
  * is how existing data catches up with a new alias.
  */
 if ( defined( 'WP_CLI' ) && WP_CLI ) {
+	/*
+	 * wp vulnhub platform-fit [--dry-run]
+	 *
+	 * Suppress Windows Server-only findings on Windows clients (and restore
+	 * any that no longer qualify), then recount and bust the caches. The
+	 * same pass runs after every Tenable sync; this is for catching existing
+	 * data up at once.
+	 */
+	WP_CLI::add_command(
+		'vulnhub platform-fit',
+		static function ( array $args, array $assoc ): void {
+			$dry   = isset( $assoc['dry-run'] );
+			$stats = \VulnHub\Core\Platform_Fit::sweep( ! $dry );
+
+			foreach ( array_slice( $stats['by_vuln'], 0, 25, true ) as $title => $n ) {
+				WP_CLI::log( sprintf( '%6d  %s', $n, $title ) );
+			}
+
+			foreach ( $stats['tickets'] as $key => $n ) {
+				WP_CLI::log( sprintf( '%6d  %s %s', $n, $dry ? 'would come off' : 'taken off', $key ) );
+			}
+
+			if ( ! $dry && ( $stats['suppressed'] || $stats['restored'] || $stats['detached'] ) ) {
+				\VulnHub\Core\Repo::recalculate_asset_rollups();
+				if ( class_exists( 'VulnHub_Dash_Widgets' ) ) {
+					VulnHub_Dash_Widgets::bust();
+				}
+			}
+
+			WP_CLI::success(
+				sprintf(
+					'Checked %d findings of Windows Server-only plugins: %d %s, %d %s.',
+					$stats['checked'],
+					$stats['suppressed'],
+					$dry ? 'would be suppressed' : 'suppressed',
+					$stats['restored'],
+					$dry ? 'would be restored' : 'restored'
+				)
+			);
+		}
+	);
+
 	WP_CLI::add_command(
 		'vulnhub app-fix',
 		static function ( array $args, array $assoc ): void {

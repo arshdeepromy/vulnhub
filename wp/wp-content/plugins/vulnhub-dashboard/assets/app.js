@@ -3909,3 +3909,402 @@ document.addEventListener( 'click', function ( e ) {
 		document.body.appendChild( account );
 	} catch ( e ) {}
 }() );
+
+/* ---------------------------------------------------------------------
+ * Ticket attachments: the list on the ticket page and the preview pop-up.
+ *
+ * The list arrives with the page (what the last Jira poll stored) and is
+ * redrawn from the same JSON shape after "Refresh from Jira". Everything a
+ * file says -- its name, a cell, a line of text -- is set with textContent:
+ * it is somebody else's content from another system. Only images, PDF,
+ * audio and video are loaded as themselves, from this site's own route,
+ * which serves them under nosniff and a sandboxing policy.
+ * ------------------------------------------------------------------- */
+( function () {
+	'use strict';
+
+	var box = document.querySelector( '[data-vh-atts-for]' );
+	if ( ! box ) { return; }
+
+	var ticketId = parseInt( box.getAttribute( 'data-vh-atts-for' ), 10 );
+	var listEl   = box.querySelector( '[data-vh-atts-list]' );
+	var statusEl = box.querySelector( '[data-vh-atts-status]' );
+	var countEl  = box.querySelector( '[data-vh-atts-count]' );
+	var refresh  = box.querySelector( '[data-vh-atts-refresh]' );
+	var dlg      = document.getElementById( 'vh-att-preview' );
+	var files    = [];
+	var shown    = [];
+	var current  = -1;
+	var seq      = 0;
+
+	function el( tag, cls, text ) {
+		var n = document.createElement( tag );
+		if ( cls ) { n.className = cls; }
+		if ( null != text ) { n.textContent = String( text ); }
+		return n;
+	}
+
+	var ICON = { image: 'IMG', pdf: 'PDF', table: 'CSV', sheet: 'XLS', doc: 'DOC', text: 'TXT', video: 'VID', audio: 'AUD', none: 'FILE' };
+
+	function badge( a ) {
+		var ext = ( a.ext || '' ).toUpperCase();
+		var b = el( 'span', 'vh-att__icon vh-att__icon--' + ( a.kind || 'none' ), ext && ext.length <= 4 ? ext : ( ICON[ a.kind ] || 'FILE' ) );
+		b.setAttribute( 'aria-hidden', 'true' );
+		return b;
+	}
+
+	function item( a, i ) {
+		var li   = el( 'li', 'vh-att' + ( a.mine ? ' vh-att--ours' : ' vh-att--theirs' ) );
+		var open = el( 'button', 'vh-att__open' );
+		open.type = 'button';
+		open.title = a.filename + ( a.when ? ' — ' + a.when : '' );
+		open.appendChild( badge( a ) );
+
+		var txt = el( 'span', 'vh-att__txt' );
+		txt.appendChild( el( 'span', 'vh-att__name', a.filename ) );
+		var bits = [ a.size_label ];
+		if ( a.author ) { bits.push( a.author ); }
+		if ( a.ago ) { bits.push( a.ago ); }
+		txt.appendChild( el( 'span', 'vh-att__meta', bits.join( ' · ' ) ) );
+		open.appendChild( txt );
+		open.addEventListener( 'click', function () { show( i ); } );
+		li.appendChild( open );
+
+		var chip = el( 'span', 'vh-chip vh-chip--xs vh-chip--' + ( a.mine ? 'good' : 'neutral' ), a.mine ? 'by us' : 'from others' );
+		chip.title = a.mine
+			? 'Added by the Jira account this site is connected as'
+			: 'Added in Jira by ' + ( a.author || 'someone else' );
+		li.appendChild( chip );
+
+		var dl = el( 'a', 'vh-att__dl', '↓' );
+		dl.href = a.download;
+		dl.setAttribute( 'aria-label', 'Download ' + a.filename );
+		dl.title = a.too_big ? 'Too large to fetch here — open it in Jira' : 'Download';
+		li.appendChild( dl );
+
+		return li;
+	}
+
+	/* Two groups: what somebody else added first -- that is the half worth
+	   reading -- then what we sent. Previous / next in the pop-up walk the
+	   same order the page shows. */
+	function draw() {
+		listEl.innerHTML = '';
+		var theirs = files.filter( function ( a ) { return ! a.mine; } );
+		var ours   = files.filter( function ( a ) { return a.mine; } );
+		shown = theirs.concat( ours );
+
+		countEl.textContent = String( files.length );
+
+		if ( ! files.length ) {
+			listEl.appendChild( el( 'li', 'vh-atts__empty vh-meta', 'No files on this ticket in Jira.' ) );
+			return;
+		}
+
+		[ [ 'From others', theirs, 'theirs' ], [ 'Added by us', ours, 'ours' ] ].forEach( function ( g ) {
+			if ( ! g[ 1 ].length ) { return; }
+			var head = el( 'li', 'vh-atts__group vh-atts__group--' + g[ 2 ] );
+			head.appendChild( el( 'span', null, g[ 0 ] ) );
+			head.appendChild( el( 'span', 'vh-atts__gcount', String( g[ 1 ].length ) ) );
+			listEl.appendChild( head );
+			g[ 1 ].forEach( function ( a ) { listEl.appendChild( item( a, shown.indexOf( a ) ) ); } );
+		} );
+	}
+
+	function take( result ) {
+		files = ( result && result.attachments ) || [];
+		draw();
+	}
+
+	try {
+		take( JSON.parse( box.querySelector( '[data-vh-atts-seed]' ).textContent || '{}' ) );
+	} catch ( e ) {
+		take( {} );
+	}
+
+	if ( refresh ) {
+		refresh.addEventListener( 'click', function () {
+			refresh.disabled = true;
+			statusEl.textContent = 'Reading the attachments from Jira…';
+			wp.apiFetch( { path: '/vulnhub/v1/tickets/' + ticketId + '/attachments?fresh=1' } )
+				.then( function ( result ) {
+					refresh.disabled = false;
+					if ( ! result.ok ) {
+						statusEl.textContent = result.message || 'The attachments could not be read.';
+						return;
+					}
+					take( result );
+					statusEl.textContent = 'Up to date with Jira.';
+				} )
+				.catch( function ( error ) {
+					refresh.disabled = false;
+					statusEl.textContent = ( error && error.message ) || 'The attachments could not be read.';
+				} );
+		} );
+	}
+
+	/* ---- the pop-up ---- */
+
+	if ( ! dlg ) { return; }
+
+	var titleEl = dlg.querySelector( '#vh-att-title' );
+	var ledeEl  = dlg.querySelector( '[data-vh-att-lede]' );
+	var bodyEl  = dlg.querySelector( '[data-vh-att-body]' );
+	var footEl  = dlg.querySelector( '[data-vh-att-status]' );
+	var newTab  = dlg.querySelector( '[data-vh-att-newtab]' );
+	var dlBtn   = dlg.querySelector( '[data-vh-att-download]' );
+	var prevBtn = dlg.querySelector( '[data-vh-att-prev]' );
+	var nextBtn = dlg.querySelector( '[data-vh-att-next]' );
+
+	function note( text, tone ) {
+		return el( 'div', 'vh-notice vh-notice--' + ( tone || 'warn' ), text );
+	}
+
+	function colName( i ) {
+		var s = '';
+		i += 1;
+		while ( i > 0 ) {
+			var m = ( i - 1 ) % 26;
+			s = String.fromCharCode( 65 + m ) + s;
+			i = Math.floor( ( i - 1 ) / 26 );
+		}
+		return s;
+	}
+
+	/* One sheet as a table. First row as headings by default -- most exports
+	   have one -- with a switch for files that do not. */
+	function sheetTable( sheet, holder, headed ) {
+		holder.innerHTML = '';
+		var rows = sheet.rows || [];
+
+		if ( ! rows.length ) {
+			holder.appendChild( el( 'p', 'vh-meta', 'This sheet is empty.' ) );
+			return;
+		}
+
+		var width = 0;
+		rows.forEach( function ( r ) { width = Math.max( width, r.length ); } );
+
+		var wrap  = el( 'div', 'vh-att__tablewrap' );
+		var table = el( 'table', 'vh-att__table' );
+		var thead = el( 'thead' );
+		var hr    = el( 'tr' );
+		hr.appendChild( el( 'th', 'vh-att__rn', '' ) );
+		for ( var c = 0; c < width; c++ ) {
+			hr.appendChild( el( 'th', null, headed ? ( rows[ 0 ][ c ] || '' ) : colName( c ) ) );
+		}
+		thead.appendChild( hr );
+		table.appendChild( thead );
+
+		var tbody = el( 'tbody' );
+		rows.slice( headed ? 1 : 0 ).forEach( function ( r, i ) {
+			var tr = el( 'tr' );
+			tr.appendChild( el( 'td', 'vh-att__rn', String( i + ( headed ? 2 : 1 ) ) ) );
+			for ( var c = 0; c < width; c++ ) {
+				var td = el( 'td', null, r[ c ] || '' );
+				if ( ( r[ c ] || '' ).length > 40 ) { td.title = r[ c ]; }
+				tr.appendChild( td );
+			}
+			tbody.appendChild( tr );
+		} );
+		table.appendChild( tbody );
+		wrap.appendChild( table );
+		holder.appendChild( wrap );
+
+		var said = [];
+		if ( sheet.total_rows > rows.length ) {
+			said.push( 'Showing the first ' + rows.length.toLocaleString() + ' of ' + sheet.total_rows.toLocaleString() + ' rows' );
+		} else {
+			said.push( sheet.total_rows.toLocaleString() + ' row' + ( 1 === sheet.total_rows ? '' : 's' ) );
+		}
+		if ( sheet.total_cols > width ) {
+			said.push( width + ' of ' + sheet.total_cols + ' columns' );
+		}
+		holder.appendChild( el( 'p', 'vh-meta', said.join( '; ' ) + ( sheet.total_rows > rows.length || sheet.total_cols > width ? '. Download the file for the rest.' : '.' ) ) );
+	}
+
+	function filterRows( holder, q ) {
+		q = ( q || '' ).trim().toLowerCase();
+		holder.querySelectorAll( 'tbody tr' ).forEach( function ( tr ) {
+			tr.hidden = !! q && tr.textContent.toLowerCase().indexOf( q ) < 0;
+		} );
+	}
+
+	function renderSheets( data ) {
+		var sheets = data.sheets || [];
+		if ( ! sheets.length ) {
+			bodyEl.appendChild( note( 'No sheets could be read from this file. Download it to open it.' ) );
+			return;
+		}
+
+		var bar = el( 'div', 'vh-att__bar' );
+		var tabs = el( 'div', 'vh-att__tabs' );
+		var holder = el( 'div', 'vh-att__sheet' );
+		var active = 0;
+		var headed = true;
+
+		var head = el( 'label', 'vh-att__headed' );
+		var hbox = el( 'input' );
+		hbox.type = 'checkbox';
+		hbox.checked = true;
+		head.appendChild( hbox );
+		head.appendChild( document.createTextNode( ' First row is headings' ) );
+
+		var search = el( 'input', 'vh-att__search' );
+		search.type = 'search';
+		search.placeholder = 'Filter rows…';
+		search.setAttribute( 'aria-label', 'Filter rows' );
+
+		function paint() {
+			sheetTable( sheets[ active ], holder, headed );
+			filterRows( holder, search.value );
+		}
+
+		if ( sheets.length > 1 ) {
+			sheets.forEach( function ( s, i ) {
+				var t = el( 'button', 'vh-seg vh-seg--sm' + ( 0 === i ? ' is-active' : '' ), s.name || ( 'Sheet ' + ( i + 1 ) ) );
+				t.type = 'button';
+				if ( s.hidden ) { t.title = 'Hidden sheet'; t.classList.add( 'is-hidden' ); }
+				t.addEventListener( 'click', function () {
+					active = i;
+					tabs.querySelectorAll( 'button' ).forEach( function ( x ) { x.classList.toggle( 'is-active', x === t ); } );
+					paint();
+				} );
+				tabs.appendChild( t );
+			} );
+			bar.appendChild( tabs );
+		}
+
+		bar.appendChild( search );
+		bar.appendChild( head );
+		bodyEl.appendChild( bar );
+		bodyEl.appendChild( holder );
+
+		hbox.addEventListener( 'change', function () { headed = hbox.checked; paint(); } );
+		search.addEventListener( 'input', function () { filterRows( holder, search.value ); } );
+
+		if ( data.total_sheets > sheets.length ) {
+			bodyEl.appendChild( el( 'p', 'vh-meta', 'The first ' + sheets.length + ' of ' + data.total_sheets + ' sheets are shown.' ) );
+		}
+
+		paint();
+	}
+
+	function render( a, data ) {
+		bodyEl.innerHTML = '';
+		bodyEl.className = 'vh-review__body vh-att__body vh-att__body--' + ( data.kind || 'none' );
+		newTab.hidden = true;
+
+		if ( ! data.ok ) {
+			bodyEl.appendChild( note( data.message || 'This file could not be fetched.' ) );
+			return;
+		}
+
+		switch ( data.kind ) {
+			case 'image':
+				var fig = el( 'div', 'vh-att__img' );
+				var img = el( 'img' );
+				img.alt = a.filename;
+				img.src = a.view_url;
+				img.addEventListener( 'click', function () { fig.classList.toggle( 'is-actual' ); } );
+				img.title = 'Click to switch between fit and actual size';
+				fig.appendChild( img );
+				bodyEl.appendChild( fig );
+				newTab.hidden = false;
+				break;
+
+			case 'pdf':
+				var frame = el( 'iframe', 'vh-att__frame' );
+				frame.src = a.view_url;
+				frame.title = a.filename;
+				bodyEl.appendChild( frame );
+				newTab.hidden = false;
+				break;
+
+			case 'video':
+			case 'audio':
+				var media = el( data.kind );
+				media.controls = true;
+				media.preload = 'metadata';
+				media.src = a.view_url;
+				media.className = 'vh-att__media';
+				bodyEl.appendChild( media );
+				break;
+
+			case 'table':
+			case 'sheet':
+				renderSheets( data );
+				break;
+
+			case 'doc':
+				var doc = el( 'div', 'vh-att__doc' );
+				( data.paragraphs || [] ).forEach( function ( p ) { doc.appendChild( el( 'p', null, p ) ); } );
+				if ( ! doc.childNodes.length ) { doc.appendChild( el( 'p', 'vh-meta', 'This document has no text.' ) ); }
+				bodyEl.appendChild( doc );
+				if ( data.truncated ) { bodyEl.appendChild( el( 'p', 'vh-meta', 'Only the start of the document is shown. Download it for the rest.' ) ); }
+				break;
+
+			case 'text':
+				bodyEl.appendChild( el( 'pre', 'vh-att__text', data.text || '' ) );
+				if ( data.truncated ) { bodyEl.appendChild( el( 'p', 'vh-meta', 'Only the first 256 KB is shown. Download the file for the rest.' ) ); }
+				break;
+
+			default:
+				var none = el( 'div', 'vh-att__none' );
+				none.appendChild( badge( a ) );
+				none.appendChild( el( 'p', null, data.message || 'There is no preview for this kind of file.' ) );
+				bodyEl.appendChild( none );
+		}
+	}
+
+	function show( i ) {
+		if ( i < 0 || i >= shown.length ) { return; }
+		current = i;
+		var a = shown[ i ];
+		var mine = ++seq;
+
+		titleEl.textContent = a.filename;
+		ledeEl.textContent = ( a.mine ? 'Added by us' : 'From others' ) + ' · ' + [ a.size_label, a.author ? 'added by ' + a.author : '', a.when ].filter( Boolean ).join( ' · ' );
+		dlBtn.href = a.download;
+		newTab.href = a.view_url;
+		prevBtn.disabled = i <= 0;
+		nextBtn.disabled = i >= shown.length - 1;
+		footEl.textContent = shown.length > 1 ? ( i + 1 ) + ' of ' + shown.length : '';
+
+		bodyEl.innerHTML = '';
+		bodyEl.appendChild( el( 'p', 'vh-meta', a.too_big ? '' : 'Opening the file…' ) );
+
+		if ( ! dlg.open ) { dlg.showModal(); }
+
+		if ( a.too_big ) {
+			render( a, { ok: false, message: 'This file is ' + a.size_label + ', over the limit this site fetches. Open it in Jira.' } );
+			return;
+		}
+
+		wp.apiFetch( { path: '/vulnhub/v1/tickets/' + ticketId + '/attachments/' + encodeURIComponent( a.id ) + '/preview' } )
+			.then( function ( data ) {
+				if ( mine !== seq ) { return; } // moved on to another file meanwhile
+				render( a, data || {} );
+			} )
+			.catch( function ( error ) {
+				if ( mine !== seq ) { return; }
+				render( a, { ok: false, message: ( error && error.message ) || 'This file could not be fetched.' } );
+			} );
+	}
+
+	prevBtn.addEventListener( 'click', function () { show( current - 1 ); } );
+	nextBtn.addEventListener( 'click', function () { show( current + 1 ); } );
+	dlg.querySelector( '[data-vh-att-close]' ).addEventListener( 'click', function () { dlg.close(); } );
+
+	dlg.addEventListener( 'close', function () {
+		// Stop a playing video and let go of a large table.
+		++seq;
+		bodyEl.innerHTML = '';
+	} );
+
+	dlg.addEventListener( 'keydown', function ( e ) {
+		if ( e.target && e.target.matches && e.target.matches( 'input, textarea, select' ) ) { return; }
+		if ( 'ArrowLeft' === e.key && current > 0 ) { e.preventDefault(); show( current - 1 ); }
+		if ( 'ArrowRight' === e.key && current < shown.length - 1 ) { e.preventDefault(); show( current + 1 ); }
+	} );
+}() );
