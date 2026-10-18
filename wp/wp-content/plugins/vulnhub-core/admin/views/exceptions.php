@@ -66,6 +66,11 @@ if ( $vh_new && current_user_can( 'vulnhub_request_exception' ) ) :
 									if ( '' !== $vh_bundled && 'bundled' !== $vh_k ) {
 										continue;
 									}
+									// A security exception has no finding; it is
+									// recorded from its own form, not this one.
+									if ( ! Exceptions::is_finding_scope( (string) $vh_k ) ) {
+										continue;
+									}
 									?>
 									<option value="<?php echo esc_attr( $vh_k ); ?>" <?php selected( '' !== $vh_bundled && 'bundled' === $vh_k ); ?>><?php echo esc_html( $vh_l ); ?></option>
 								<?php endforeach; ?>
@@ -195,6 +200,19 @@ if ( $vh_view_id ) :
 	<div class="vh-grid vh-grid--2">
 		<div class="vh-card">
 			<h2><?php echo esc_html( (string) $vh_e['reference'] ); ?></h2>
+			<?php
+			/**
+			 * Where this exception can be edited, when a plugin offers it
+			 * (security exceptions recorded from Jira). Empty: no link.
+			 *
+			 * @param string               $url Edit URL.
+			 * @param array<string,mixed>  $vh_e Exception row.
+			 */
+			$vh_edit = (string) apply_filters( 'vulnhub_exception_edit_url', '', $vh_e );
+			if ( '' !== $vh_edit ) :
+				?>
+				<p style="margin:-4px 0 10px"><a class="button" href="<?php echo esc_url( $vh_edit ); ?>"><?php esc_html_e( 'Edit this record', 'vulnhub' ); ?></a></p>
+			<?php endif; ?>
 			<h3 style="margin:0 0 12px;text-transform:none;letter-spacing:0;color:#1d2327;font-size:16px">
 				<?php echo esc_html( (string) $vh_e['title'] ); ?>
 			</h3>
@@ -203,8 +221,13 @@ if ( $vh_view_id ) :
 				<dl>
 					<dt><?php esc_html_e( 'Scope', 'vulnhub' ); ?></dt>
 					<dd><?php echo esc_html( (string) $vh_e['scope_label'] ); ?></dd>
-					<dt><?php esc_html_e( 'Findings affected', 'vulnhub' ); ?></dt>
-					<dd><strong><?php echo esc_html( number_format_i18n( (int) $vh_e['affected_count'] ) ); ?></strong></dd>
+					<?php if ( Exceptions::is_finding_scope( (string) $vh_e['scope_type'] ) ) : ?>
+						<dt><?php esc_html_e( 'Findings affected', 'vulnhub' ); ?></dt>
+						<dd><strong><?php echo esc_html( number_format_i18n( (int) $vh_e['affected_count'] ) ); ?></strong></dd>
+					<?php else : ?>
+						<dt><?php esc_html_e( 'Findings affected', 'vulnhub' ); ?></dt>
+						<dd><?php esc_html_e( 'None — a security exception does not suppress findings', 'vulnhub' ); ?></dd>
+					<?php endif; ?>
 					<dt><?php esc_html_e( 'Reason', 'vulnhub' ); ?></dt>
 					<dd><?php echo esc_html( Exceptions::reasons()[ (string) $vh_e['reason'] ] ?? (string) $vh_e['reason'] ); ?></dd>
 					<dt><?php esc_html_e( 'Requested by', 'vulnhub' ); ?></dt>
@@ -216,7 +239,24 @@ if ( $vh_view_id ) :
 					<dt><?php esc_html_e( 'Approver', 'vulnhub' ); ?></dt>
 					<dd><?php echo esc_html( (string) ( $vh_e['approver_name'] ?: '—' ) ); ?></dd>
 					<dt><?php esc_html_e( 'Decided', 'vulnhub' ); ?></dt>
-					<dd><?php echo esc_html( $vh_e['decided_at'] ? vh_date( (string) $vh_e['decided_at'] ) : '—' ); ?></dd>
+					<dd><?php echo esc_html( $vh_e['decided_at'] ? vh_date( (string) $vh_e['decided_at'], 'j M Y' ) : '—' ); ?></dd>
+					<?php if ( ! empty( $vh_e['review_at'] ) ) : ?>
+						<dt><?php esc_html_e( 'Review by', 'vulnhub' ); ?></dt>
+						<dd><?php echo esc_html( vh_date( (string) $vh_e['review_at'], 'j M Y' ) ); ?></dd>
+					<?php endif; ?>
+					<?php if ( '' !== (string) $vh_e['jira_key'] ) : ?>
+						<dt><?php esc_html_e( 'Jira', 'vulnhub' ); ?></dt>
+						<dd>
+							<?php
+							foreach ( preg_split( '/[\s,]+/', (string) $vh_e['jira_key'] ) ?: array() as $vh_k ) {
+								$vh_u = Exceptions::jira_url( (string) $vh_k );
+								echo $vh_u // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+									? '<a class="vh-mono" href="' . esc_url( $vh_u ) . '" target="_blank" rel="noopener noreferrer">' . esc_html( (string) $vh_k ) . ' ↗</a> '
+									: '<span class="vh-mono">' . esc_html( (string) $vh_k ) . '</span> ';
+							}
+							?>
+						</dd>
+					<?php endif; ?>
 				</dl>
 			</div>
 		</div>
@@ -360,7 +400,7 @@ $vh_sum = Repo::summary();
 				</td>
 				<td><span class="vh-truncate"><?php echo esc_html( (string) $vh_e['title'] ); ?></span></td>
 				<td class="vh-muted"><?php echo esc_html( Exceptions::reasons()[ (string) $vh_e['reason'] ] ?? '' ); ?></td>
-				<td><?php echo esc_html( number_format_i18n( (int) $vh_e['affected_count'] ) ); ?></td>
+				<td><?php echo esc_html( Exceptions::is_finding_scope( (string) $vh_e['scope_type'] ) ? number_format_i18n( (int) $vh_e['affected_count'] ) : '—' ); ?></td>
 				<td><span class="vh-state vh-state--<?php echo esc_attr( (string) $vh_e['status'] ); ?>"><?php echo esc_html( Exceptions::statuses()[ (string) $vh_e['status'] ] ?? '' ); ?></span></td>
 				<td><?php echo esc_html( (string) $vh_e['requested_by_name'] ); ?></td>
 				<td class="vh-nowrap vh-muted"><?php echo esc_html( $vh_e['expires_at'] ? vh_date( (string) $vh_e['expires_at'], 'j M Y' ) : '—' ); ?></td>

@@ -48,6 +48,7 @@ function vulnhub_jira_load(): void {
 	require_once VULNHUB_JIRA_DIR . 'includes/class-vh-jira-automation.php';
 	require_once VULNHUB_JIRA_DIR . 'includes/class-vh-jira-automation-admin.php';
 	require_once VULNHUB_JIRA_DIR . 'includes/class-vh-jira-routing-admin.php';
+	require_once VULNHUB_JIRA_DIR . 'includes/class-vh-jira-inbox.php';
 }
 
 /**
@@ -123,6 +124,7 @@ add_action(
 		( new VulnHub_Jira_Routing_Admin() )->hooks();
 
 		VulnHub_Jira_OAuth::hooks();
+		VulnHub_Jira_Inbox::hooks();
 	}
 );
 

@@ -552,6 +552,28 @@ final class VulnHub_Jira_Adf {
 			return '<span class="vh-mention">' . esc_html( self::mention_label( $node ) ) . '</span>';
 		}
 
+		/*
+		 * Leaf nodes that carry no `content`. Descriptions written in Jira use
+		 * them all the time -- a soft line break, a pasted link that Jira
+		 * turned into a card, an emoji -- and dropping them ran sentences
+		 * together and lost the links. A file embedded in the text is shown
+		 * by Jira, not here, so it is named rather than silently missing.
+		 */
+		if ( 'hardBreak' === $type ) {
+			return '<br>';
+		}
+		if ( in_array( $type, array( 'inlineCard', 'blockCard', 'embedCard' ), true ) ) {
+			$url = (string) ( $node['attrs']['url'] ?? '' );
+
+			return '' !== $url ? '<a href="' . esc_url( $url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html( $url ) . '</a>' : '';
+		}
+		if ( 'emoji' === $type ) {
+			return esc_html( (string) ( $node['attrs']['text'] ?? $node['attrs']['shortName'] ?? '' ) );
+		}
+		if ( in_array( $type, array( 'mediaSingle', 'mediaGroup', 'mediaInline' ), true ) ) {
+			return '<p class="vh-meta">' . esc_html__( '[An image or file sits here in Jira.]', 'vulnhub' ) . '</p>';
+		}
+
 		if ( 'text' === $type ) {
 			$html = esc_html( (string) ( $node['text'] ?? '' ) );
 
@@ -582,6 +604,13 @@ final class VulnHub_Jira_Adf {
 			'listItem'   => '<li>' . $inner . '</li>',
 			'codeBlock'  => '<pre><code>' . $inner . '</code></pre>',
 			'rule'       => '<hr>',
+			'orderedList' => '<ol>' . $inner . '</ol>',
+			'blockquote'  => '<blockquote>' . $inner . '</blockquote>',
+			'panel'       => '<div class="vh-notice vh-notice--info">' . $inner . '</div>',
+			'table'       => '<div class="vh-tablewrap"><table class="vh-table">' . $inner . '</table></div>',
+			'tableRow'    => '<tr>' . $inner . '</tr>',
+			'tableHeader' => '<th>' . $inner . '</th>',
+			'tableCell'   => '<td>' . $inner . '</td>',
 			default      => $inner,
 		};
 	}

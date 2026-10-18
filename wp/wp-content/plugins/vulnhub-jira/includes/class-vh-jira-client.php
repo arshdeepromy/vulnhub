@@ -111,6 +111,16 @@ final class VulnHub_Jira_Client {
 	);
 
 	/**
+	 * Issue keys a person may comment on or move during this request,
+	 * whatever the project allowlist says. Filled only by allow_issue(), which
+	 * only the Jira inbox calls, for an issue on the connected account's own
+	 * lists, from a person's click -- never by automation.
+	 *
+	 * @var array<string,bool>
+	 */
+	private array $allowed_issues = array();
+
+	/**
 	 * Site base URL, e.g. https://yoursite.atlassian.net — no trailing slash.
 	 */
 	private string $base_url;
@@ -230,6 +240,23 @@ final class VulnHub_Jira_Client {
 	 */
 	public function restrict_projects( array $keys ): void {
 		$this->allowed_projects = array_values( array_unique( array_filter( array_map( static fn( $k ): string => strtoupper( trim( (string) $k ) ), $keys ) ) ) );
+	}
+
+	/**
+	 * Let a comment or a status move through on one issue for the rest of
+	 * this request, whatever its project. See `$allowed_issues`.
+	 */
+	public function allow_issue( string $key ): void {
+		$key = strtoupper( trim( $key ) );
+
+		if ( preg_match( '/^[A-Z][A-Z0-9_]*-\d+$/', $key ) ) {
+			$this->allowed_issues[ $key ] = true;
+		}
+	}
+
+	/** Withdraw every allow_issue() made on this client. */
+	public function forget_issues(): void {
+		$this->allowed_issues = array();
 	}
 
 	/**
@@ -603,6 +630,29 @@ final class VulnHub_Jira_Client {
 	 * @param string $query       Optional name or email fragment.
 	 * @param int    $limit       Maximum users returned.
 	 */
+	/**
+	 * GET /rest/api/3/user/viewissue/search -- people who can view one issue,
+	 * by name (`$query`) or one account (`$account_id`).
+	 *
+	 * The list @mention suggestions come from: Jira only notifies a mentioned
+	 * person who can open the issue, so offering anyone else would promise a
+	 * notification that never arrives.
+	 */
+	public function users_who_can_view( string $key, string $query = '', int $limit = 10, string $account_id = '' ): \VulnHub\Core\Http_Response {
+		$args = array(
+			'issueKey'   => strtoupper( trim( $key ) ),
+			'maxResults' => max( 1, min( 50, $limit ) ),
+		);
+
+		if ( '' !== $account_id ) {
+			$args['accountId'] = $account_id;
+		} elseif ( '' !== trim( $query ) ) {
+			$args['query'] = trim( $query );
+		}
+
+		return $this->call( 'GET', self::API . '/user/viewissue/search', $args );
+	}
+
 	public function assignable_users( string $project_key, string $query = '', int $limit = 50 ): \VulnHub\Core\Http_Response {
 		$args = array(
 			'project'    => strtoupper( trim( $project_key ) ),
@@ -839,6 +889,21 @@ final class VulnHub_Jira_Client {
 			return null;
 		}
 
+		// The one write the allowlist does not cover: answering an approval
+		// Jira has put to this account. It changes nothing but that answer,
+		// Jira only accepts it from a named approver, and the requests that
+		// need it can sit on any desk, not only the ones tickets go to.
+		if ( 'POST' === strtoupper( $method ) && self::is_approval_answer( $path, $body ) ) {
+			return null;
+		}
+
+		// A person replying to, or moving, one of the connected account's own
+		// issues from the portal: only a comment or a transition, and only on
+		// a key allow_issue() named for this request.
+		if ( 'POST' === strtoupper( $method ) && $this->allowed_issues && null !== ( $issue = self::comment_or_move_key( $path ) ) && isset( $this->allowed_issues[ $issue ] ) ) {
+			return null;
+		}
+
 		$project = $this->project_for_write( $path, $body );
 
 		if ( null !== $project && in_array( $project, $this->allowed_projects, true ) ) {
@@ -856,6 +921,34 @@ final class VulnHub_Jira_Client {
 		$this->trace( $message );
 
 		return new \VulnHub\Core\Http_Response( 403, array(), '', array( 'errorMessages' => array( $message ) ), $message );
+	}
+
+	/**
+	 * The issue key when the path adds a comment or a transition to one
+	 * issue, otherwise null.
+	 */
+	private static function comment_or_move_key( string $path ): ?string {
+		$key = '([A-Za-z][A-Za-z0-9_]*-\d+)';
+
+		if ( preg_match( '#^' . preg_quote( self::API, '#' ) . '/issue/' . $key . '/(?:comment|transitions)$#', $path, $m )
+			|| preg_match( '#^' . preg_quote( self::SD_API, '#' ) . '/request/' . $key . '/comment$#', $path, $m ) ) {
+			return strtoupper( $m[1] );
+		}
+
+		return null;
+	}
+
+	/**
+	 * POST /servicedeskapi/request/{key}/approval/{id} whose body is exactly
+	 * an approve or decline decision, and nothing else.
+	 *
+	 * @param array<string,mixed>|null $body Request body.
+	 */
+	private static function is_approval_answer( string $path, ?array $body ): bool {
+		return 1 === preg_match( '#^' . preg_quote( self::SD_API, '#' ) . '/request/[A-Za-z][A-Za-z0-9_]*-\d+/approval/\d+$#', $path )
+			&& is_array( $body )
+			&& array( 'decision' ) === array_keys( $body )
+			&& in_array( $body['decision'], array( 'approve', 'decline' ), true );
 	}
 
 	/**
@@ -945,6 +1038,66 @@ final class VulnHub_Jira_Client {
 	 */
 	public function get_request( string $key ): \VulnHub\Core\Http_Response {
 		return $this->call( 'GET', self::SD_API . '/request/' . rawurlencode( $key ), array( 'expand' => 'status,requestType' ) );
+	}
+
+	/**
+	 * GET /rest/servicedeskapi/request as approver: the requests whose
+	 * approval is waiting on this account.
+	 *
+	 * This, not JQL, is the reliable read. `approver = currentUser()` and
+	 * `approval = myPending()` return nothing on a site that hides the
+	 * approver list from approvers, while this endpoint lists them.
+	 */
+	public function approver_requests( int $start = 0, int $limit = 50 ): \VulnHub\Core\Http_Response {
+		return $this->call(
+			'GET',
+			self::SD_API . '/request',
+			array(
+				'requestOwnership' => 'APPROVER',
+				'approvalStatus'   => 'MY_PENDING_APPROVAL',
+				'requestStatus'    => 'ALL_REQUESTS',
+				'expand'           => 'requestType',
+				'start'            => max( 0, $start ),
+				'limit'            => max( 1, min( 100, $limit ) ),
+			)
+		);
+	}
+
+	/**
+	 * GET /rest/servicedeskapi/request/{key}/approval — every approval step
+	 * on a request, each with `finalDecision` and `canAnswerApproval`.
+	 */
+	public function request_approvals( string $key ): \VulnHub\Core\Http_Response {
+		return $this->call( 'GET', self::SD_API . '/request/' . rawurlencode( $key ) . '/approval', array( 'limit' => 50 ) );
+	}
+
+	/**
+	 * GET /rest/servicedeskapi/request/{key}/approval/{id} — one approval,
+	 * read fresh immediately before answering it.
+	 */
+	public function request_approval( string $key, string $approval_id ): \VulnHub\Core\Http_Response {
+		return $this->call( 'GET', self::SD_API . '/request/' . rawurlencode( $key ) . '/approval/' . rawurlencode( $approval_id ) );
+	}
+
+	/**
+	 * POST /rest/servicedeskapi/request/{key}/approval/{id} — answer it.
+	 *
+	 * Sent once: a retried decision that Jira already recorded comes back as
+	 * an error, which is the honest answer, but a retry is not needed to get
+	 * it.
+	 *
+	 * @param string $decision `approve` or `decline`.
+	 */
+	public function answer_approval( string $key, string $approval_id, string $decision ): \VulnHub\Core\Http_Response {
+		return $this->call(
+			'POST',
+			self::SD_API . '/request/' . rawurlencode( $key ) . '/approval/' . rawurlencode( $approval_id ),
+			array(),
+			array( 'decision' => 'decline' === $decision ? 'decline' : 'approve' ),
+			array(),
+			null,
+			1
+		);
 	}
 
 	/**

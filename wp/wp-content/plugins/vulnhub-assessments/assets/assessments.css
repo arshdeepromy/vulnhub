@@ -1,0 +1,111 @@
+/* Supplier assessments register.
+   Built on the app's own tokens so both themes follow app.css. Outcomes are
+   never carried by colour alone: every pill spells the outcome out. */
+
+.vh-assess__tiles { margin-bottom: 14px; }
+.vh-assess__tabs { margin-bottom: 14px; }
+.vh-assess__lead { max-width: 90ch; margin: 0 0 12px; }
+
+.vh-assess__filters { margin-bottom: 8px; }
+.vh-filters label.vh-assess__check { flex-direction: row; align-items: center; gap: 6px; align-self: end; padding-bottom: 10px; }
+
+.vh-assess__bar {
+  display: flex; flex-wrap: wrap; gap: 8px 16px;
+  align-items: center; justify-content: space-between;
+  margin: 4px 0 10px;
+}
+.vh-assess__bar .vh-meta { margin: 0; }
+.vh-assess__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.vh-assess__table td { vertical-align: top; }
+.vh-assess__table .vh-meta { display: block; margin-top: 2px; }
+.vh-assess__subject { min-width: 180px; }
+.vh-assess__subject strong { display: block; color: var(--vh-ink); }
+.vh-assess__tags { margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap; }
+.vh-assess__chip--ours { color: var(--vh-accent); border-color: var(--vh-accent); }
+.vh-assess__edit { display: inline-block; margin-top: 6px; font-size: 12px; }
+.vh-assess__date { white-space: nowrap; }
+.vh-assess__review { min-width: 160px; max-width: 280px; }
+.vh-assess__decision { min-width: 200px; max-width: 360px; }
+.vh-assess__text { white-space: pre-line; color: var(--vh-muted); font-size: 12.5px; line-height: 1.45; }
+.vh-assess__note { font-style: italic; }
+.vh-assess__by { margin-top: 4px; font-size: 12.5px; color: var(--vh-ink-2, var(--vh-ink)); }
+.vh-assess__due { white-space: nowrap; }
+.vh-assess__jira { white-space: nowrap; }
+
+.vh-assess__keys { list-style: none; margin: 0; padding: 0; }
+.vh-assess__keys li + li { margin-top: 3px; }
+.vh-assess__keys a.vh-mono { font-size: 12.5px; font-weight: 600; }
+.vh-assess__here { display: inline !important; margin-left: 4px; font-size: 11.5px; }
+
+/* Outcome pills. */
+.vh-assess__pill {
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 700; line-height: 1.4;
+  border: 1px solid var(--vh-line-strong, var(--vh-line));
+  background: var(--vh-neutral-bg, transparent); color: var(--vh-muted);
+}
+.vh-assess__pill--good { background: var(--vh-good-bg); color: var(--vh-good-ink, var(--vh-good)); border-color: var(--vh-good); }
+.vh-assess__pill--cond { background: var(--vh-pill-low); color: var(--vh-pill-fg-low); border-color: rgba(94,163,255,.55); }
+.vh-assess__pill--bad  { background: var(--vh-bad-bg); color: var(--vh-pill-fg-critical); border-color: var(--vh-bad); }
+.vh-assess__pill--warn { background: var(--vh-pill-medium); color: var(--vh-pill-fg-medium); border-color: rgba(245,208,74,.6); }
+
+/* Review dates. */
+.vh-assess__due--bad  { color: var(--vh-bad); font-weight: 700; }
+.vh-assess__due--warn { color: var(--vh-pill-fg-medium); font-weight: 700; }
+
+/* A decision read out of Jira, not yet recorded. */
+.vh-assess__hint {
+  margin-top: 8px; padding: 6px 9px; border-radius: var(--vh-radius-sm, 6px);
+  border: 1px dashed var(--vh-accent); font-size: 12px; color: var(--vh-ink);
+  background: color-mix(in srgb, var(--vh-accent) 7%, transparent);
+}
+.vh-assess__hint a { font-weight: 700; white-space: nowrap; }
+
+.vh-assess__recon { margin: 6px 0 12px; }
+
+.vh-assess__notes { margin-top: 16px; }
+.vh-assess__notes ul { margin: 6px 0 0; padding-left: 18px; color: var(--vh-muted); }
+.vh-assess__notes li + li { margin-top: 4px; }
+
+.vh-assess__rowact { white-space: nowrap; }
+.vh-assess__rowact .vh-btn { margin-bottom: 4px; }
+.vh-assess__inline { display: inline-flex; gap: 6px; align-items: center; margin: 4px 0 0; }
+.vh-assess__dismiss { display: flex; }
+.vh-assess__dismiss select { max-width: 200px; font-size: 12px; padding: 3px 6px; }
+
+.vh-assess__aside { margin-top: 16px; }
+.vh-assess__aside summary { cursor: pointer; font-weight: 600; }
+.vh-assess__aside .vh-tablewrap { margin-top: 10px; }
+
+/* Form. */
+.vh-assess__form { max-width: 1000px; }
+.vh-assess__form .vh-notice { margin-bottom: 14px; }
+.vh-assess__grid { display: grid; gap: 14px; }
+.vh-assess__set {
+  border: 1px solid var(--vh-line); border-radius: var(--vh-radius-sm, 8px);
+  padding: 12px 14px 14px; margin: 0;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 14px;
+}
+.vh-assess__set legend { font-weight: 700; padding: 0 6px; color: var(--vh-ink); }
+.vh-assess__set label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--vh-muted); font-weight: 600; }
+.vh-assess__set input, .vh-assess__set select, .vh-assess__set textarea {
+  font: inherit; font-weight: 400; font-size: 13.5px; color: var(--vh-ink);
+  background: var(--vh-surface); border: 1px solid var(--vh-line-strong, var(--vh-line));
+  border-radius: var(--vh-radius-sm, 6px); padding: 7px 9px; width: 100%; box-sizing: border-box;
+}
+.vh-assess__set textarea { resize: vertical; min-height: 64px; }
+.vh-assess__wide { grid-column: 1 / -1; }
+.vh-assess__formbar { display: flex; gap: 8px; }
+.vh-assess__delete { margin-top: 14px; }
+.vh-assess__danger { color: var(--vh-bad) !important; }
+
+@media (max-width: 720px) {
+  .vh-assess__rowact { white-space: normal; }
+  .vh-assess__decision, .vh-assess__review { min-width: 160px; }
+}
+
+
+/* Six tiles fit one row on a desktop; they wrap in pairs below that. */
+.vh-assess__tiles { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.vh-assess__form > .vh-panel__title { margin: 0 0 14px; }

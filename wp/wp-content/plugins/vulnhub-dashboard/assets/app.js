@@ -3104,6 +3104,21 @@ document.addEventListener( 'click', function ( e ) {
 	} );
 }() );
 
+/* What a comments panel, a status dialog or an attachments block is about:
+ * a ticket raised here (its numeric id), or an issue from the connected
+ * account's own Jira lists (`jira/KEY`). Either is the REST path segment
+ * after /vulnhub/v1/tickets/, so the components below work on both without
+ * knowing which. Anything else is 0, which every caller treats as "none". */
+function vhTicketRef( value ) {
+	var v = String( null == value ? '' : value );
+
+	if ( /^jira\/[A-Z][A-Z0-9_]*-\d+$/.test( v ) ) {
+		return v;
+	}
+
+	return parseInt( v, 10 ) || 0;
+}
+
 /* =====================================================================
  * Ticket comments: read the conversation on a ticket, and reply to it,
  * without opening Jira.
@@ -3234,10 +3249,15 @@ document.addEventListener( 'click', function ( e ) {
 			wp.apiFetch( {
 				path: '/vulnhub/v1/tickets/' + id + '/comments',
 				method: 'POST',
-				data: { body: body, public: isPublic() ? 1 : 0 }
+				data: {
+					body: body,
+					public: isPublic() ? 1 : 0,
+					mentions: window.vhMentions ? window.vhMentions.collect( box, body ) : []
+				}
 			} )
 				.then( function ( result ) {
 					text.value = '';
+					if ( window.vhMentions ) { window.vhMentions.reset( box ); }
 					status.textContent = result.message || 'Posted.';
 					post.disabled = false;
 					return load( box, id );
@@ -3260,7 +3280,7 @@ document.addEventListener( 'click', function ( e ) {
 		var dlg = document.getElementById( 'vh-ticket-comments' );
 		if ( ! dlg ) { return; }
 
-		var id  = parseInt( button.dataset.vhComments, 10 );
+		var id  = vhTicketRef( button.dataset.vhComments );
 		var box = dlg.querySelector( '.vh-comments' );
 		var row = button.closest( 'tr' );
 		var key = button.dataset.vhCommentsKey || '';
@@ -3296,6 +3316,7 @@ document.addEventListener( 'click', function ( e ) {
 		if ( hint ) { hint.textContent = 'The person who raised this will be notified and can read it.'; }
 		if ( body ) { body.value = ''; }
 		if ( note ) { note.textContent = ''; }
+		if ( window.vhMentions ) { window.vhMentions.reset( box ); }
 		box.classList.add( 'is-public' );
 
 		if ( ! dlg.open ) { dlg.showModal(); }
@@ -3314,12 +3335,272 @@ document.addEventListener( 'click', function ( e ) {
 	/* ---- the panel on the ticket page ---- */
 	document.addEventListener( 'DOMContentLoaded', function () {
 		document.querySelectorAll( '.vh-comments--inline[data-vh-comments-for]' ).forEach( function ( box ) {
-			var id = parseInt( box.getAttribute( 'data-vh-comments-for' ), 10 );
+			var id = vhTicketRef( box.getAttribute( 'data-vh-comments-for' ) );
 			if ( ! id ) { return; }
 			wire( box, id );
 			load( box, id );
 		} );
 	} );
+}() );
+
+/* ---------------------------------------------------------------------
+ * @mentions in the reply box.
+ *
+ * Typing "@" and two letters suggests people who can view this issue in
+ * Jira -- staff accounts only, read from /tickets/{ref}/mentionable, which
+ * never sends email addresses or avatars. Picking one puts "@Name" in the
+ * text and remembers who it is; Post sends the text plus `[{id, name}]` for
+ * every tag still in it, and the server checks each again and writes it the
+ * way Jira stores a mention, so Jira itself sends the notification.
+ *
+ * The line under the box says who will be notified, and warns when the
+ * comment is a reply the customer reads.
+ * ------------------------------------------------------------------- */
+( function () {
+	'use strict';
+
+	if ( ! window.wp || ! wp.apiFetch ) { return; }
+
+	var boxes = new WeakMap();
+
+	function st( box ) {
+		var s = boxes.get( box );
+		if ( ! s ) {
+			s = { tags: {}, items: [], active: -1, seq: 0, timer: 0, token: null, list: null, line: null };
+			boxes.set( box, s );
+		}
+		return s;
+	}
+
+	function textOf( box ) { return box.querySelector( '[data-vh-comment-body]' ); }
+
+	/* The list and the "will notify" line, made on first use. */
+	function ui( box ) {
+		var s = st( box );
+		if ( s.list ) { return s; }
+
+		var text = textOf( box );
+		s.list = document.createElement( 'ul' );
+		s.list.className = 'vh-mention__list';
+		s.list.id = 'vh-mention-' + Math.random().toString( 36 ).slice( 2 );
+		s.list.setAttribute( 'role', 'listbox' );
+		s.list.hidden = true;
+		text.setAttribute( 'aria-autocomplete', 'list' );
+		text.setAttribute( 'aria-controls', s.list.id );
+		text.insertAdjacentElement( 'afterend', s.list );
+
+		s.line = document.createElement( 'p' );
+		s.line.className = 'vh-mention__tags';
+		s.line.setAttribute( 'role', 'status' );
+		s.line.hidden = true;
+		s.list.insertAdjacentElement( 'afterend', s.line );
+
+		return s;
+	}
+
+	/* The "@words" just before the caret, or null. Stops at a tag already
+	   picked, so typing on after "@Name " does not search for the sentence. */
+	function tokenAt( box, text ) {
+		var upto = text.value.slice( 0, text.selectionStart );
+		var m = /(^|[\s(])@([^\s@][^@\n]{0,40})$/.exec( upto );
+
+		if ( ! m ) { return null; }
+
+		var q = m[ 2 ];
+		if ( /\s{2,}/.test( q ) || q.split( ' ' ).length > 3 ) { return null; }
+
+		var tags = st( box ).tags;
+		for ( var id in tags ) {
+			if ( Object.prototype.hasOwnProperty.call( tags, id ) && 0 === q.indexOf( tags[ id ] ) ) { return null; }
+		}
+
+		return { start: upto.length - q.length - 1, query: q };
+	}
+
+	function initials( name ) {
+		return String( name || '' ).split( /\s+/ ).filter( Boolean ).slice( 0, 2 )
+			.map( function ( w ) { return w.charAt( 0 ).toUpperCase(); } ).join( '' );
+	}
+
+	function close( s ) {
+		if ( ! s.list ) { return; }
+		s.list.hidden = true;
+		s.list.textContent = '';
+		s.items = [];
+		s.active = -1;
+		s.token = null;
+		clearTimeout( s.timer );
+		s.seq++;
+	}
+
+	function draw( box, s ) {
+		var text = textOf( box );
+		s.list.textContent = '';
+
+		if ( ! s.items.length ) {
+			s.list.hidden = true;
+			text.removeAttribute( 'aria-activedescendant' );
+			return;
+		}
+
+		s.items.forEach( function ( p, i ) {
+			var li = document.createElement( 'li' );
+			li.className = 'vh-mention__item' + ( i === s.active ? ' is-active' : '' );
+			li.id = s.list.id + '-' + i;
+			li.setAttribute( 'role', 'option' );
+			li.setAttribute( 'aria-selected', i === s.active ? 'true' : 'false' );
+
+			var av = document.createElement( 'span' );
+			av.className = 'vh-mention__av';
+			av.setAttribute( 'aria-hidden', 'true' );
+			av.textContent = initials( p.name );
+
+			var nm = document.createElement( 'span' );
+			nm.textContent = p.name;
+
+			li.appendChild( av );
+			li.appendChild( nm );
+			// mousedown, not click: the textarea must not lose focus first.
+			li.addEventListener( 'mousedown', function ( e ) { e.preventDefault(); pick( box, i ); } );
+			s.list.appendChild( li );
+		} );
+
+		s.list.hidden = false;
+		if ( s.active >= 0 ) { text.setAttribute( 'aria-activedescendant', s.list.id + '-' + s.active ); }
+	}
+
+	function search( box ) {
+		var s    = ui( box );
+		var text = textOf( box );
+		var ref  = vhTicketRef( box.getAttribute( 'data-vh-comments-for' ) );
+		var tok  = tokenAt( box, text );
+
+		clearTimeout( s.timer );
+
+		if ( ! ref || ! tok || tok.query.trim().length < 2 ) { close( s ); return; }
+
+		s.token = tok;
+		var seq = ++s.seq;
+
+		s.timer = setTimeout( function () {
+			wp.apiFetch( { path: '/vulnhub/v1/tickets/' + ref + '/mentionable?q=' + encodeURIComponent( tok.query.trim() ) } )
+				.then( function ( r ) {
+					if ( seq !== s.seq ) { return; }
+					s.items  = ( r && r.ok && r.people ) || [];
+					s.active = s.items.length ? 0 : -1;
+					draw( box, s );
+				} )
+				.catch( function () { if ( seq === s.seq ) { close( s ); } } );
+		}, 250 );
+	}
+
+	function pick( box, i ) {
+		var s    = st( box );
+		var p    = s.items[ i ];
+		var text = textOf( box );
+
+		if ( ! p || ! s.token ) { return; }
+
+		var insert = '@' + p.name + ' ';
+		var end    = text.selectionStart;
+
+		text.value = text.value.slice( 0, s.token.start ) + insert + text.value.slice( end );
+
+		var caret = s.token.start + insert.length;
+		text.setSelectionRange( caret, caret );
+		text.focus();
+
+		s.tags[ p.id ] = p.name;
+		close( s );
+		line( box );
+	}
+
+	/* Who Jira will notify, from the tags still in the text. */
+	function line( box ) {
+		var s    = ui( box );
+		var text = textOf( box );
+		var names = [];
+
+		Object.keys( s.tags ).forEach( function ( id ) {
+			if ( -1 === text.value.indexOf( '@' + s.tags[ id ] ) ) {
+				delete s.tags[ id ];
+			} else {
+				names.push( s.tags[ id ] );
+			}
+		} );
+
+		if ( ! names.length ) {
+			s.line.hidden = true;
+			s.line.textContent = '';
+			return;
+		}
+
+		var pub = box.querySelector( 'input[type=radio][value=public]' );
+		s.line.textContent = 'Jira will notify ' + names.join( ', ' ) + '.'
+			+ ( pub && pub.checked ? ' This is a reply the customer can read, so they will see who you tagged.' : '' );
+		s.line.hidden = false;
+	}
+
+	function boxFor( target ) {
+		return target && target.matches && target.matches( '[data-vh-comment-body]' ) ? target.closest( '.vh-comments' ) : null;
+	}
+
+	document.addEventListener( 'input', function ( e ) {
+		var box = boxFor( e.target );
+		if ( box ) { search( box ); line( box ); }
+	} );
+
+	document.addEventListener( 'change', function ( e ) {
+		if ( e.target.matches && e.target.matches( '.vh-comments input[type=radio]' ) ) {
+			var box = e.target.closest( '.vh-comments' );
+			if ( box && boxes.has( box ) ) { line( box ); }
+		}
+	} );
+
+	document.addEventListener( 'keydown', function ( e ) {
+		var box = boxFor( e.target );
+		var s   = box ? boxes.get( box ) : null;
+
+		if ( ! s || ! s.list || s.list.hidden || ! s.items.length ) { return; }
+
+		if ( 'ArrowDown' === e.key || 'ArrowUp' === e.key ) {
+			e.preventDefault();
+			s.active = ( s.active + ( 'ArrowDown' === e.key ? 1 : -1 ) + s.items.length ) % s.items.length;
+			draw( box, s );
+		} else if ( 'Enter' === e.key || 'Tab' === e.key ) {
+			e.preventDefault();
+			pick( box, Math.max( 0, s.active ) );
+		} else if ( 'Escape' === e.key ) {
+			// Close the list, not the dialog the box may sit in.
+			e.preventDefault();
+			e.stopPropagation();
+			close( s );
+		}
+	}, true );
+
+	document.addEventListener( 'focusout', function ( e ) {
+		var box = boxFor( e.target );
+		var s   = box ? boxes.get( box ) : null;
+		if ( s ) { setTimeout( function () { close( s ); }, 150 ); }
+	} );
+
+	window.vhMentions = {
+		/* `[{id, name}]` for every tag still in the text being posted. */
+		collect: function ( box, body ) {
+			var s = boxes.get( box );
+			if ( ! s ) { return []; }
+			return Object.keys( s.tags )
+				.filter( function ( id ) { return -1 !== body.indexOf( '@' + s.tags[ id ] ); } )
+				.map( function ( id ) { return { id: id, name: s.tags[ id ] }; } );
+		},
+		reset: function ( box ) {
+			var s = boxes.get( box );
+			if ( ! s ) { return; }
+			s.tags = {};
+			close( s );
+			if ( s.line ) { s.line.hidden = true; s.line.textContent = ''; }
+		}
+	};
 }() );
 
 /* ---------------------------------------------------------------------
@@ -3531,7 +3812,7 @@ document.addEventListener( 'click', function ( e ) {
 			var dlg = document.getElementById( 'vh-ticket-move' );
 			if ( ! dlg ) { return; }
 
-			state.id = parseInt( open.dataset.vhMove, 10 );
+			state.id = vhTicketRef( open.dataset.vhMove );
 			dlg.querySelector( '#vh-move-title' ).textContent =
 				'Change status' + ( open.dataset.vhMoveKey ? ' — ' + open.dataset.vhMoveKey : '' );
 			dlg.querySelector( '[data-vh-move-status]' ).textContent = '';
@@ -3926,7 +4207,7 @@ document.addEventListener( 'click', function ( e ) {
 	var box = document.querySelector( '[data-vh-atts-for]' );
 	if ( ! box ) { return; }
 
-	var ticketId = parseInt( box.getAttribute( 'data-vh-atts-for' ), 10 );
+	var ticketId = vhTicketRef( box.getAttribute( 'data-vh-atts-for' ) );
 	var listEl   = box.querySelector( '[data-vh-atts-list]' );
 	var statusEl = box.querySelector( '[data-vh-atts-status]' );
 	var countEl  = box.querySelector( '[data-vh-atts-count]' );
@@ -4237,10 +4518,20 @@ document.addEventListener( 'click', function ( e ) {
 				break;
 
 			case 'doc':
-				var doc = el( 'div', 'vh-att__doc' );
-				( data.paragraphs || [] ).forEach( function ( p ) { doc.appendChild( el( 'p', null, p ) ); } );
-				if ( ! doc.childNodes.length ) { doc.appendChild( el( 'p', 'vh-meta', 'This document has no text.' ) ); }
+				var doc = el( 'div', 'vh-att__doc vh-docx' );
+				if ( data.blocks ) {
+					docBlocks( doc, data.blocks, data.images || [] );
+				} else {
+					( data.paragraphs || [] ).forEach( function ( p ) { doc.appendChild( el( 'p', null, p ) ); } );
+				}
+				if ( ! doc.textContent.trim() && ! doc.querySelector( 'img' ) ) {
+					doc.textContent = '';
+					doc.appendChild( el( 'p', 'vh-meta', 'This document has no text or pictures that can be shown here. Download it to open it in Word.' ) );
+				}
 				bodyEl.appendChild( doc );
+				if ( data.images_skipped ) {
+					bodyEl.appendChild( el( 'p', 'vh-meta', data.images_skipped + ( 1 === data.images_skipped ? ' picture is' : ' pictures are' ) + ' not shown here (linked from elsewhere, a format a browser cannot draw, or over the size limit). Download the file to see everything.' ) );
+				}
 				if ( data.truncated ) { bodyEl.appendChild( el( 'p', 'vh-meta', 'Only the start of the document is shown. Download it for the rest.' ) ); }
 				break;
 
@@ -4255,6 +4546,87 @@ document.addEventListener( 'click', function ( e ) {
 				none.appendChild( el( 'p', null, data.message || 'There is no preview for this kind of file.' ) );
 				bodyEl.appendChild( none );
 		}
+	}
+
+	/* A Word document's blocks (Attachments::docx()). Every piece of text is
+	   set as text; a picture is a data: URI the server checked was really an
+	   image; a link is kept only for http(s) and mailto. */
+	function docRuns( parent, runs, images ) {
+		( runs || [] ).forEach( function ( r ) {
+			var node;
+
+			if ( null != r.img ) {
+				if ( ! images[ r.img ] ) { return; }
+				node = document.createElement( 'img' );
+				node.src = images[ r.img ];
+				node.alt = '';
+				node.loading = 'lazy';
+				node.className = 'vh-docx__img';
+			} else if ( r.note ) {
+				node = el( 'span', 'vh-docx__note', '[' + r.note + ']' );
+			} else {
+				node = document.createTextNode( String( r.x || '' ) );
+				if ( r.b ) { var b = el( 'strong' ); b.appendChild( node ); node = b; }
+				if ( r.i ) { var i = el( 'em' ); i.appendChild( node ); node = i; }
+				if ( r.u ) { var u = el( 'u' ); u.appendChild( node ); node = u; }
+				if ( r.s ) { var st = el( 's' ); st.appendChild( node ); node = st; }
+				if ( r.href && /^(https?:\/\/|mailto:)/i.test( r.href ) ) {
+					var a = el( 'a' );
+					a.href = r.href;
+					a.target = '_blank';
+					a.rel = 'noopener noreferrer';
+					a.appendChild( node );
+					node = a;
+				}
+			}
+
+			parent.appendChild( node );
+		} );
+	}
+
+	function docBlocks( parent, blocks, images ) {
+		( blocks || [] ).forEach( function ( b ) {
+			if ( 'table' === b.t ) {
+				var wrap = el( 'div', 'vh-docx__tablewrap' );
+				var tbl  = el( 'table', 'vh-docx__table' );
+				var body = el( 'tbody' );
+
+				( b.rows || [] ).forEach( function ( row ) {
+					var tr = el( 'tr' );
+					row.forEach( function ( c ) {
+						if ( c.merged ) { return; }
+						var td = el( 'td' );
+						if ( c.span > 1 ) { td.colSpan = c.span; }
+						if ( c.rows > 1 ) { td.rowSpan = c.rows; }
+						docBlocks( td, c.blocks || [], images );
+						tr.appendChild( td );
+					} );
+					body.appendChild( tr );
+				} );
+
+				tbl.appendChild( body );
+				wrap.appendChild( tbl );
+				parent.appendChild( wrap );
+				return;
+			}
+
+			var tag = b.h ? 'h' + Math.min( 6, b.h + 2 ) : 'p';
+			var p   = el( tag, b.list ? 'vh-docx__li' : null );
+
+			if ( ! b.runs || ! b.runs.length ) {
+				p.className = 'vh-docx__gap';
+				parent.appendChild( p );
+				return;
+			}
+			if ( b.list ) {
+				p.style.paddingLeft = ( 1.6 + 1.4 * ( b.list.lvl || 0 ) ) + 'em';
+				if ( b.list.label ) { p.appendChild( el( 'span', 'vh-docx__label', b.list.label ) ); }
+			}
+			if ( b.align ) { p.style.textAlign = 'center' === b.align ? 'center' : 'right'; }
+
+			docRuns( p, b.runs, images );
+			parent.appendChild( p );
+		} );
 	}
 
 	function show( i ) {

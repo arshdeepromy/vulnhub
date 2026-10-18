@@ -99,6 +99,158 @@ needs a nonce and `vulnhub_view`, and is audited as `export.ticket_report`.
 - Both files have a BOM, and cells that could be read as formulas are
   neutralised.
 
+## Your own Jira: My Jira tickets, Approvals, Assessments
+
+The Tickets page has a row of lists at the top: **Remediation** (everything
+below on this page) and three lists the Jira plugin adds through the
+`vulnhub_ticket_views` filter. `tview=mine|approvals|assessments` selects one;
+no `tview` is the remediation list, so every existing link still lands where
+it did. A plugin's entry needs a `label` and a callable `render` (given the
+tab's own URL); `count`, `tone`, `title` and `sub` are optional. Anything
+without the first two is dropped.
+
+All three are about **the connected Jira account** -- the account the
+connector signs in as. Everyone who can see the Tickets page sees them, so the
+help text on the connector says so.
+
+### Where the rows come from (`VulnHub_Jira_Inbox`)
+
+A cron job (`vulnhub_jira_inbox_refresh`, every 15 minutes) reads each set
+into `{prefix}vulnhub_jira_inbox` (one row per set and issue key). **Refresh
+now** re-reads the set on screen (`vulnhub_run_sync`). A set is replaced in
+one transaction and only by a complete read: a failed page leaves the
+previous rows and puts the error above the list. More than 2,000 issues stops
+the read and says so.
+
+| Set | Read with | Notes |
+|---|---|---|
+| `mine` | JQL `reporter = currentUser() AND (statusCategory != Done OR updated >= -90d)` | The portal raises its own tickets as the same account, so those keys (`vulnhub_tickets.external_key`) are left out when the list is drawn, and the tab says how many went to Remediation. |
+| `approvals` | `GET /servicedeskapi/request?requestOwnership=APPROVER&approvalStatus=MY_PENDING_APPROVAL`, then each request's `/approval` | **Not JQL.** On a real site with five requests waiting, `approver = currentUser()` and `approval = myPending()` both returned nothing, because the approver list is hidden from the approver. The issue fields come from one `key in (…)` search per 50 keys. |
+| `assessments` | JQL `"Request Type" in (…)` | The request type names come from the connector setting **Assessment request types**, one per line. Blank means the tab says how to set it and nothing is read. |
+
+The request-type field is found by its schema
+(`com.atlassian.servicedesk:vp-origin`), never by a hard-coded field id, and
+cached for a day.
+
+### Approvals: Approve and Decline
+
+Each waiting request shows **Approve** and **Decline** when Jira reports
+`canAnswerApproval` for this account and the viewer has `vulnhub_manage`
+(filter `vulnhub_jira_approval_cap`). Both ask in the page first, naming the
+key and the account the answer is given as.
+
+`VulnHub_Jira_Inbox::decide()`:
+
+1. Refuses on a read-only copy (`vulnhub_connector_sync_blocked`), when Jira
+   is not connected, and while the same approval is already being answered
+   (one-minute lock).
+2. **Reads the approval again** (`GET …/approval/{id}`). If Jira no longer
+   has it `pending`, the row is dropped and nothing is sent; if
+   `canAnswerApproval` is now false, nothing is sent. A page left open for an
+   hour, or a second click, cannot send a decision Jira already has.
+3. Sends `{"decision": "approve"|"decline"}` once, audits
+   `jira.approval_answered` (or `jira.approval_failed` with Jira's error),
+   drops the row and says so.
+
+The approval answer is the one write the project allowlist lets through for
+any project; `docs/JIRA-OAUTH.md` has the exact shape it accepts.
+
+### Assessments
+
+Open / Closed / All with counts, search (key, summary, reporter, assignee),
+project, and **Kind**: third-party (supplier) assessments or the rest. A row
+is tagged third-party when its summary matches
+`vulnhub_jira_third_party_pattern` (by default TPISA, "third party",
+"information security assessment", "questionnaire" or "RFP") -- on most
+desks those questionnaires share the general assessment request type, so a
+tag on the row says more than a separate list would.
+
+### My Jira tickets
+
+Open / Closed / All, search, and project. Closed issues stay for 90 days
+after their last update.
+
+### Waiting on you, on these lists too
+
+Mentioned you, Replied since you commented and Yours work on My Jira
+tickets, Approvals and Assessments exactly as on tickets raised here: the
+same `VulnHub_Dash_Ticket_Signals::flags()`, for whoever is looking, from the
+same comment summary (`VulnHub_Jira_Connector::conversation()`).
+
+- **The summary** is stored per issue (`conversation`, `conv_at` on
+  `{prefix}vulnhub_jira_inbox`, db v2). Each refresh reads the threads of open
+  issues whose `updated` moved since (`read_conversations()`, 40 a run,
+  newest activity first, a minute at most); a set swap carries it across.
+  Reading the comments on an issue's page, and posting from it, store it
+  again at once, so your reply clears the flag straight away.
+- **Templates.** These threads join the check for desk macros through the
+  filter `vulnhub_ticket_signal_conversations` (negative ids, which no ticket
+  has). The check compares every pair, so its answer is now cached in
+  `vh_ticket_boilerplate` until any summary changes.
+- **Shown as** the same row edge, bell and tags; a **For you** strip on My
+  Jira tickets and Assessments (`jfor` = `mention` | `answered` | `assigned`,
+  narrowing by key under the tab's filters); `@n` and `↩n` beside the tab's
+  count; and the topbar bell (`jira-inbox-mention` critical,
+  `jira-inbox-answered` warning, `jira-inbox-assigned` info).
+
+### Opening an issue: the same page a ticket raised here gets
+
+The key and the summary on all three lists open the issue in the portal
+(`&jkey=KEY` on its tab, `VulnHub_Jira_Inbox::render_issue()`); the arrow
+beside the key opens it in Jira. The page carries:
+
+- **Issue:** status with **Change status**, the approval (and Approve /
+  Decline) when it is on Approvals, request type, issue type, project,
+  priority, raised by, assignee, dates, resolution and labels.
+- **Attachments** and **Comments** (reply to customer, or internal note):
+  the same components a ticket raised here uses, from
+  `VulnHub_Dash_Tickets::comments_body()`, the attachment markup and the
+  status dialog, so the two cannot drift.
+- **Description**, rendered from Jira's ADF by `VulnHub_Jira_Adf::to_html()`
+  (text escaped; hard breaks, links and link cards, ordered lists, tables,
+  quotes and panels; an embedded image is named, not shown) and passed
+  through `wp_kses_post` as a second fence.
+
+The fields, description and attachment list are one live
+`GET /issue/{key}` (`issue_live()`), kept two minutes, cleared by a comment
+or a move, and written back to the stored rows so the lists catch up. If
+Jira cannot be reached the page shows the stored copy and says so.
+
+**Routes.** `/vulnhub/v1/tickets/jira/{KEY}/comments` (GET view, POST raise),
+`/transitions` (GET and POST raise), `/attachments` (`fresh=1` reads Jira
+now), `/attachments/{att}/preview` and `/file` (view). They answer exactly as
+`/tickets/{id}/…` does, so `app.js` serves both: the components take
+`vhTicketRef()`, which is a ticket id or `jira/KEY`. **Every route acts only
+on a key the inbox table holds** -- any other key is a 404, so these are not
+a way to reach arbitrary issues on the site.
+
+**What Jira allows decides the rest.** The moves offered are Jira's
+transitions for this account at this status (e.g. an approver may only be
+offered Canceled); a transition's screen fields are built as on a ticket
+raised here and the browser is not trusted (`apply_transition()` re-reads the
+offer). A reply or internal note Jira refuses comes back as its refusal. A
+move is read straight back and audited `jira.inbox_transition` (from, to,
+fields); a comment is audited `jira.inbox_comment` with its visibility. Both
+are refused on a read-only copy.
+
+**Project allowlist.** Your own issues can sit in projects the portal does
+not raise tickets in. For one request, and only from these routes, the
+client is told `allow_issue( KEY )`: a comment or a transition on that one
+key passes the allowlist, nothing else does (no field edit, no attachment,
+no other key), and `forget_issues()` withdraws it in a `finally`. See
+`docs/JIRA-OAUTH.md`.
+
+**Attachments** are fetched and cached exactly as on a ticket raised here,
+under ticket id `0` (attachment ids are unique site-wide), and only for a file
+Jira lists on that issue.
+
+### Numbers
+
+Every tab count comes from `VulnHub_Jira_Inbox::query()` with the same WHERE
+the list uses (`where()`): the strip shows open for My Jira tickets and
+Assessments and every waiting approval; the Open / Closed / All counts are
+taken under the filters in force with the state stripped.
+
 ## Open, Closed, All: the list is open tickets by default
 
 Open versus closed is the first question the Tickets list answers, so it is a
@@ -1014,6 +1166,51 @@ the same component is rendered inline on the ticket page — from one function
     comment on, and says so rather than looking like a ticket nobody has
     commented on.
 
+## @mentions in the reply box
+
+Typing `@` and two letters in any reply box -- a ticket raised here, its
+dialog on the list, or an issue from My Jira tickets / Approvals / Assessments
+-- suggests up to eight people. Arrow keys and Enter (or Tab) pick one,
+Escape closes the list, a click works too. The name goes into the text as
+"@Name", and a line under the box says who Jira will notify; on a reply to
+the customer it adds that the customer will see who was tagged. Deleting the
+"@Name" from the text removes the tag.
+
+**Who is suggested: only people who can view that issue.**
+`GET /vulnhub/v1/tickets/{id|jira/KEY}/mentionable?q=` (raise-level) asks
+Jira's `GET /rest/api/3/user/viewissue/search` and keeps active staff
+accounts only -- never a service-desk customer (who could not read an
+internal note) and never an app. Jira only notifies a mentioned person who
+can open the issue, so suggesting anyone else would promise a notification
+that never comes. Only `id` and `name` reach the browser: no email address,
+no avatar (initials are drawn instead, so the browser never calls
+Atlassian). Fewer than two characters asks nothing; answers are cached five
+minutes per issue and text (`vh_jira_mentionable_<md5>`); the script waits
+250 ms after typing stops.
+
+**Posting.** The reply box sends `mentions: [{id, name}]` with the text, for
+each tag still in it. `Rest::mentions_param()` keeps at most 20 short pairs;
+the filter `vulnhub_post_ticket_comment` now passes them as a fifth argument.
+`VulnHub_Jira_Connector::post_comment()`:
+
+1. `resolve_mentions()` drops a tag whose "@name" is no longer in the text,
+   then **checks each remaining person against Jira again**
+   (`viewissue/search` by `accountId`). Someone who cannot see the issue
+   refuses the whole post, by name, and nothing is sent -- a tag that
+   notifies nobody is worse than no tag. At most 10 tags a comment.
+2. Writes each tag the way the route stores a mention:
+   - service desk API (`/request/{key}/comment`): `[~accountid:…]` wiki
+     markup -- the form Jira itself returns for mentions read back through
+     that API (`mentions_as_wiki()`, longest names first so "@Ann Lee" is not
+     cut by "@Ann");
+   - issue API fallback: ADF `mention` nodes inline with the text
+     (`mentions_as_inline()`).
+3. Says who Jira will notify in the result, and returns `mentioned`; the
+   audit entries (`ticket.comment`, `jira.inbox_comment`) record how many.
+
+Jira sends the notification itself, exactly as when the tag is typed in
+Jira; nothing here emails anyone.
+
 ## Attachments: every file on the ticket, previewed in place
 
 The ticket page lists every file on the Jira issue, newest first -- the
@@ -1083,7 +1280,7 @@ attachment off another issue.
 |---|---|---|
 | table | csv, tsv | parsed here; delimiter and encoding (UTF-8 BOM, UTF-16, Windows-1252) detected |
 | sheet | xlsx, xlsm, xltx | parsed here (ZipArchive + XMLReader): every sheet up to 12, shared strings, booleans, date-formatted cells as dates |
-| doc | docx | the document's text, paragraph by paragraph |
+| doc | docx, docm, dotx | the document as written: headings (from the style's name, so a renamed style still reads), bold / italic / underline / strike, bullet and numbered lists with their own numbering, links (http(s) and mailto only), tables with merged cells (`span`, `rows`), and embedded pictures (see below) |
 | text | txt, log, json, xml, md, yaml, scripts, html… | first 256 KB as text; whole JSON is pretty-printed; HTML is shown as source, never rendered |
 | image | png, jpg, gif, webp, bmp, avif, svg | served inline |
 | pdf | pdf | served inline in a frame |
@@ -1093,6 +1290,20 @@ attachment off another issue.
 Tables show the first 500 rows and 60 columns (500 characters a cell), with
 a row filter and a "first row is headings" switch; the note under the table
 says how much was left out.
+
+**Word documents** (`Attachments::docx()`) come back as `blocks` --
+`{t:'p', h?, list?:{lvl,label}, align?, runs}` and
+`{t:'table', rows:[[{blocks, span?, rows?, merged?}]]}`, where a run is
+`{x, b?, i?, u?, s?, href?}`, `{img}` or `{note}` -- plus `images` and, for
+older readers, `paragraphs`. Questionnaires are mostly tables and pasted
+screenshots are often the whole point of a document, so a text dump read as a
+jumble or as nothing. Limits: 6,000 blocks or 256 KB of text, 40 pictures and
+8 MB of them; a body over 25 MB is read as plain text instead. Pictures are
+PNG, JPEG, GIF, WebP or BMP embedded in the file, sent as data URIs only when
+`finfo` agrees with the name -- never SVG, never anything linked from outside;
+the rest are counted and named. Deleted tracked changes are left out, as Word
+shows the document once they are accepted. `.doc` (the old binary format) is
+still not previewed.
 
 **Serving safely.** The type sent is chosen from the extension, never from
 Jira's `mimeType`, and an inline kind is only served inline when `finfo`
@@ -1113,6 +1324,7 @@ of its own (`VulnHub_Dash_Ticket_Signals`). Four signals, open tickets only:
 |---|---|---|
 | **Mentioned you** | a comment @mentions your Jira account, or writes your name, and you have not commented since | violet `@ Mentioned you` tag, violet row edge, bell |
 | **Waiting on your reply** | exactly when *Mentioned you* is set: somebody @mentioned you or wrote your name in a comment since you last commented; your next comment clears it. The newest comment merely being someone else's (routing notes, status updates) does not count | its own `Waiting on your reply` chip and an amber bell entry; on the row the violet mention tag stands for both |
+| **Replied since you commented** | you have commented, and a person has commented after you without @mentioning you (that comment would be *Mentioned you*). Same rules for who counts as a person; your next comment clears it | teal `New reply` tag, teal row edge, bell; `tfor=answered` |
 | **Assigned to you** | the Jira assignee is your account | `Yours` tag, accent edge, bell |
 | **Chase** | past its due date (end of the day, site time) *after* an updated list was sent | the row glows red, with `N days over` and `list sent …` |
 
@@ -1123,7 +1335,7 @@ edge): the next step there is sending the list, not chasing.
   the bell carry a title saying who, and when.
 - **For you** above the tabs is one chip per signal with its count, and each
   chip is a filter: `tfor` = `mention` | `reply` | `assigned` | `chase` |
-  `overdue`. It narrows by id, the same way the report's drill-downs do, and
+  `overdue` (and `answered`). It narrows by id, the same way the report's drill-downs do, and
   combines with them.
 - **The topbar bell** takes the same signals through `vulnhub_notifications`:
   mentions and chase as critical, replies as a warning, assignments as info,
@@ -1136,8 +1348,11 @@ mentioning you:
 
 - **Automations** — `accountType = app`.
 - **Relayed field changes** — a desk that mirrors another tool posts lines
-  like "Owner changed in <tool> to: …". `VulnHub_Jira_Connector::is_noise()`
-  matches `<field> changed [in <tool>] to:` on the first line; filter
+  like "Owner changed in <tool> to: …", or copies a whole field as
+  "Description changed from: … To: …" (names and all, which used to read as
+  a mention). `VulnHub_Jira_Connector::is_noise()` matches
+  `<field> changed [in <tool>] to:` and `<field> changed from:` on the
+  first line; filter
   `vulnhub_ticket_comment_is_noise` for other shapes. The same relay's
   "<Name> in <tool> commented:" posts *are* a person, and are credited to
   that name (`relayed_by()`) — including you, so a reply you made in the

@@ -2,6 +2,14 @@
 /**
  * Vulnerability exception / risk acceptance register.
  *
+ * Two kinds of row share it. Finding exceptions (scope finding, asset, vuln,
+ * team, bundled) stamp exception_id onto findings and take them out of the
+ * open counts. Security exceptions (scope `policy`) are decisions about a
+ * control or a policy -- a firewall allow-list, offshore working, a legacy
+ * cipher -- that have no finding behind them: they never touch a finding,
+ * and are usually decided in a Jira service request and recorded here with
+ * record().
+ *
  * @package VulnHub\Core
  */
 
@@ -26,6 +34,8 @@ final class Exceptions {
 			'rejected' => __( 'Rejected', 'vulnhub' ),
 			'expired'  => __( 'Expired', 'vulnhub' ),
 			'revoked'  => __( 'Revoked', 'vulnhub' ),
+			'withdrawn' => __( 'Withdrawn', 'vulnhub' ),
+			'closed'    => __( 'Closed, no decision recorded', 'vulnhub' ),
 		);
 	}
 
@@ -55,6 +65,171 @@ final class Exceptions {
 			'vuln'    => __( 'One vulnerability across all assets', 'vulnhub' ),
 			'team'    => __( 'One vulnerability across a team', 'vulnhub' ),
 			'bundled' => __( 'Every bundled library or file in one application, now and as found', 'vulnhub' ),
+			'policy'  => __( 'A security policy or control (no findings)', 'vulnhub' ),
+		);
+	}
+
+	/**
+	 * Scopes that suppress findings. A `policy` exception never does.
+	 */
+	public static function is_finding_scope( string $scope_type ): bool {
+		return 'policy' !== $scope_type;
+	}
+
+	/**
+	 * Where a human opens the exception's Jira ticket: the site the Jira
+	 * connector is configured for. No connector, no link -- never a guess.
+	 */
+	public static function jira_url( string $key ): string {
+		$key = strtoupper( trim( $key ) );
+		if ( ! preg_match( '/^[A-Z][A-Z0-9_]{0,30}-\d{1,9}$/', $key ) || ! function_exists( 'vulnhub' ) ) {
+			return '';
+		}
+
+		$jira = vulnhub()->connectors->get( 'jira' );
+		if ( ! $jira || ! method_exists( $jira, 'client' ) || ( method_exists( $jira, 'is_mock' ) && $jira->is_mock() ) ) {
+			return '';
+		}
+
+		try {
+			$site = (string) $jira->client()->site_url();
+		} catch ( \Throwable $e ) {
+			return '';
+		}
+
+		return '' !== $site ? $site . '/browse/' . rawurlencode( $key ) : '';
+	}
+
+	/**
+	 * Record a security exception decided outside the portal, or correct one.
+	 *
+	 * The approval for these is given in a Jira service request, by people
+	 * who may never sign in here, so the approver, the dates and the
+	 * decision are taken as given rather than stamped from the current
+	 * user -- that is the difference from create() + decide(). Only the
+	 * `policy` scope can be recorded this way, so nothing written here can
+	 * ever take a finding out of the open counts.
+	 *
+	 * @param array<string,mixed> $data Fields.
+	 * @param int                 $id   Existing policy exception to update, or 0.
+	 * @return array{ok:bool,id:int,message:string}
+	 */
+	public static function record( array $data, int $id = 0 ): array {
+		global $wpdb;
+
+		$fail = static fn( string $m ): array => array( 'ok' => false, 'id' => 0, 'message' => $m );
+
+		if ( $id ) {
+			$existing = self::get( $id );
+			if ( ! $existing ) {
+				return $fail( __( 'Exception not found.', 'vulnhub' ) );
+			}
+			if ( 'policy' !== (string) $existing['scope_type'] ) {
+				return $fail( __( 'Only a security exception can be edited here. Finding exceptions are decided on their own screen.', 'vulnhub' ) );
+			}
+		}
+
+		$title = trim( sanitize_text_field( (string) ( $data['title'] ?? '' ) ) );
+		if ( '' === $title ) {
+			return $fail( __( 'Give the exception a title.', 'vulnhub' ) );
+		}
+
+		$justification = trim( sanitize_textarea_field( (string) ( $data['justification'] ?? '' ) ) );
+		if ( mb_strlen( $justification ) < 20 ) {
+			return $fail( __( 'Please give a justification of at least 20 characters — this is the record an auditor will read.', 'vulnhub' ) );
+		}
+
+		$status = (string) ( $data['status'] ?? 'pending' );
+		if ( ! array_key_exists( $status, self::statuses() ) ) {
+			$status = 'pending';
+		}
+
+		$reason = (string) ( $data['reason'] ?? 'accepted_risk' );
+		if ( ! array_key_exists( $reason, self::reasons() ) ) {
+			$reason = 'other';
+		}
+
+		$date = static function ( $v ): ?string {
+			$v = trim( (string) $v );
+			if ( '' === $v ) {
+				return null;
+			}
+			$ts = strtotime( ( preg_match( '/^\d{4}-\d{2}-\d{2}$/', $v ) ? $v . ' 00:00:00' : $v ) . ' UTC' );
+			return $ts ? gmdate( 'Y-m-d H:i:s', $ts ) : null;
+		};
+		$text = static fn( string $k, int $max ): string => mb_substr( sanitize_textarea_field( (string) ( $data[ $k ] ?? '' ) ), 0, $max );
+		$name = static fn( string $k ): string => mb_substr( sanitize_text_field( (string) ( $data[ $k ] ?? '' ) ), 0, 190 );
+
+		$keys = array();
+		foreach ( preg_split( '/[\s,;]+/', strtoupper( (string) ( $data['jira_key'] ?? '' ) ) ) ?: array() as $k ) {
+			if ( preg_match( '/^[A-Z][A-Z0-9_]{0,30}-\d{1,9}$/', $k ) ) {
+				$keys[ $k ] = $k;
+			}
+		}
+
+		$row = array(
+			'title'                 => vh_trim( $title, 250 ),
+			'scope_type'            => 'policy',
+			'scope_ref'             => '',
+			'scope_label'           => __( 'Security policy exception', 'vulnhub' ),
+			'reason'                => $reason,
+			'justification'         => mb_substr( $justification, 0, 8000 ),
+			'compensating_controls' => $text( 'compensating_controls', 8000 ),
+			'business_impact'       => $text( 'business_impact', 4000 ),
+			'status'                => $status,
+			'requested_by_name'     => $name( 'requested_by_name' ),
+			'approver_name'         => in_array( $status, array( 'pending', 'draft' ), true ) ? '' : $name( 'approver_name' ),
+			'decision_note'         => $text( 'decision_note', 900 ),
+			'jira_key'              => mb_substr( implode( ', ', $keys ), 0, 64 ),
+			'expires_at'            => $date( $data['expires_at'] ?? '' ),
+			'review_at'             => $date( $data['review_at'] ?? '' ),
+			'requested_at'          => $date( $data['requested_at'] ?? '' ) ?? ( $id ? $existing['requested_at'] : vh_now() ),
+			'decided_at'            => in_array( $status, array( 'pending', 'draft' ), true ) ? null : $date( $data['decided_at'] ?? '' ),
+			'revoked_at'            => in_array( $status, array( 'revoked', 'withdrawn' ), true ) ? $date( $data['revoked_at'] ?? '' ) : null,
+			'affected_count'        => 0,
+			'updated_at'            => vh_now(),
+		);
+
+		if ( $id ) {
+			$ok = false !== $wpdb->update( vh_table( 'exceptions' ), $row, array( 'id' => $id ) );
+		} else {
+			$row['reference']  = self::next_reference();
+			$row['created_at'] = vh_now();
+			$ok                = (bool) $wpdb->insert( vh_table( 'exceptions' ), $row );
+			$id                = $ok ? (int) $wpdb->insert_id : 0;
+		}
+
+		if ( ! $ok || ! $id ) {
+			return $fail( __( 'Could not save the exception.', 'vulnhub' ) );
+		}
+
+		$saved = self::get( $id );
+
+		vulnhub()->logger->audit(
+			isset( $existing ) ? 'exception.record_updated' : 'exception.recorded',
+			sprintf(
+				/* translators: 1: reference, 2: title, 3: status. */
+				__( 'Security exception %1$s recorded: %2$s (%3$s)', 'vulnhub' ),
+				(string) ( $saved['reference'] ?? '' ),
+				$row['title'],
+				self::statuses()[ $status ] ?? $status
+			),
+			'exception',
+			$id,
+			array(
+				'status'   => $status,
+				'approver' => $row['approver_name'],
+				'jira'     => $row['jira_key'],
+				'before'   => isset( $existing ) ? (string) $existing['status'] : '',
+			)
+		);
+
+		self::changed();
+
+		return array(
+			'ok'      => true,
+			'id'      => $id,
+			'message' => __( 'Security exception saved.', 'vulnhub' ),
 		);
 	}
 
@@ -85,7 +260,9 @@ final class Exceptions {
 
 	private static function next_reference(): string {
 		global $wpdb;
-		$n = (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . vh_table( 'exceptions' ) ) + 1;
+		// The highest number in use, not the row count: a deleted row would
+		// otherwise hand out a reference that already exists.
+		$n = (int) $wpdb->get_var( 'SELECT COALESCE( MAX( CAST( SUBSTRING( reference, 5 ) AS UNSIGNED ) ), 0 ) FROM ' . vh_table( 'exceptions' ) . " WHERE LEFT( reference, 4 ) = 'EXC-'" ) + 1;
 		return sprintf( 'EXC-%04d', $n );
 	}
 
@@ -584,6 +761,8 @@ final class Exceptions {
 					__( 'Bundled libraries and files in %s', 'vulnhub' ),
 					'' !== $app ? $app : $ref
 				);
+			case 'policy':
+				return __( 'Security policy exception', 'vulnhub' );
 		}
 		return $type;
 	}
@@ -623,6 +802,14 @@ final class Exceptions {
 			$where[]  = 'team_id = %d';
 			$params[] = (int) $args['team_id'];
 		}
+		if ( ! empty( $args['scope'] ) ) {
+			// 'policy' = security exceptions; 'findings' = everything else.
+			$where[] = 'policy' === $args['scope'] ? "scope_type = 'policy'" : "scope_type <> 'policy'";
+		}
+		if ( ! empty( $args['jira_key'] ) ) {
+			$where[]  = 'LOCATE( %s, jira_key ) > 0';
+			$params[] = strtoupper( (string) $args['jira_key'] );
+		}
 		if ( ! empty( $args['requested_by'] ) ) {
 			$where[]  = 'requested_by = %d';
 			$params[] = (int) $args['requested_by'];
@@ -651,7 +838,7 @@ final class Exceptions {
 		$qp[] = $offset;
 
 		$rows = (array) $wpdb->get_results(
-			$wpdb->prepare( "SELECT * FROM {$t} WHERE {$where_sql} ORDER BY FIELD(status,'pending','approved','draft','rejected','expired','revoked'), id DESC LIMIT %d OFFSET %d", ...$qp ), // phpcs:ignore
+			$wpdb->prepare( "SELECT * FROM {$t} WHERE {$where_sql} ORDER BY FIELD(status,'pending','approved','draft','rejected','expired','revoked','withdrawn','closed'), COALESCE(decided_at, requested_at) DESC, id DESC LIMIT %d OFFSET %d", ...$qp ), // phpcs:ignore
 			ARRAY_A
 		);
 

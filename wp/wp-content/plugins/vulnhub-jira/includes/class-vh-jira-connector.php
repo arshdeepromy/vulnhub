@@ -392,6 +392,22 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 				'help'           => __( 'Writes the verification verdict back to Jira so the person who closed the ticket sees the evidence without leaving their tool.', 'vulnhub' ),
 			),
 			array(
+				'key'            => 'inbox_enabled',
+				'label'          => __( 'Tickets page tabs', 'vulnhub' ),
+				'type'           => 'checkbox',
+				'default'        => 1,
+				'checkbox_label' => __( 'Show this account\'s own Jira tickets, approvals and assessment requests on the Tickets page', 'vulnhub' ),
+				'help'           => __( 'Adds three tabs beside the remediation tickets: issues this account raised directly in Jira, service requests waiting for its approval (with Approve and Decline), and assessment requests. Read every 15 minutes. Everyone who can see the Tickets page sees these tabs; only people with the manage permission can answer an approval, and the answer is given in Jira as this account.', 'vulnhub' ),
+			),
+			array(
+				'key'         => 'inbox_assessment_types',
+				'label'       => __( 'Assessment request types', 'vulnhub' ),
+				'type'        => 'textarea',
+				'default'     => '',
+				'placeholder' => __( "Security Assessment Request\nThird Party Security Review", 'vulnhub' ),
+				'help'        => __( 'Service-desk request type names whose requests go on the Assessments tab, one per line, exactly as Jira shows them. Requests whose summary reads as a third-party or supplier assessment are tagged so the tab can filter to them.', 'vulnhub' ),
+			),
+			array(
 				'key'     => 'sync_batch',
 				'label'   => __( 'Issue keys per JQL batch', 'vulnhub' ),
 				'type'    => 'number',
@@ -1941,7 +1957,10 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 	 */
 	public static function is_noise( string $body ): bool {
 		$first = strtok( trim( $body ), "\n" );
-		$noise = false !== $first && (bool) preg_match( '/^[^\n]{1,80}?\bchanged (?:in [^\n]{1,60}? )?to:/iu', $first );
+		// "Owner changed in <tool> to: …", and the mirror's other shape,
+		// "Description changed from:" with the old and new field on the lines
+		// after it -- a whole field, names and all, in a comment nobody wrote.
+		$noise = false !== $first && (bool) preg_match( '/^[^\n]{1,80}?\bchanged (?:from:|(?:in [^\n]{1,60}? )?to:)/iu', $first );
 
 		return (bool) apply_filters( 'vulnhub_ticket_comment_is_noise', $noise, $body );
 	}
@@ -2048,10 +2067,17 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 	 * "internal" has no meaning and the caller is told so rather than being
 	 * quietly given a public comment.
 	 *
-	 * @param bool $public True for a reply the customer sees.
-	 * @return array{ok:bool,message:string,comment?:array<string,mixed>}
+	 * @mentions arrive as `[{id, name}]` beside the text, where the text holds
+	 * "@name" for each. Each is checked against who can view the issue now and
+	 * written in the form the route needs: `[~accountid:…]` wiki markup for
+	 * the service desk API, a `mention` node for the issue API. Either way Jira
+	 * itself sends the notification, exactly as when the tag is typed in Jira.
+	 *
+	 * @param bool                     $public   True for a reply the customer sees.
+	 * @param array<int,array<string,string>> $mentions People tagged in the text.
+	 * @return array{ok:bool,message:string,comment?:array<string,mixed>,mentioned?:array<int,array<string,string>>}
 	 */
-	public function post_comment( string $key, string $body, bool $public ): array {
+	public function post_comment( string $key, string $body, bool $public, array $mentions = array() ): array {
 		$body = trim( $body );
 
 		if ( ! $this->is_enabled() ) {
@@ -2071,10 +2097,22 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 			);
 		}
 
+		$people = array();
+
+		if ( $mentions ) {
+			$checked = $this->resolve_mentions( $key, $body, $mentions );
+
+			if ( empty( $checked['ok'] ) ) {
+				return array( 'ok' => false, 'message' => (string) $checked['message'] );
+			}
+
+			$people = $checked['people'];
+		}
+
 		// Whatever happens below, the cached conversation is now suspect.
 		$this->forget_comments( $key );
 
-		$response = $this->client()->request_comment( $key, $body, $public );
+		$response = $this->client()->request_comment( $key, $people ? self::mentions_as_wiki( $body, $people ) : $body, $public );
 
 		/*
 		 * 404 from the service desk API means this issue is not a request --
@@ -2094,7 +2132,7 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 				);
 			}
 
-			$response = $this->client()->comment( $key, VulnHub_Jira_Adf::doc()->paragraph( $body )->to_array() );
+			$response = $this->client()->comment( $key, VulnHub_Jira_Adf::doc()->paragraph( $people ? self::mentions_as_inline( $body, $people ) : $body )->to_array() );
 		}
 
 		if ( ! $response->ok() ) {
@@ -2112,13 +2150,198 @@ final class VulnHub_Jira_Connector extends \VulnHub\Core\Connector {
 
 		$this->log( sprintf( 'Commented on %s (%s)', $key, $public ? 'reply to customer' : 'internal note' ) );
 
+		$message = $public
+			? __( 'Posted as a reply the customer can see.', 'vulnhub' )
+			: __( 'Posted as an internal note.', 'vulnhub' );
+
+		if ( $people ) {
+			$message .= ' ' . sprintf(
+				/* translators: %s: names. */
+				__( 'Jira will notify %s.', 'vulnhub' ),
+				implode( ', ', array_map( static fn( array $p ): string => $p['label'], $people ) )
+			);
+		}
+
 		return array(
-			'ok'      => true,
-			'message' => $public
-				? __( 'Posted as a reply the customer can see.', 'vulnhub' )
-				: __( 'Posted as an internal note.', 'vulnhub' ),
-			'comment' => $this->normalise_comment( (array) $response->data() ),
+			'ok'        => true,
+			'message'   => $message,
+			'comment'   => $this->normalise_comment( (array) $response->data() ),
+			'mentioned' => array_map( static fn( array $p ): array => array( 'id' => $p['id'], 'name' => $p['label'] ), $people ),
 		);
+	}
+
+	/** At most this many people tagged in one comment. */
+	public const MENTIONS_MAX = 10;
+
+	/** Suggestions are kept this long per issue and typed text. */
+	private const MENTIONABLE_TTL = 5 * MINUTE_IN_SECONDS;
+
+	/**
+	 * Who the reply box may suggest after "@": people Jira says can view the
+	 * issue, staff accounts only -- never a service-desk customer, who could
+	 * not read an internal note, and never an app.
+	 *
+	 * @return array{ok:bool,message:string,people:array<int,array{id:string,name:string}>}
+	 */
+	public function mentionable( string $key, string $query ): array {
+		$query = trim( (string) preg_replace( '/\s+/u', ' ', $query ) );
+
+		if ( mb_strlen( $query ) < 2 ) {
+			return array( 'ok' => true, 'message' => '', 'people' => array() );
+		}
+		if ( ! $this->is_enabled() ) {
+			return array( 'ok' => false, 'message' => __( 'Jira is not enabled.', 'vulnhub' ), 'people' => array() );
+		}
+
+		$query = mb_substr( $query, 0, 60 );
+		$cache = 'vh_jira_mentionable_' . md5( strtoupper( $key ) . '|' . mb_strtolower( $query ) );
+		$hit   = get_transient( $cache );
+
+		if ( is_array( $hit ) ) {
+			return $hit;
+		}
+
+		$r = $this->client()->users_who_can_view( $key, $query, 20 );
+
+		if ( ! $r->ok() ) {
+			return array(
+				'ok'      => false,
+				/* translators: 1: issue key, 2: HTTP status. */
+				'message' => sprintf( __( 'Could not search for people who can see %1$s (HTTP %2$d).', 'vulnhub' ), $key, $r->status ),
+				'people'  => array(),
+			);
+		}
+
+		$out = array( 'ok' => true, 'message' => '', 'people' => array_slice( self::staff( $r->data() ), 0, 8 ) );
+
+		set_transient( $cache, $out, self::MENTIONABLE_TTL );
+
+		return $out;
+	}
+
+	/**
+	 * Active staff accounts from a user search, as `{id, name}`. Email
+	 * addresses and avatars are left behind on purpose.
+	 *
+	 * @param array<mixed> $users Jira users.
+	 * @return array<int,array{id:string,name:string}>
+	 */
+	private static function staff( array $users ): array {
+		$out = array();
+
+		foreach ( $users as $u ) {
+			if ( ! is_array( $u ) || 'atlassian' !== (string) ( $u['accountType'] ?? '' ) || empty( $u['active'] ) || '' === (string) ( $u['accountId'] ?? '' ) ) {
+				continue;
+			}
+
+			$out[] = array(
+				'id'   => (string) $u['accountId'],
+				'name' => vh_trim( (string) ( $u['displayName'] ?? '' ), 120 ),
+			);
+		}
+
+		return $out;
+	}
+
+	/**
+	 * The tags a comment really carries: each asked-for person whose "@name"
+	 * is still in the text, checked one at a time against who can view the
+	 * issue now. Someone who cannot is refused by name rather than dropped,
+	 * because a tag that silently notifies nobody is worse than no tag.
+	 *
+	 * @param array<int,mixed> $asked `[{id, name}]` from the reply box.
+	 * @return array{ok:bool,message:string,people:array<int,array{id:string,name:string,label:string}>}
+	 */
+	public function resolve_mentions( string $key, string $body, array $asked ): array {
+		$people = array();
+
+		foreach ( $asked as $m ) {
+			$id   = is_array( $m ) ? (string) ( $m['id'] ?? '' ) : '';
+			$name = is_array( $m ) ? trim( (string) ( $m['name'] ?? '' ) ) : '';
+
+			if ( ! preg_match( '/^[A-Za-z0-9:_-]{6,128}$/', $id ) || '' === $name || isset( $people[ $id ] ) ) {
+				continue;
+			}
+
+			// Deleted from the text after it was picked: not a tag any more.
+			if ( ! str_contains( $body, '@' . $name ) ) {
+				continue;
+			}
+
+			if ( count( $people ) >= self::MENTIONS_MAX ) {
+				/* translators: %d: limit. */
+				return array( 'ok' => false, 'message' => sprintf( __( 'Tag at most %d people in one comment.', 'vulnhub' ), self::MENTIONS_MAX ), 'people' => array() );
+			}
+
+			$r   = $this->client()->users_who_can_view( $key, '', 1, $id );
+			$who = $r->ok() ? self::staff( $r->data() ) : array();
+
+			if ( ! $who || $who[0]['id'] !== $id ) {
+				return array(
+					'ok'      => false,
+					/* translators: 1: person, 2: issue key. */
+					'message' => sprintf( __( '%1$s cannot see %2$s in Jira, so they would not be notified. Remove the tag, or share the issue with them in Jira first. Nothing was posted.', 'vulnhub' ), $name, $key ),
+					'people'  => array(),
+				);
+			}
+
+			$people[ $id ] = array( 'id' => $id, 'name' => $name, 'label' => $who[0]['name'] );
+		}
+
+		return array( 'ok' => true, 'message' => '', 'people' => array_values( $people ) );
+	}
+
+	/**
+	 * The text for the service desk API: each "@name" becomes
+	 * `[~accountid:…]`, the wiki markup that route stores a mention as.
+	 * Longest names first, so "@Ann Lee" is not cut short by "@Ann".
+	 *
+	 * @param array<int,array{id:string,name:string}> $people Checked tags.
+	 */
+	public static function mentions_as_wiki( string $body, array $people ): string {
+		usort( $people, static fn( array $a, array $b ): int => mb_strlen( $b['name'] ) <=> mb_strlen( $a['name'] ) );
+
+		foreach ( $people as $p ) {
+			$body = str_replace( '@' . $p['name'], '[~accountid:' . $p['id'] . ']', $body );
+		}
+
+		return $body;
+	}
+
+	/**
+	 * The text for the issue API: inline ADF, text with a `mention` node for
+	 * each "@name".
+	 *
+	 * @param array<int,array{id:string,name:string,label?:string}> $people Checked tags.
+	 * @return array<int,array<string,mixed>>
+	 */
+	public static function mentions_as_inline( string $body, array $people ): array {
+		usort( $people, static fn( array $a, array $b ): int => mb_strlen( $b['name'] ) <=> mb_strlen( $a['name'] ) );
+
+		$by_name = array();
+		foreach ( $people as $p ) {
+			$by_name[ $p['name'] ] = $p;
+		}
+
+		$pattern = '/@(' . implode( '|', array_map( static fn( string $n ): string => preg_quote( $n, '/' ), array_keys( $by_name ) ) ) . ')/u';
+		$parts   = preg_split( $pattern, $body, -1, PREG_SPLIT_DELIM_CAPTURE ) ?: array( $body );
+		$out     = array();
+
+		foreach ( $parts as $i => $part ) {
+			if ( 1 === $i % 2 && isset( $by_name[ $part ] ) ) {
+				$out[] = array(
+					'type'  => 'mention',
+					'attrs' => array(
+						'id'   => $by_name[ $part ]['id'],
+						'text' => '@' . ( $by_name[ $part ]['label'] ?? $part ),
+					),
+				);
+			} elseif ( '' !== $part ) {
+				$out[] = array( 'type' => 'text', 'text' => $part );
+			}
+		}
+
+		return $out;
 	}
 
 	/**

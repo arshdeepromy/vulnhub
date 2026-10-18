@@ -3026,6 +3026,14 @@ dialog.vh-ask::backdrop { background: rgba(4, 8, 18, .6); }
 }
 .vh-tabs__tab.is-active .vh-tabs__n { color: var(--vh-ink-2); }
 
+/* The strip of lists at the top of the Tickets page: Remediation, and what
+   other plugins add beside it (the Jira account's own issues, its approvals,
+   assessment requests). Waiting approvals are the one count that asks for
+   action, so that count alone takes the warning tone. */
+.vh-tabs--views { margin-bottom: 18px; }
+.vh-tabs__n--warn,
+.vh-tabs__tab.is-active .vh-tabs__n--warn { color: var(--vh-warn-ink); background: var(--vh-warn-bg); }
+
 /* "Send an updated list to Jira" review modal (data-vh-reattach) */
 .vh-ra-meta { margin: 0 0 .75rem; }
 .vh-ra-table { width: 100%; border-collapse: collapse; font-size: .85rem; margin: .25rem 0 .5rem; }
@@ -3057,12 +3065,17 @@ dialog.vh-ask::backdrop { background: rgba(4, 8, 18, .6); }
 	--vh-sig-assigned: var(--vh-accent);
 }
 :root[data-theme="light"] { --vh-mention: #6a3bd2; }
+/* Replied since you commented: teal, apart from the mention's violet and
+   the reply-owed amber, because it is news rather than a request. */
+:root { --vh-sig-answered: #3cc7b4; }
+:root[data-theme="light"] { --vh-sig-answered: #0f7f73; }
 
 /* The row's edge takes the strongest signal's colour. */
 .vh-table tbody tr.vh-trow--you > td:first-child { box-shadow: inset 3px 0 0 var(--vh-sig, var(--vh-accent)); }
 .vh-table tbody tr.vh-trow--mention  { --vh-sig: var(--vh-mention); }
 .vh-table tbody tr.vh-trow--reply    { --vh-sig: var(--vh-sig-reply); }
 .vh-table tbody tr.vh-trow--assigned { --vh-sig: var(--vh-sig-assigned); }
+.vh-table tbody tr.vh-trow--answered { --vh-sig: var(--vh-sig-answered); }
 .vh-table tbody tr.vh-trow--you > td { background: color-mix(in srgb, var(--vh-sig) 5%, transparent); }
 
 /* Overdue, no fresh list: marked, not shouted. */
@@ -3095,6 +3108,7 @@ dialog.vh-ask::backdrop { background: rgba(4, 8, 18, .6); }
 }
 .vh-tbell--mention { --c: var(--vh-mention); }
 .vh-tbell--reply   { --c: var(--vh-sig-reply); }
+.vh-tbell--answered { --c: var(--vh-sig-answered); }
 .vh-tbell svg { width: 13px; height: 13px; transform-origin: 50% 2px; animation: vh-ring 5s ease-in-out infinite; }
 .vh-tbell i {
 	position: absolute; top: -6px; right: -7px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 999px;
@@ -3121,6 +3135,7 @@ dialog.vh-ask::backdrop { background: rgba(4, 8, 18, .6); }
 .vh-ttag--mention  { --c: var(--vh-mention); }
 .vh-ttag--reply    { --c: var(--vh-sig-reply); }
 .vh-ttag--assigned { --c: var(--vh-sig-assigned); }
+.vh-ttag--answered { --c: var(--vh-sig-answered); }
 .vh-ttag--overdue  { --c: var(--vh-bad); background: transparent; }
 .vh-ttag--chase    { --c: var(--vh-bad); background: var(--vh-bad); color: #fff; border-color: transparent; box-shadow: 0 0 10px color-mix(in srgb, var(--vh-bad) 55%, transparent); }
 .vh-ttag--sent     { --c: var(--vh-muted); font-weight: 500; }
@@ -3153,6 +3168,7 @@ dialog.vh-ask::backdrop { background: rgba(4, 8, 18, .6); }
 .vh-foryou__chip--mention  { --c: var(--vh-mention); }
 .vh-foryou__chip--reply    { --c: var(--vh-sig-reply); }
 .vh-foryou__chip--assigned { --c: var(--vh-sig-assigned); }
+.vh-foryou__chip--answered { --c: var(--vh-sig-answered); }
 .vh-foryou__chip--chase, .vh-foryou__chip--overdue { --c: var(--vh-bad); }
 .vh-foryou__note { flex-basis: 100%; }
 
@@ -3440,3 +3456,58 @@ audio.vh-att__media { background: none; }
 .vh-cg-layer--detect    { --vh-cg-bg: rgba(var(--vh-accent-rgb), .12); }
 .vh-cg-scope { margin: 10px 0; }
 .vh-cg-scope p { margin: 0; }
+
+/* An issue from the connected account's own Jira lists (My Jira tickets,
+   Approvals, Assessments), opened in the portal. */
+.vh-jissue__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 4px 0 16px; }
+.vh-jissue__head h2 { margin: 0; font-size: 1.15rem; line-height: 1.35; flex: 1 1 420px; overflow-wrap: anywhere; }
+.vh-jissue__head .vh-mono { color: var(--vh-accent); margin-right: 6px; }
+.vh-jissue__actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.vh-jissue__desc { overflow-wrap: anywhere; line-height: 1.55; }
+.vh-jissue__desc p { margin: 0 0 .7em; }
+.vh-jissue__desc pre { white-space: pre-wrap; }
+
+/* @mentions in the reply box: suggestions under the textarea, and the line
+   saying who Jira will notify. Initials, not avatars: the browser never
+   calls out to Atlassian for a picture. */
+.vh-comments__reply { position: relative; }
+.vh-mention__list {
+	position: absolute; z-index: 30; left: 0; min-width: 260px; max-width: 100%;
+	margin: 4px 0 0; padding: 4px; list-style: none; max-height: 248px; overflow: auto;
+	background: var(--vh-raised-solid); border: 1px solid var(--vh-line-2); border-radius: 10px; box-shadow: var(--vh-shadow);
+}
+.vh-mention__item { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 7px; cursor: pointer; color: var(--vh-ink); }
+.vh-mention__item:hover, .vh-mention__item.is-active { background: var(--vh-neutral-bg); }
+.vh-mention__av {
+	flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; display: inline-grid; place-items: center;
+	font-size: 10.5px; font-weight: 600; background: var(--vh-neutral-bg); color: var(--vh-ink-2);
+}
+.vh-mention__item.is-active .vh-mention__av { background: var(--vh-raised-solid); }
+.vh-mention__tags { margin: 6px 0 0; font-size: 12.5px; color: var(--vh-muted); }
+
+/* Unanswered mentions on a Jira list's tab: the same violet as the
+   "Mentioned you" tag, so the tab says where the flag is before it is opened. */
+.vh-tabs__n--mention,
+.vh-tabs__tab.is-active .vh-tabs__n--mention { color: var(--vh-mention); background: color-mix(in srgb, var(--vh-mention) 14%, transparent); margin-left: 4px; }
+.vh-jissue__head h2 .vh-ttags { display: inline-flex; margin-top: 6px; }
+.vh-tabs__n--answered,
+.vh-tabs__tab.is-active .vh-tabs__n--answered { color: var(--vh-sig-answered); background: color-mix(in srgb, var(--vh-sig-answered) 14%, transparent); margin-left: 4px; }
+
+/* Word documents in the attachment preview: headings, lists, tables and
+   pictures as the document has them, on the page's own type and colours. */
+.vh-docx { white-space: normal; }
+.vh-docx p { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.vh-docx h3, .vh-docx h4, .vh-docx h5, .vh-docx h6, .vh-docx h7, .vh-docx h8 { margin: 18px 0 8px; line-height: 1.3; color: var(--vh-ink); }
+.vh-docx h3 { font-size: 1.25rem; } .vh-docx h4 { font-size: 1.1rem; } .vh-docx h5, .vh-docx h6 { font-size: 1rem; }
+.vh-docx__li { position: relative; }
+.vh-docx__label { position: absolute; left: calc(var(--vh-li-indent, 0px)); margin-left: -1.4em; width: 1.3em; text-align: right; color: var(--vh-muted); }
+.vh-docx__li .vh-docx__label { position: static; display: inline-block; min-width: 1.6em; margin-left: -1.6em; padding-right: .3em; text-align: right; }
+.vh-docx__gap { margin: 0 0 8px; min-height: .4em; }
+.vh-docx__tablewrap { overflow-x: auto; margin: 4px 0 14px; }
+.vh-docx__table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.vh-docx__table td { border: 1px solid var(--vh-line-2); padding: 6px 8px; vertical-align: top; }
+.vh-docx__table td p { margin: 0 0 4px; }
+.vh-docx__table td p:last-child { margin-bottom: 0; }
+.vh-docx__img { display: block; max-width: 100%; height: auto; margin: 6px 0; border-radius: 4px; border: 1px solid var(--vh-line); }
+.vh-docx__note { color: var(--vh-muted); font-style: italic; }
+.vh-docx a { overflow-wrap: anywhere; }

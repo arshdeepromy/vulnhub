@@ -1060,17 +1060,21 @@ final class Rest {
 			return new WP_Error( 'vulnhub_bad_request', __( 'Write something first.', 'vulnhub' ), array( 'status' => 400 ) );
 		}
 
-		$public = in_array( $request->get_param( 'public' ), array( true, 1, '1', 'true', 'yes', 'on' ), true );
+		$public   = in_array( $request->get_param( 'public' ), array( true, 1, '1', 'true', 'yes', 'on' ), true );
+		$mentions = self::mentions_param( $request->get_param( 'mentions' ) );
 
 		/**
 		 * Filters posting a comment to a ticket.
 		 *
-		 * @param array<string,mixed>|null $result Result.
-		 * @param array<string,mixed>      $ticket Ticket row.
-		 * @param string                   $body   Comment text.
-		 * @param bool                     $public True for a customer-visible reply.
+		 * @param array<string,mixed>|null        $result   Result.
+		 * @param array<string,mixed>             $ticket   Ticket row.
+		 * @param string                          $body     Comment text.
+		 * @param bool                            $public   True for a customer-visible reply.
+		 * @param array<int,array<string,string>> $mentions People tagged in the text as
+		 *                                                  "@name", `[{id, name}]`; the
+		 *                                                  ITSM plugin checks and writes them.
 		 */
-		$result = apply_filters( 'vulnhub_post_ticket_comment', null, $ticket, $body, $public );
+		$result = apply_filters( 'vulnhub_post_ticket_comment', null, $ticket, $body, $public, $mentions );
 
 		if ( null === $result ) {
 			return new WP_Error( 'vulnhub_no_itsm', __( 'No ticketing integration is active.', 'vulnhub' ), array( 'status' => 409 ) );
@@ -1085,10 +1089,38 @@ final class Rest {
 			sprintf( 'Commented on %s (%s)', (string) $ticket['external_key'], $public ? 'reply to customer' : 'internal note' ),
 			'ticket',
 			(int) $ticket['id'],
-			array( 'public' => $public )
+			array(
+				'public'   => $public,
+				'mentions' => count( (array) ( $result['mentioned'] ?? array() ) ),
+			)
 		);
 
 		return new WP_REST_Response( $result );
+	}
+
+	/**
+	 * `mentions` from a comment post: at most 20 `{id, name}` pairs of short
+	 * strings. What they mean is the ITSM plugin's to check.
+	 *
+	 * @return array<int,array{id:string,name:string}>
+	 */
+	public static function mentions_param( mixed $raw ): array {
+		$out = array();
+
+		foreach ( is_array( $raw ) ? array_slice( $raw, 0, 20 ) : array() as $m ) {
+			if ( ! is_array( $m ) ) {
+				continue;
+			}
+
+			$id   = substr( preg_replace( '/[^A-Za-z0-9:_-]/', '', (string) ( $m['id'] ?? '' ) ), 0, 128 );
+			$name = mb_substr( trim( sanitize_text_field( (string) ( $m['name'] ?? '' ) ) ), 0, 120 );
+
+			if ( '' !== $id && '' !== $name ) {
+				$out[] = array( 'id' => $id, 'name' => $name );
+			}
+		}
+
+		return $out;
 	}
 
 	public function exceptions( WP_REST_Request $request ): WP_REST_Response {

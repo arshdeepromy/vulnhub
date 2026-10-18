@@ -665,7 +665,7 @@ Core owns twenty tables, all `vh_vulnhub_<name>` (always `vh_table( '<name>' )`)
 | `asset_aliases` | other ids one asset is known by (a pooled fleet's per-session scanner ids, see `Fleets`) |
 | `vulns`, `findings` | definitions (unique on source + plugin_id) and per-asset findings (unique fingerprint) |
 | `tickets`, `ticket_findings`, `ticket_assets`, `ticket_aside` | tickets, what they cover, and assets set aside on them (`docs/TICKETS.md`) |
-| `exceptions` | risk exceptions (unique reference) |
+| `exceptions` | risk exceptions (unique reference). Scope `policy` = a **security exception** (a control or policy, e.g. an allow-list or offshore working) with no finding behind it: never stamps `exception_id`, recorded with `Exceptions::record()` when the decision was made in Jira (approver and dates taken as given; only `policy` rows can be written or edited that way). Statuses add `withdrawn` and `closed` (no decision recorded). `Exceptions::is_finding_scope()`, `Exceptions::jira_url()`; hooks `vulnhub_exceptions_page_actions` (buttons on the register) and `vulnhub_exception_edit_url` (edit link on an exception). |
 | `automations`, `mapping_rules` | ticket automation rules; ownership mapping rules |
 | `sync_runs`, `audit` | run log with progress; audit trail |
 | `metrics` | daily snapshots for trends |

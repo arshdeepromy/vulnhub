@@ -109,6 +109,7 @@ nav. Current users:
 - vulnhub-plerion (`cspm` Cloud Posture); see `docs/PLERION.md`
 - vulnhub-checkpoint (`firewall` Firewall policy); see `docs/CHECKPOINT.md`
 - vulnhub-tenable (`appstream`, hidden) — AppStream duplicate cleanup; see `docs/APPSTREAM.md`
+- vulnhub-assessments (`assessments`, after Exceptions) — supplier assessment register; see `docs/ASSESSMENTS.md`
 
 **Navigation-only links.** `vulnhub_portal_nav_extra` only adds a link, not a
 view. Each entry takes `label`, `url`, an `icon` SVG path and `active`. Nothing

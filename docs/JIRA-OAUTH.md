@@ -120,6 +120,22 @@ reopener, automation, routing, or anything added later.
     numeric id is looked up first.
 - **A write whose project cannot be determined is refused.** The check fails
   closed.
+- **One exception: answering an approval.** `POST
+  /servicedeskapi/request/{key}/approval/{id}` is let through whatever the
+  project, but only when the path is exactly that shape and the body is
+  exactly `{"decision": "approve"}` or `{"decision": "decline"}`
+  (`is_approval_answer()`). It changes nothing but the answer, Jira accepts it
+  only from a named approver, and the requests that need it can sit on any
+  desk. See the Approvals tab in `docs/TICKETS.md`.
+- **Second exception: a person's comment or status move on one of the
+  connected account's own issues.** `allow_issue( $key )` names one key for
+  the rest of the request; then `POST /issue/{key}/comment`,
+  `POST /issue/{key}/transitions` and `POST /servicedeskapi/request/{key}/comment`
+  on that key pass (`comment_or_move_key()`), and nothing else does --
+  not a field edit, not an attachment, not another key. Only the Jira inbox
+  routes call it, for a key the inbox table holds, and they call
+  `forget_issues()` in a `finally`. Automation never names a key, so it stays
+  inside the allowlist.
 - A refusal is a synthetic `403` response whose error says why. It is logged in
   the run log, and no request is sent.
 
@@ -176,9 +192,14 @@ right now."
 | `issue_comments( $key )` | `GET /rest/api/3/issue/{key}/comment` |
 | `attach( $key, $name, $bytes, $mime )` | `POST /rest/api/3/issue/{key}/attachments` (multipart, `file`) |
 | `request_attach( $desk, $key, … )` | `POST …/servicedesk/{id}/attachTemporaryFile`, then `POST …/request/{key}/attachment` |
+| `approver_requests( $start, $limit )` | `GET /rest/servicedeskapi/request?requestOwnership=APPROVER&approvalStatus=MY_PENDING_APPROVAL` |
+| `request_approvals( $key )` | `GET /rest/servicedeskapi/request/{key}/approval` |
+| `request_approval( $key, $id )` | `GET /rest/servicedeskapi/request/{key}/approval/{id}` |
+| `answer_approval( $key, $id, $decision )` | `POST /rest/servicedeskapi/request/{key}/approval/{id}`, sent once |
 
 Core's `Http` JSON-encodes array bodies, so uploads build the multipart body as
-a string, which `Http` sends as-is. The mock site answers all of these.
+a string, which `Http` sends as-is. The mock site answers all of these except
+the four approval methods; the inbox does not run in mock mode.
 
 `request_comment()` is what the ticket page's comment box uses
 (`VulnHub_Jira_Connector::post_comment()`), because only the service desk API

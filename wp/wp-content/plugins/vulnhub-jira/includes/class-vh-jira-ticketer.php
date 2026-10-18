@@ -140,7 +140,7 @@ final class VulnHub_Jira_Ticketer {
 		add_action( 'admin_post_' . self::DRAFT_CSV_ACTION, array( $this, 'download_draft_csv' ) );
 		add_filter( 'vulnhub_refresh_ticket', array( $this, 'refresh_ticket' ), 10, 2 );
 		add_filter( 'vulnhub_ticket_comments', array( $this, 'ticket_comments' ), 10, 2 );
-		add_filter( 'vulnhub_post_ticket_comment', array( $this, 'post_ticket_comment' ), 10, 4 );
+		add_filter( 'vulnhub_post_ticket_comment', array( $this, 'post_ticket_comment' ), 10, 5 );
 		add_filter( 'vulnhub_ticket_transitions', array( $this, 'ticket_transitions' ), 10, 2 );
 		add_filter( 'vulnhub_apply_ticket_transition', array( $this, 'apply_ticket_transition' ), 10, 5 );
 		add_filter( 'vulnhub_refresh_ticket_attachment', array( $this, 'refresh_attachment' ), 10, 3 );
@@ -808,9 +808,10 @@ final class VulnHub_Jira_Ticketer {
 	 * @param array<string,mixed>      $ticket Ticket row.
 	 * @param string                   $body   Comment text.
 	 * @param bool                     $public True for a customer-visible reply.
+	 * @param array<int,array<string,string>> $mentions People tagged, `[{id, name}]`.
 	 * @return array<string,mixed>|null
 	 */
-	public function post_ticket_comment( ?array $result, array $ticket, string $body, bool $public ): ?array {
+	public function post_ticket_comment( ?array $result, array $ticket, string $body, bool $public, array $mentions = array() ): ?array {
 		if ( null !== $result ) {
 			return $result;
 		}
@@ -828,7 +829,7 @@ final class VulnHub_Jira_Ticketer {
 			);
 		}
 
-		$posted = $connector->post_comment( (string) ( $ticket['external_key'] ?? '' ), $body, $public );
+		$posted = $connector->post_comment( (string) ( $ticket['external_key'] ?? '' ), $body, $public, $mentions );
 
 		if ( ! empty( $posted['ok'] ) && isset( $posted['comment'] ) ) {
 			\VulnHub\Core\Tickets::set_last_comment( (int) $ticket['id'], (array) $posted['comment'] );

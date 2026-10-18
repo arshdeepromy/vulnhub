@@ -1104,14 +1104,25 @@ final class VulnHub_Dash_Tickets {
 	 * @param int  $id     Ticket id, or 0 for the dialog, which is told later.
 	 * @param bool $inline True on the ticket page.
 	 */
-	public static function comments_body( int $id = 0, bool $inline = false, ?array $ticket = null ): string {
+	public static function comments_body( int|string $id = 0, bool $inline = false, ?array $ticket = null ): string {
+		/*
+		 * A ticket raised here is named by its id; an issue from the Jira
+		 * lists (My Jira tickets, Approvals, Assessments) by `jira/KEY`, which
+		 * is also the REST path segment the script calls. Anything else names
+		 * nothing.
+		 */
+		$ref  = is_int( $id )
+			? ( $id > 0 ? (string) $id : '' )
+			: ( preg_match( '#^jira/[A-Z][A-Z0-9_]*-\d+$#', $id ) ? $id : '' );
+		$slug = '' === $ref ? '0' : str_replace( '/', '-', $ref );
+
 		/*
 		 * is-public from the start: the reply radio is the one checked below,
 		 * and the warm hint and border are what say so. JavaScript only keeps
 		 * the class in step after that.
 		 */
 		$out = '<div class="vh-comments is-public' . ( $inline ? ' vh-comments--inline' : '' ) . '"'
-			. ( $id > 0 ? ' data-vh-comments-for="' . (int) $id . '"' : '' ) . '>';
+			. ( '' !== $ref ? ' data-vh-comments-for="' . esc_attr( $ref ) . '"' : '' ) . '>';
 
 		/*
 		 * Reading the conversation is a round trip to Jira -- the better part
@@ -1143,9 +1154,9 @@ final class VulnHub_Dash_Tickets {
 
 		if ( self::can_comment() ) {
 			$out .= '<div class="vh-comments__reply">'
-				. '<label class="screen-reader-text" for="vh-comment-body-' . (int) $id . '">' . esc_html__( 'Your comment', 'vulnhub' ) . '</label>'
-				. '<textarea id="vh-comment-body-' . (int) $id . '" class="vh-comments__text" data-vh-comment-body rows="3" placeholder="'
-				. esc_attr__( 'Write a comment…', 'vulnhub' ) . '"></textarea>'
+				. '<label class="screen-reader-text" for="vh-comment-body-' . esc_attr( $slug ) . '">' . esc_html__( 'Your comment', 'vulnhub' ) . '</label>'
+				. '<textarea id="vh-comment-body-' . esc_attr( $slug ) . '" class="vh-comments__text" data-vh-comment-body rows="3" placeholder="'
+				. esc_attr__( 'Write a comment… type @ to tag someone', 'vulnhub' ) . '"></textarea>'
 				/*
 				 * Reply to customer is checked, by request: answering the
 				 * person who raised the ticket is what this box is for, and
@@ -1160,9 +1171,9 @@ final class VulnHub_Dash_Tickets {
 				 * nothing, not this box, which always says which it is.
 				 */
 				. '<div class="vh-comments__vis">'
-				. '<label><input type="radio" name="vh-comment-vis-' . (int) $id . '" value="internal"> '
+				. '<label><input type="radio" name="vh-comment-vis-' . esc_attr( $slug ) . '" value="internal"> '
 				. esc_html__( 'Internal note', 'vulnhub' ) . '</label>'
-				. '<label><input type="radio" name="vh-comment-vis-' . (int) $id . '" value="public" checked> '
+				. '<label><input type="radio" name="vh-comment-vis-' . esc_attr( $slug ) . '" value="public" checked> '
 				. esc_html__( 'Reply to customer', 'vulnhub' ) . '</label>'
 				. '<span class="vh-comments__hint" data-vh-comment-hint>' . esc_html__( 'The person who raised this will be notified and can read it.', 'vulnhub' ) . '</span>'
 				. '<button type="button" class="vh-btn vh-btn--primary vh-btn--sm" data-vh-comment-post>' . esc_html__( 'Post', 'vulnhub' ) . '</button>'

@@ -10,6 +10,9 @@
  *   commented. Being the newest comment on a ticket you raised is not enough:
  *   routing notes and status updates are not asking you anything. Your next
  *   comment clears it.
+ * - **Replied since you commented.** You have commented, and a person has
+ *   commented after you -- without mentioning you, or that would be the
+ *   signal above. The answer you were waiting for, or news on it.
  * - **Assigned to you.** The Jira assignee is your account.
  * - **Chase.** Past its due date *and* you have already sent the current
  *   list. There is nothing left on your side, so the ticket is the other
@@ -38,7 +41,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 final class VulnHub_Dash_Ticket_Signals {
 
 	/** The values `tfor` takes on the Tickets list, in the order they are shown. */
-	public const FILTERS = array( 'mention', 'reply', 'assigned', 'chase', 'overdue' );
+	public const FILTERS = array( 'mention', 'reply', 'answered', 'assigned', 'chase', 'overdue' );
+
+	/** The signals that need to know which Jira account is "you". */
+	public const PERSONAL = array( 'mention', 'reply', 'answered', 'assigned' );
 
 	/** @var array<int,array<string,mixed>>|null Open tickets' signals, id => flags. */
 	private static ?array $open = null;
@@ -102,6 +108,7 @@ final class VulnHub_Dash_Ticket_Signals {
 		return array(
 			'mention'  => __( 'Mentioned you', 'vulnhub' ),
 			'reply'    => __( 'Waiting on your reply', 'vulnhub' ),
+			'answered' => __( 'Replied since you commented', 'vulnhub' ),
 			'assigned' => __( 'Assigned to you', 'vulnhub' ),
 			'chase'    => __( 'Overdue, current list sent', 'vulnhub' ),
 			'overdue'  => __( 'Overdue', 'vulnhub' ),
@@ -190,6 +197,7 @@ final class VulnHub_Dash_Ticket_Signals {
 		$f = array(
 			'mention'  => false,
 			'reply'    => false,
+			'answered' => false,
 			'assigned' => false,
 			'overdue'  => false,
 			'chase'    => false,
@@ -305,6 +313,31 @@ final class VulnHub_Dash_Ticket_Signals {
 			$f['reply_at'] = (string) $f['mention_at'];
 		}
 
+		/*
+		 * Replied since you commented: you have said something here, and a
+		 * person has commented after you. Newest first and templates already
+		 * gone, so the walk stops at your own comment. The comment that
+		 * raised Mentioned you is not counted twice; anything else after you
+		 * is. Your next comment clears it, like the mention.
+		 */
+		if ( '' !== $mine ) {
+			foreach ( (array) $said as $c ) {
+				$at = (string) ( $c['at'] ?? '' );
+
+				if ( $is_me( $c ) || $at <= $mine ) {
+					break;
+				}
+				if ( ! empty( $f['mention'] ) && $at === (string) $f['mention_at'] ) {
+					continue;
+				}
+
+				$f['answered']    = true;
+				$f['answered_by'] = (string) ( $c['by'] ?? '' );
+				$f['answered_at'] = $at;
+				break;
+			}
+		}
+
 		return $f;
 	}
 
@@ -334,6 +367,15 @@ final class VulnHub_Dash_Ticket_Signals {
 			'SELECT id, payload_json FROM ' . vh_table( 'tickets' ) . " WHERE LOCATE('\"said\"', payload_json) > 0", // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 			ARRAY_A
 		);
+
+		/**
+		 * Filters more conversations to judge templates across: the Jira
+		 * plugin's own lists, where the same desk macros greet you.
+		 *
+		 * @param array<int,array{id:int,payload_json:string}> $rows Extra rows; ids must
+		 *                                                           not be ticket ids.
+		 */
+		$rows  = array_merge( $rows, (array) apply_filters( 'vulnhub_ticket_signal_conversations', array() ) );
 		$items = array();
 
 		foreach ( $rows as $r ) {
@@ -346,6 +388,19 @@ final class VulnHub_Dash_Ticket_Signals {
 					$items[] = array( 'ticket' => (int) $r['id'], 'key' => self::said_key( (int) $r['id'], $c ), 'words' => $words );
 				}
 			}
+		}
+
+		/*
+		 * Every pair is compared, so the answer is kept until a comment
+		 * anywhere changes: the signature is every entry's ticket, time and
+		 * author, and a new comment moves it.
+		 */
+		$sig    = md5( implode( "\n", array_column( $items, 'key' ) ) . '|' . self::identity()['name'] );
+		$cached = get_transient( 'vh_ticket_boilerplate' );
+
+		if ( is_array( $cached ) && ( $cached['sig'] ?? '' ) === $sig && is_array( $cached['set'] ?? null ) ) {
+			self::$boiler = $cached['set'];
+			return self::$boiler;
 		}
 
 		self::$boiler = array();
@@ -367,6 +422,8 @@ final class VulnHub_Dash_Ticket_Signals {
 				}
 			}
 		}
+
+		set_transient( 'vh_ticket_boilerplate', array( 'sig' => $sig, 'set' => self::$boiler ), DAY_IN_SECONDS );
 
 		return self::$boiler;
 	}
@@ -459,7 +516,7 @@ final class VulnHub_Dash_Ticket_Signals {
 			$c[] = 'vh-trow--overdue';
 		}
 
-		foreach ( array( 'mention', 'reply', 'assigned' ) as $k ) {
+		foreach ( array( 'mention', 'reply', 'answered', 'assigned' ) as $k ) {
 			if ( ! empty( $f[ $k ] ) ) {
 				$c[] = 'vh-trow--you vh-trow--' . $k;
 				break; // The strongest signal colours the edge.
@@ -485,6 +542,10 @@ final class VulnHub_Dash_Ticket_Signals {
 			/* translators: 1: person, 2: time ago. */
 			$why[] = sprintf( __( '%1$s mentioned you %2$s; the next reply is yours', 'vulnhub' ), $f['reply_by'], vh_ago( $f['reply_at'] ) );
 		}
+		if ( ! empty( $f['answered'] ) ) {
+			/* translators: 1: person, 2: time ago. */
+			$why[] = sprintf( __( '%1$s replied %2$s, after your comment', 'vulnhub' ), $f['answered_by'], vh_ago( $f['answered_at'] ) );
+		}
 		if ( ! empty( $f['assigned'] ) ) {
 			$why[] = __( 'assigned to you in Jira', 'vulnhub' );
 		}
@@ -493,7 +554,7 @@ final class VulnHub_Dash_Ticket_Signals {
 			return '';
 		}
 
-		$tone = ! empty( $f['mention'] ) ? 'mention' : ( ! empty( $f['reply'] ) ? 'reply' : 'assigned' );
+		$tone = ! empty( $f['mention'] ) ? 'mention' : ( ! empty( $f['reply'] ) ? 'reply' : ( ! empty( $f['answered'] ) ? 'answered' : 'assigned' ) );
 		$text = ucfirst( implode( '; ', $why ) ) . '.';
 
 		return '<span class="vh-tbell vh-tbell--' . esc_attr( $tone ) . '" role="img" aria-label="' . esc_attr( $text ) . '" title="' . esc_attr( $text ) . '">'
@@ -523,6 +584,15 @@ final class VulnHub_Dash_Ticket_Signals {
 				self::icon( 'M9 14L4 9l5-5M4 9h10a6 6 0 016 6v5' ) . esc_html__( 'Your reply', 'vulnhub' ),
 				/* translators: 1: person, 2: time ago. */
 				sprintf( __( '%1$s mentioned you %2$s, and you have not commented since.', 'vulnhub' ), $f['reply_by'], vh_ago( $f['reply_at'] ) )
+			);
+		}
+
+		if ( ! empty( $f['answered'] ) ) {
+			$out .= self::tag(
+				'answered',
+				self::icon( 'M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z' ) . esc_html__( 'New reply', 'vulnhub' ),
+				/* translators: 1: person, 2: time ago. */
+				sprintf( __( '%1$s replied %2$s, after your last comment. Commenting again clears this.', 'vulnhub' ), $f['answered_by'], vh_ago( $f['answered_at'] ) )
 			);
 		}
 
@@ -577,7 +647,7 @@ final class VulnHub_Dash_Ticket_Signals {
 	public static function strip( string $active, callable $url ): void {
 		$counts = self::counts();
 		$me     = self::me();
-		$total  = $counts['mention'] + $counts['reply'] + $counts['assigned'];
+		$total  = $counts['mention'] + $counts['reply'] + $counts['answered'] + $counts['assigned'];
 		?>
 		<section class="vh-foryou<?php echo $total > 0 ? ' has-yours' : ''; ?>" aria-label="<?php esc_attr_e( 'Tickets waiting on you', 'vulnhub' ); ?>">
 			<span class="vh-foryou__bell" aria-hidden="true">
@@ -587,7 +657,7 @@ final class VulnHub_Dash_Ticket_Signals {
 			<span class="vh-foryou__h"><?php esc_html_e( 'For you', 'vulnhub' ); ?></span>
 			<?php
 			foreach ( self::FILTERS as $k ) {
-				if ( '' === $me && in_array( $k, array( 'mention', 'reply', 'assigned' ), true ) ) {
+				if ( '' === $me && in_array( $k, self::PERSONAL, true ) ) {
 					continue;
 				}
 
@@ -677,6 +747,18 @@ final class VulnHub_Dash_Ticket_Signals {
 				/* translators: %s: ticket keys. */
 				'body'     => sprintf( __( 'Somebody mentioned you and you have not replied: %s.', 'vulnhub' ), $keys( 'reply' ) ),
 				'url'      => $url( 'reply' ),
+			);
+		}
+
+		if ( $counts['answered'] > 0 ) {
+			$items[] = array(
+				'id'       => 'tickets-answered',
+				'severity' => 'warn',
+				'count'    => $counts['answered'],
+				'title'    => __( 'New replies since you commented', 'vulnhub' ),
+				/* translators: %s: ticket keys. */
+				'body'     => sprintf( __( 'Somebody commented after you: %s.', 'vulnhub' ), $keys( 'answered' ) ),
+				'url'      => $url( 'answered' ),
 			);
 		}
 

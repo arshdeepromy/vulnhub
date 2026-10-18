@@ -4574,7 +4574,36 @@ final class VulnHub_Dash_App {
 			return;
 		}
 
-		$s       = Repo::summary();
+		$s = Repo::summary();
+
+		/*
+		 * Other plugins add whole lists beside the remediation tickets -- the
+		 * Jira plugin adds the connected account's own issues, its approvals
+		 * and assessment requests -- through `vulnhub_ticket_views`. One of
+		 * those is drawn instead of the remediation list when `tview` names
+		 * it; the remediation list stays the default and keeps every link
+		 * that already points at it.
+		 */
+		$vh_views = self::ticket_views();
+		$vh_tview = self::q( 'tview' );
+
+		if ( '' !== $vh_tview && isset( $vh_views[ $vh_tview ] ) ) {
+			$vh_view = $vh_views[ $vh_tview ];
+			?>
+			<div class="vh-page-head">
+				<div>
+					<h1><?php echo esc_html( (string) $vh_view['title'] ); ?></h1>
+					<?php if ( '' !== (string) $vh_view['sub'] ) : ?>
+						<p class="vh-sub"><?php echo esc_html( (string) $vh_view['sub'] ); ?></p>
+					<?php endif; ?>
+				</div>
+			</div>
+			<?php
+			self::ticket_views_nav( $vh_views, $vh_tview, (int) $s['tickets_open'] );
+			call_user_func( $vh_view['render'], self::page_url( 'tickets', array( 'tview' => $vh_tview ) ) );
+			return;
+		}
+
 		$per     = 25;
 		$paged   = max( 1, self::qi( 'tp', 1 ) );
 		$vh_sla  = in_array( self::q( 'sla' ), array( 'met', 'on_track', 'breached', 'overdue', 'no_due' ), true ) ? self::q( 'sla' ) : '';
@@ -4657,6 +4686,8 @@ final class VulnHub_Dash_App {
 				<p class="vh-sub"><?php esc_html_e( 'Every ticket raised from a finding or an asset list, and whether the data agrees the work is actually done.', 'vulnhub' ); ?></p>
 			</div>
 		</div>
+
+		<?php self::ticket_views_nav( $vh_views, '', (int) $s['tickets_open'] ); ?>
 
 		<?php VulnHub_Dash_Ticket_Report::render_coverage(); ?>
 		<?php VulnHub_Dash_Ticket_Report::render_report(); ?>
@@ -4845,6 +4876,98 @@ final class VulnHub_Dash_App {
 		<?php
 	}
 
+	/**
+	 * Lists other plugins add to the Tickets page, as tabs beside the
+	 * remediation tickets (filter `vulnhub_ticket_views`).
+	 *
+	 * Each entry: `label`, `render` (callable taking the tab's own URL), and
+	 * optionally `count`, `title`, `sub`. Anything without a label and a
+	 * callable renderer is dropped rather than drawn half-built.
+	 *
+	 * @return array<string,array{label:string,render:callable,count:?int,title:string,sub:string}>
+	 */
+	private static function ticket_views(): array {
+		$out = array();
+
+		foreach ( (array) apply_filters( 'vulnhub_ticket_views', array() ) as $key => $v ) {
+			$key = sanitize_key( (string) $key );
+
+			if ( '' === $key || 'remediation' === $key || ! is_array( $v ) || empty( $v['label'] ) || ! is_callable( $v['render'] ?? null ) ) {
+				continue;
+			}
+
+			$out[ $key ] = array(
+				'label'  => (string) $v['label'],
+				'render' => $v['render'],
+				'count'  => isset( $v['count'] ) ? (int) $v['count'] : null,
+				'flag'   => max( 0, (int) ( $v['flag'] ?? 0 ) ),
+				'replies' => max( 0, (int) ( $v['replies'] ?? 0 ) ),
+				'tone'   => (string) ( $v['tone'] ?? '' ),
+				'title'  => (string) ( $v['title'] ?? $v['label'] ),
+				'sub'    => (string) ( $v['sub'] ?? '' ),
+			);
+		}
+
+		return $out;
+	}
+
+	/**
+	 * The strip of lists at the top of the Tickets page. Drawn only when
+	 * there is more than the remediation list to choose from.
+	 *
+	 * @param array<string,array<string,mixed>> $views  From ticket_views().
+	 * @param string                            $active Active view, '' for remediation.
+	 */
+	private static function ticket_views_nav( array $views, string $active, int $remediation_open ): void {
+		if ( ! $views ) {
+			return;
+		}
+
+		$tabs = array(
+			'' => array(
+				'label' => __( 'Remediation', 'vulnhub' ),
+				'count' => $remediation_open,
+				'flag'  => 0,
+				'replies' => 0,
+				'tone'  => '',
+				'url'   => self::page_url( 'tickets' ),
+			),
+		);
+
+		foreach ( $views as $key => $v ) {
+			$tabs[ $key ] = array(
+				'label' => (string) $v['label'],
+				'count' => $v['count'],
+				'flag'  => (int) $v['flag'],
+				'replies' => (int) $v['replies'],
+				'tone'  => (string) $v['tone'],
+				'url'   => self::page_url( 'tickets', array( 'tview' => $key ) ),
+			);
+		}
+		?>
+		<nav class="vh-tabs vh-tabs--count vh-tabs--views" aria-label="<?php esc_attr_e( 'Ticket lists', 'vulnhub' ); ?>">
+			<?php foreach ( $tabs as $key => $t ) : ?>
+				<a class="vh-tabs__tab <?php echo (string) $key === $active ? 'is-active' : ''; ?>"
+					href="<?php echo esc_url( (string) $t['url'] ); ?>"
+					<?php echo (string) $key === $active ? 'aria-current="page"' : ''; ?>>
+					<?php echo esc_html( (string) $t['label'] ); ?>
+					<?php if ( null !== $t['count'] ) : ?>
+						<span class="vh-tabs__n<?php echo 'warn' === $t['tone'] && (int) $t['count'] > 0 ? ' vh-tabs__n--warn' : ''; ?>"><?php echo esc_html( number_format_i18n( (int) $t['count'] ) ); ?></span>
+					<?php endif; ?>
+					<?php if ( (int) $t['flag'] > 0 ) : ?>
+						<?php /* translators: %s: number of issues. */ ?>
+						<span class="vh-tabs__n vh-tabs__n--mention" title="<?php echo esc_attr( sprintf( _n( '%s mentions you, not answered', '%s mention you, not answered', (int) $t['flag'], 'vulnhub' ), number_format_i18n( (int) $t['flag'] ) ) ); ?>">@<?php echo esc_html( number_format_i18n( (int) $t['flag'] ) ); ?></span>
+					<?php endif; ?>
+					<?php if ( (int) $t['replies'] > 0 ) : ?>
+						<?php /* translators: %s: number of issues. */ ?>
+						<span class="vh-tabs__n vh-tabs__n--answered" title="<?php echo esc_attr( sprintf( _n( '%s has a reply since you commented', '%s have a reply since you commented', (int) $t['replies'], 'vulnhub' ), number_format_i18n( (int) $t['replies'] ) ) ); ?>">&#8617;<?php echo esc_html( number_format_i18n( (int) $t['replies'] ) ); ?></span>
+					<?php endif; ?>
+				</a>
+			<?php endforeach; ?>
+		</nav>
+		<?php
+	}
+
 	/* ------------------------------------------------------- exceptions. */
 
 	private static function view_exceptions(): void {
@@ -4865,17 +4988,34 @@ final class VulnHub_Dash_App {
 			return;
 		}
 
-		$s = Repo::summary();
-		$q = Exceptions::query( array( 'status' => self::q( 'status' ), 'limit' => 100 ) );
+		$s     = Repo::summary();
+		$etype = in_array( self::q( 'etype' ), array( 'policy', 'findings' ), true ) ? self::q( 'etype' ) : '';
+		$q     = Exceptions::query( array( 'status' => self::q( 'status' ), 'scope' => $etype, 'limit' => 300 ) );
+		$pol   = Exceptions::query( array( 'scope' => 'policy', 'status' => 'approved', 'limit' => 300 ) );
+		$due   = 0;
+		foreach ( $pol['rows'] as $vh_p ) {
+			if ( ! empty( $vh_p['review_at'] ) && strtotime( (string) $vh_p['review_at'] . ' UTC' ) < time() + 60 * DAY_IN_SECONDS ) {
+				++$due;
+			}
+		}
 		?>
 		<div class="vh-page-head">
 			<div>
 				<h1><?php esc_html_e( 'Exception register', 'vulnhub' ); ?></h1>
 				<p class="vh-sub"><?php esc_html_e( 'Time-boxed, justified risk acceptances. Nothing is hidden — an expired exception puts its findings straight back into the open count.', 'vulnhub' ); ?></p>
 			</div>
-			<?php if ( current_user_can( Caps::REQUEST_EXCEPTION ) ) : ?>
-				<a class="vh-btn vh-btn--primary" href="<?php echo esc_url( self::page_url( 'vulnerabilities' ) ); ?>"><?php esc_html_e( 'Find a finding to except', 'vulnhub' ); ?></a>
-			<?php endif; ?>
+			<div class="vh-exc-actions" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+				<?php
+				/**
+				 * Extra buttons beside "Find a finding to except" -- e.g.
+				 * recording a security exception decided in Jira.
+				 */
+				do_action( 'vulnhub_exceptions_page_actions' );
+				?>
+				<?php if ( current_user_can( Caps::REQUEST_EXCEPTION ) ) : ?>
+					<a class="vh-btn vh-btn--primary" href="<?php echo esc_url( self::page_url( 'vulnerabilities' ) ); ?>"><?php esc_html_e( 'Find a finding to except', 'vulnhub' ); ?></a>
+				<?php endif; ?>
+			</div>
 		</div>
 
 		<?php if ( '' !== self::q( 'vh_msg' ) ) : // Set by core's request and decision screens after they save. ?>
@@ -4888,6 +5028,16 @@ final class VulnHub_Dash_App {
 			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Active', 'vulnhub' ), 'value' => (int) $s['exceptions_active'], 'tone' => 'neutral' ) ); // phpcs:ignore
 			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Findings suppressed', 'vulnhub' ), 'value' => (int) $s['excepted'], 'tone' => 'neutral', 'meta' => __( 'still tracked, not counted as open', 'vulnhub' ) ) ); // phpcs:ignore
 			echo VulnHub_Dash_Charts::stat_tile( array( 'label' => __( 'Expiring in 30 days', 'vulnhub' ), 'value' => (int) Exceptions::query( array( 'expiring_days' => 30, 'limit' => 1 ) )['total'], 'tone' => 'warning' ) ); // phpcs:ignore
+			echo VulnHub_Dash_Charts::stat_tile( // phpcs:ignore
+				array(
+					'label' => __( 'Security exceptions in force', 'vulnhub' ),
+					'value' => (int) $pol['total'],
+					'tone'  => $due > 0 ? 'warning' : 'neutral',
+					/* translators: %s: number due for review. */
+					'meta'  => sprintf( __( '%s due for review within 60 days', 'vulnhub' ), number_format_i18n( $due ) ),
+					'href'  => self::page_url( 'exceptions', array( 'etype' => 'policy' ) ),
+				)
+			);
 			?>
 		</section>
 
@@ -4899,7 +5049,14 @@ final class VulnHub_Dash_App {
 		 */
 		?>
 		<form class="vh-filters" method="get">
-			<?php self::hidden_filters( array( 'status' ) ); ?>
+			<?php self::hidden_filters( array( 'status', 'etype' ) ); ?>
+			<label><?php esc_html_e( 'Type', 'vulnhub' ); ?>
+				<select name="etype">
+					<option value=""><?php esc_html_e( 'All exceptions', 'vulnhub' ); ?></option>
+					<option value="findings" <?php selected( $etype, 'findings' ); ?>><?php esc_html_e( 'Finding exceptions', 'vulnhub' ); ?></option>
+					<option value="policy" <?php selected( $etype, 'policy' ); ?>><?php esc_html_e( 'Security exceptions', 'vulnhub' ); ?></option>
+				</select>
+			</label>
 			<label><?php esc_html_e( 'Status', 'vulnhub' ); ?>
 				<select name="status">
 					<option value=""><?php esc_html_e( 'All statuses', 'vulnhub' ); ?></option>
@@ -4930,32 +5087,71 @@ final class VulnHub_Dash_App {
 					<thead><tr>
 						<th><?php esc_html_e( 'Ref', 'vulnhub' ); ?></th>
 						<th><?php esc_html_e( 'Title', 'vulnhub' ); ?></th>
-						<th><?php esc_html_e( 'Reason', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Type', 'vulnhub' ); ?></th>
 						<th><?php esc_html_e( 'Findings', 'vulnhub' ); ?></th>
 						<th><?php esc_html_e( 'Status', 'vulnhub' ); ?></th>
 						<th><?php esc_html_e( 'Requested by', 'vulnhub' ); ?></th>
-						<th><?php esc_html_e( 'Expires', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Decided by', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Expires / review', 'vulnhub' ); ?></th>
+						<th><?php esc_html_e( 'Jira', 'vulnhub' ); ?></th>
 					</tr></thead>
 					<tbody>
 					<?php foreach ( $q['rows'] as $e ) : ?>
 						<tr>
 							<td class="vh-mono"><strong><a href="<?php echo esc_url( self::page_url( 'exceptions', array( 'exception' => (int) $e['id'] ) ) ); ?>"><?php echo esc_html( (string) $e['reference'] ); ?></a></strong></td>
-							<td><?php echo esc_html( vh_trim( (string) $e['title'], 62 ) ); ?></td>
-							<td class="vh-sub"><?php echo esc_html( Exceptions::reasons()[ (string) $e['reason'] ] ?? '' ); ?></td>
-							<td><?php echo esc_html( number_format_i18n( (int) $e['affected_count'] ) ); ?></td>
+							<td title="<?php echo esc_attr( (string) $e['title'] ); ?>"><?php echo esc_html( vh_trim( (string) $e['title'], 80 ) ); ?></td>
+							<td class="vh-sub">
+								<?php
+								$vh_is_f = Exceptions::is_finding_scope( (string) $e['scope_type'] );
+								echo esc_html( $vh_is_f ? __( 'Finding', 'vulnhub' ) : __( 'Security', 'vulnhub' ) );
+								?>
+								<span class="vh-meta" style="display:block"><?php echo esc_html( Exceptions::reasons()[ (string) $e['reason'] ] ?? '' ); ?></span>
+							</td>
+							<td><?php echo esc_html( $vh_is_f ? number_format_i18n( (int) $e['affected_count'] ) : '—' ); ?></td>
 							<td>
 								<?php
 								$tone = match ( (string) $e['status'] ) {
 									'approved' => 'good',
 									'pending'  => 'warn',
 									'rejected', 'revoked' => 'bad',
+									'withdrawn', 'closed' => 'neutral',
 									default    => 'neutral',
 								};
 								?>
 								<span class="vh-chip vh-chip--<?php echo esc_attr( $tone ); ?>"><?php echo esc_html( Exceptions::statuses()[ (string) $e['status'] ] ?? '' ); ?></span>
 							</td>
 							<td><?php echo esc_html( (string) $e['requested_by_name'] ); ?></td>
-							<td><?php echo esc_html( $e['expires_at'] ? vh_date( (string) $e['expires_at'], 'j M Y' ) : '—' ); ?></td>
+							<td>
+								<?php echo esc_html( '' !== (string) $e['approver_name'] ? (string) $e['approver_name'] : '—' ); ?>
+								<?php if ( ! empty( $e['decided_at'] ) ) : ?>
+									<span class="vh-meta" style="display:block"><?php echo esc_html( vh_date( (string) $e['decided_at'], 'j M Y' ) ); ?></span>
+								<?php endif; ?>
+							</td>
+							<td>
+								<?php
+								if ( $e['expires_at'] ) {
+									echo esc_html( vh_date( (string) $e['expires_at'], 'j M Y' ) );
+								} elseif ( ! empty( $e['review_at'] ) ) {
+									/* translators: %s: date. */
+									echo esc_html( sprintf( __( 'review %s', 'vulnhub' ), vh_date( (string) $e['review_at'], 'j M Y' ) ) );
+								} else {
+									echo '—';
+								}
+								?>
+							</td>
+							<td class="vh-nowrap">
+								<?php
+								foreach ( '' !== (string) $e['jira_key'] ? ( preg_split( '/[\s,]+/', (string) $e['jira_key'] ) ?: array() ) : array() as $vh_k ) {
+									$vh_u = Exceptions::jira_url( (string) $vh_k );
+									echo $vh_u // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+										? '<a class="vh-mono" href="' . esc_url( $vh_u ) . '" target="_blank" rel="noopener noreferrer">' . esc_html( (string) $vh_k ) . ' ↗</a><br>'
+										: '<span class="vh-mono">' . esc_html( (string) $vh_k ) . '</span><br>';
+								}
+								if ( '' === (string) $e['jira_key'] ) {
+									echo '—';
+								}
+								?>
+							</td>
 						</tr>
 					<?php endforeach; ?>
 					</tbody>

@@ -38,6 +38,7 @@ obvious version was tried first and broke something.
 | `docs/AWS-NETWORK.md` | AWS SSO device login, what the network capture stores, and how the Cloud Network map is built |
 | `docs/AWS-COST.md` | AWS cost snapshot (Cost Explorer, CloudWatch, Price List), the confirmed / needs-confirmation savings rules, and shared decisions |
 | `docs/APPSTREAM.md` | AppStream duplicate cleanup: detecting one-shot streaming assets and deleting them through Tenable |
+| `docs/ASSESSMENTS.md` | Supplier assessment register, the not-yet-recorded list from the Jira inbox, and security (`policy`) exceptions recorded into the Exception register |
 | `docs/EOS.md`, `docs/ATTACK-PATHS.md` | Retirement programme; reachability |
 | `docs/ELEMENTOR.md` | `vulnhub-elementor`: VulnHub widgets for Elementor, and the portal header/footer handed to the Theme Builder |
 | `docs/REPLICATION.md` | Instance sync: sync keys, fingerprints, the package/chunk/apply cycle, what never travels, and the copy-mode guards |
